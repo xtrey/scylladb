@@ -38,7 +38,6 @@ async def test_multidc(request: pytest.FixtureRequest, manager: ManagerClient) -
     await random_tables.add_tables(ntables=3, ncolumns=3)
     await random_tables.verify_schema()
 
-
 cluster_config = [
     ([1, 2], 1),
     ([1, 1, 2, 2], 2)
