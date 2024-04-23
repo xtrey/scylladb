@@ -37,6 +37,7 @@ async def test_multidc(request: pytest.FixtureRequest, manager: ManagerClient) -
     logger.info("Creating new tables")
     await random_tables.add_tables(ntables=3, ncolumns=3)
     await random_tables.verify_schema()
+    pytest.fail('check logs gathering')
 
 cluster_config = [
     ([1, 2], 1),
@@ -106,7 +107,7 @@ async def test_putget_2dc_with_rf(
             assert row[2] == f"value{i * 2}"
         else:
             assert row[2] == f"value{i}"
-
+    pytest.fail('why not one more failure?')
 
 @pytest.mark.asyncio
 async def test_query_dc_with_rf_0_does_not_crash_db(request: pytest.FixtureRequest, manager: ManagerClient):
