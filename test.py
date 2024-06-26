@@ -9,6 +9,7 @@
 import argparse
 import asyncio
 import collections
+
 import colorama
 import difflib
 import filecmp
@@ -33,6 +34,10 @@ import yaml
 from abc import ABC, abstractmethod
 from io import StringIO
 from scripts import coverage    # type: ignore
+
+from attrs import asdict
+from test.pylib.db.writer import SQLiteWriter
+from test.pylib.resource_gather import ResourceGather
 from test.pylib.artifact_registry import ArtifactRegistry
 from test.pylib.host_registry import HostRegistry
 from test.pylib.pool import Pool
@@ -44,6 +49,9 @@ import logging
 from test.pylib import coverage_utils
 import humanfriendly
 import treelib
+
+CGROUP_TESTPY = '/sys/fs/cgroup/testpy'
+CGROUP_TESTS = '/sys/fs/cgroup/'
 
 launch_time = time.monotonic()
 
@@ -590,6 +598,8 @@ class ToolTestSuite(TestSuite):
 class Test:
     """Base class for CQL, Unit and Boost tests"""
     def __init__(self, test_no: int, shortname: str, suite) -> None:
+        self.cgroup: pathlib.Path = pathlib.Path(f"{CGROUP_TESTS}/{shortname}.{suite.mode}.{test_no}")
+        self.resource_gather: ResourceGather = ResourceGather(test=self, cgroup_path=self.cgroup)
         self.id = test_no
         self.path = ""
         self.args: List[str] = []
@@ -1167,7 +1177,9 @@ class TabularConsoleOutput:
 
 async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, env=dict()) -> bool:
     """Run test program, return True if success else False"""
-
+    sqlite_writer = SQLiteWriter.get_instance(
+        database_path=pathlib.Path(f"testlog/{test.suite.mode}/sqlite.db"),
+        table_name='metrics')
     with test.log_filename.open("wb") as log:
 
         def report_error(error):
@@ -1222,8 +1234,15 @@ async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, e
                          ),
                 preexec_fn=os.setsid,
             )
+
+            os.mkdir(test.cgroup)
+            logging.log(level=logging.ERROR, msg=f"putting {process.pid} to the {test.cgroup}")
+            with open(f"{test.cgroup}/cgroup.procs", 'a') as cgroup:
+                cgroup.write(str(process.pid))
+
             stdout, _ = await asyncio.wait_for(process.communicate(), options.timeout)
             test.time_end = time.time()
+            sqlite_writer.write_row(asdict(test.resource_gather.get_test_metrics()))
             if process.returncode not in test.valid_exit_codes:
                 report_error('Test exited with code {code}\n'.format(code=process.returncode))
                 return False
@@ -1406,6 +1425,7 @@ def parse_cmd_line() -> argparse.Namespace:
     for mode in args.modes:
         prepare_dir(os.path.join(args.tmpdir, mode), "*.log")
         prepare_dir(os.path.join(args.tmpdir, mode), "*.reject")
+        prepare_dir(os.path.join(args.tmpdir, mode), "*.db")
         prepare_dir(os.path.join(args.tmpdir, mode, "xml"), "*.xml")
         shutil.rmtree(os.path.join(args.tmpdir, mode, "failed_test"), ignore_errors=True)
         prepare_dir(os.path.join(args.tmpdir, mode, "failed_test"), "*")
@@ -1685,12 +1705,21 @@ def open_log(tmpdir: str, log_file_name: str, log_level: str) -> None:
     )
     logging.critical("Started %s", " ".join(sys.argv))
 
+def setup_cgroup():
+    subprocess.run(['sudo', 'mount', '-o', 'remount,rw,memory_recursiveprot,nsdelegate', '/sys/fs/cgroup'], check=True)
+    os.mkdir(CGROUP_TESTPY)
+    with open(os.path.join(CGROUP_TESTPY, 'cgroup.procs'), 'w') as f:
+        f.write(str(os.getpid()))
+
+    with open("/sys/fs/cgroup/cgroup.subtree_control", "w") as f:
+        f.write('+cpu +memory +pids')
 
 async def main() -> int:
 
     options = parse_cmd_line()
 
     open_log(options.tmpdir, f"test.py.{'-'.join(options.modes)}.log", options.log_level)
+    setup_cgroup()
 
     await find_tests(options)
     if options.list_tests:
