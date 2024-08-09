@@ -709,8 +709,10 @@ class BoostTest(UnitTest):
             boost_args += ['--run_test=' + casename]
         super().__init__(test_no, shortname, suite, args)
         self.xmlout = os.path.join(suite.options.tmpdir, self.mode, "xml", self.uname + ".xunit.xml")
+        self.junitout = os.path.join(suite.options.tmpdir, self.mode, "allure", self.uname + ".junit.xml")
         boost_args += ['--report_level=no',
-                       '--logger=HRF,test_suite:XML,test_suite,' + self.xmlout]
+                       f"--logger=HRF,test_suite:XML,test_suite,{self.xmlout}:JUNIT,message,{self.junitout}"
+                       ]
         boost_args += ['--catch_system_errors=no']  # causes undebuggable cores
         boost_args += ['--color_output=false']
         boost_args += ['--']
@@ -1430,6 +1432,7 @@ def parse_cmd_line() -> argparse.Namespace:
         prepare_dir(os.path.join(args.tmpdir, mode, "xml"), "*.xml")
         shutil.rmtree(os.path.join(args.tmpdir, mode, "failed_test"), ignore_errors=True)
         prepare_dir(os.path.join(args.tmpdir, mode, "failed_test"), "*")
+        prepare_dir(os.path.join(args.tmpdir, mode, "allure"), "*.xml")
 
     # Get the list of tests configured by configure.py
     try:
@@ -1698,6 +1701,23 @@ def write_consolidated_boost_junit_xml(tmpdir: str, mode: str) -> None:
     et.write(f'{tmpdir}/{mode}/xml/boost.xunit.xml', encoding='unicode')
 
 
+def clean_boost_junit_allure_xml(tmpdir, mode):
+    for report in glob.glob(f"{tmpdir}/{mode}/allure/boost.*.junit.xml"):
+        suit_name = report.split('/')[-1].split('.')[1]
+        tree = ET.parse(report)
+        root = tree.getroot()
+        root.attrib['name'] = suit_name
+
+        testcases = root.findall('testcase')
+        for testcase in testcases:
+            skipped_element = testcase.find('skipped')
+            if skipped_element is not None:
+                root.remove(testcase)
+
+        root.attrib['tests'] = str(len(testcases))
+        tree.write(report)
+
+
 def open_log(tmpdir: str, log_file_name: str, log_level: str) -> None:
     pathlib.Path(tmpdir).mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
@@ -1742,6 +1762,7 @@ async def main() -> int:
     for mode in options.modes:
         write_junit_report(options.tmpdir, mode)
         write_consolidated_boost_junit_xml(options.tmpdir, mode)
+        clean_boost_junit_allure_xml(options.tmpdir, mode)
 
     if 'coverage' in options.modes:
         coverage.generate_coverage_report(path_to("coverage", "tests"))
