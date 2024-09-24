@@ -1805,7 +1805,9 @@ async def main() -> int:
 
     open_log(options.tmpdir, f"test.py.{'-'.join(options.modes)}.log", options.log_level)
     setup_cgroup(options.gather_metrics)
+    start_find = time.monotonic()
     await find_tests(options)
+    print(f'@@@ {time.monotonic() - start_find}')
     if options.list_tests:
         print('\n'.join([f"{t.suite.mode:<8} {type(t.suite).__name__[:-9]:<11} {t.name}"
                          for t in TestSuite.all_tests()]))
