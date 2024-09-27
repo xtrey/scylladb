@@ -2,14 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import pytest
-import sys
-import requests
-import threading
-import time
-
-# Use the util.py library from ../cql-pytest:
-sys.path.insert(1, sys.path[0] + '/test/cql-pytest')
 
 def test_gossiper_live_endpoints(cql, rest_api):
     resp = rest_api.send("GET", f"gossiper/endpoint/live")

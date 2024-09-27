@@ -154,7 +154,7 @@ test writers don't need to create or cleanup connections or keyspaces.
 down the server when all tests  using it end.
 
 Note that some suites have a convenience helper script called `run`. Find
-more information about it in [test/cql-pytest](../../test/cql-pytest/README.md) and [test/alternator](../../test/alternator/README.md).
+more information about it in [test/cql-pytest](../../test/cqlpy/README.md) and [test/alternator](../../test/alternator/README.md).
 
 All tests in pytest suites consist of test-cases -- top-level functions
 starting with test_ -- and thus support the `suitename/testname::casename`

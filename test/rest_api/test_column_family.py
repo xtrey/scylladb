@@ -8,9 +8,7 @@ import requests
 import threading
 import time
 
-# Use the util.py library from ../cql-pytest:
-sys.path.insert(1, sys.path[0] + '/test/cql-pytest')
-from util import new_test_table, new_test_keyspace
+from test.cqlpy.util import new_test_table, new_test_keyspace
 from test.rest_api.rest_util import scylla_inject_error
 
 def do_test_column_family_attribute_api_table(cql, this_dc, rest_api, api_name):

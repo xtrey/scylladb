@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# Use the run.py library from ../cql-pytest:
+# Use the run.py library from ../cqlpy:
 import sys
-sys.path.insert(1, sys.path[0] + '/../cql-pytest')
-import run
+
+from test.cqlpy import run
 
 import redis
 

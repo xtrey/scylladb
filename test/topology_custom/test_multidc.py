@@ -4,14 +4,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 import logging
-import sys
 
 import pytest
 from cassandra.policies import WhiteListRoundRobinPolicy
 
-
-sys.path.insert(0, sys.path[0] + "/test/cql-pytest")
-import nodetool
+from test.cqlpy import nodetool
 from cassandra import ConsistencyLevel
 from cassandra.query import SimpleStatement
 from test.pylib.manager_client import ManagerClient

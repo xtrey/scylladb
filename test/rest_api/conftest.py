@@ -20,9 +20,7 @@ from cassandra.policies import RoundRobinPolicy
 
 from test.pylib.report_plugin import ReportPlugin
 
-# Use the util.py library from ../cql-pytest:
-sys.path.insert(1, sys.path[0] + '/test/cql-pytest')
-from util import unique_name, new_test_keyspace, keyspace_has_tablets, is_scylla
+from test.cqlpy.util import unique_name, new_test_keyspace, keyspace_has_tablets, is_scylla
 
 # By default, tests run against a Scylla server listening
 # on localhost:9042 for CQL and localhost:10000 for the REST API.
