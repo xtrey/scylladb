@@ -45,7 +45,7 @@ query::clustering_row_ranges slice(
             /*for_view=*/false,
             /*allow_filtering=*/true,
             restrictions::check_indexes::yes)
-            .get_clustering_bounds(query_options({}));
+            ->get_clustering_bounds(query_options({}));
 }
 
 /// Overload that parses the WHERE clause from string.  Named differently to disambiguate when where_clause is
@@ -427,11 +427,11 @@ SEASTAR_TEST_CASE(index_selection) {
                     /*for_view=*/false,
                     /*allow_filtering=*/true,
                     restrictions::check_indexes::yes);
-            auto [idx, restrictions_expr] = sr.find_idx(sim);
+            auto [idx, restrictions_expr] = sr->find_idx(sim);
             return {where_clause,
                     idx ? std::optional(idx->metadata().name()) : std::nullopt,
-                    sr.uses_secondary_indexing(),
-                    sr.need_filtering()};
+                    sr->uses_secondary_indexing(),
+                    sr->need_filtering()};
         };
 
         auto none = std::optional<sstring>{};
@@ -667,9 +667,9 @@ SEASTAR_TEST_CASE(combinatorial_restrictions) {
                 ? expr::expression(expr::conjunction{})
                 : cql3::util::where_clause_to_relations(where_clause, cql3::dialect{});
 
-            std::optional<restrictions::statement_restrictions> sr;
+            shared_ptr<const restrictions::statement_restrictions> sr;
             try {
-                sr.emplace(restrictions::analyze_statement_restrictions(
+                sr = restrictions::analyze_statement_restrictions(
                         e.data_dictionary(),
                         schema,
                         statements::statement_type::SELECT,
@@ -678,7 +678,7 @@ SEASTAR_TEST_CASE(combinatorial_restrictions) {
                         /*contains_only_static_columns=*/false,
                         /*for_view=*/false,
                         /*allow_filtering=*/true,
-                        restrictions::check_indexes::yes));
+                        restrictions::check_indexes::yes);
             } catch (const exceptions::invalid_request_exception&) {
             }
 
