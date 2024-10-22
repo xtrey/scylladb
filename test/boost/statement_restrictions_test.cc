@@ -1106,14 +1106,13 @@ SEASTAR_TEST_CASE(combinatorial_restrictions) {
             // --- Index table range APIs ---
             if (uses_idx) {
                 bool is_local_idx = (expected_idx == "comb_v3_local");
-                const auto& view_schema = *sr->get_view_schema();
 
                 if (is_local_idx) {
                     // --- get_local_index_clustering_ranges ---
                     // Local index CK prefix = (indexed_col, base_ck1, ...).
                     // The indexed column is always EQ (1 value); CK IN values
                     // multiply via the base CK appended to the prefix.
-                    auto local_ranges = sr->get_local_index_clustering_ranges(query_options({}), view_schema);
+                    auto local_ranges = sr->get_local_index_clustering_ranges(query_options({}));
                     unsigned expected_local = 1 * idx_range_multiplier;
                     BOOST_CHECK_MESSAGE(!local_ranges.empty(),
                         ctx_msg("get_local_index_clustering_ranges should not be empty"));
@@ -1125,7 +1124,7 @@ SEASTAR_TEST_CASE(combinatorial_restrictions) {
                     // Global index CK prefix = (token, pk1, pk2, ...base CK...).
                     // With full PK: CK IN values expand the prefix.
                     // Without full PK: prefix is empty → 1 open-ended range.
-                    auto global_ranges = sr->get_global_index_clustering_ranges(query_options({}), view_schema);
+                    auto global_ranges = sr->get_global_index_clustering_ranges(query_options({}));
                     BOOST_CHECK_MESSAGE(!global_ranges.empty(),
                         ctx_msg("get_global_index_clustering_ranges should not be empty"));
                     if (full_pk) {
@@ -1148,7 +1147,7 @@ SEASTAR_TEST_CASE(combinatorial_restrictions) {
                     // long_type, so this dispatches to the same
                     // get_single_column_clustering_bounds as
                     // get_global_index_clustering_ranges.
-                    auto token_ranges = sr->get_global_index_token_clustering_ranges(query_options({}), view_schema);
+                    auto token_ranges = sr->get_global_index_token_clustering_ranges(query_options({}));
                     BOOST_CHECK_MESSAGE(token_ranges.size() == global_ranges.size(),
                         ctx_msg(fmt::format(
                             "get_global_index_token_clustering_ranges: {} ranges, want {} (same as global)",
