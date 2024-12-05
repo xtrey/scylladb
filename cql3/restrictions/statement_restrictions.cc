@@ -272,6 +272,10 @@ make_conjunction(predicate a, predicate b) {
         on_internal_error(rlogger, "make_conjunction: merging predicate targets");
     }
 
+    if (!a.comparable && !b.comparable) {
+        on_internal_error(rlogger, "make_conjunction: merging non-comparable columns");
+    }
+
     auto& sa = a.solve_for;
     auto& sb = b.solve_for;
 
@@ -290,6 +294,7 @@ make_conjunction(predicate a, predicate b) {
         .filter = make_conjunction(std::move(a.filter), std::move(b.filter)),
         .on = a.on,
         .is_singleton = false,  // Even if both columns are singletons, the conjunction of them can return zero values.
+        .comparable = a.comparable && b.comparable,  // Result is only comparable if both inputs follow CQL comparison semantics.
     };
 }
 
@@ -1065,10 +1070,11 @@ static std::vector<predicate> extract_clustering_prefix_restrictions(
             }
             with_current_binary_operator(*this, [&] (const binary_operator& b) {
                 multi.push_back(predicate{
-                    .solve_for = nullptr, // FIXME: implement
+                    .solve_for = std::bind_front(possible_column_values, /* col */ nullptr, b),
                     .filter = b,
                     .on = on_clustering_key_prefix{prefix},
                     .is_singleton = false,
+                    .comparable = false,
                 });
             });
         }
