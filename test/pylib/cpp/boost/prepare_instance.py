@@ -16,6 +16,7 @@ from typing import Any, Generator
 
 from test.pylib.host_registry import HostRegistry
 from test.pylib.minio_server import MinioServer
+from test.pylib.resource_gather import setup_cgroup
 from test.pylib.s3_proxy import S3ProxyServer
 from test.pylib.s3_server_mock import MockS3Server
 from test.pylib.util import LogPrefixAdapter
@@ -78,8 +79,8 @@ class PrepareMainProcessEnv:
         for directory in [self.temp_dir, *pytest_dirs]:
             if not directory.exists():
                 os.makedirs(directory, exist_ok=True)
-            else:
-                shutil.rmtree(directory)
+            # else:
+            #     shutil.rmtree(directory)
         self.env_file = env_file
         hosts = HostRegistry()
         self.loop = asyncio.new_event_loop()
@@ -98,7 +99,7 @@ class PrepareMainProcessEnv:
         Start the S3 mock server and MinIO for the tests.
         Create a file with environment variables for connecting to them.
         """
-
+        setup_cgroup(True)
         tasks = [
             self.loop.create_task(self.minio.start()),
             self.loop.create_task(self.mock_s3.start()),

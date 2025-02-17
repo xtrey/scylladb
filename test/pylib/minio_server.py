@@ -51,6 +51,7 @@ class MinioServer:
         self.default_pass = 'minioadmin'
         self.bucket_name = 'testbucket'
         self.access_key = os.environ.get(self.ENV_ACCESS_KEY, ''.join(random.choice(string.hexdigits) for i in range(16)))
+        self.acc_key = self.access_key
         self.secret_key = os.environ.get(self.ENV_SECRET_KEY, ''.join(random.choice(string.hexdigits) for i in range(32)))
         self.log_filename = (self.tempdir / 'minio').with_suffix(".log")
         self.old_env = dict()

@@ -14,7 +14,6 @@ import difflib
 import filecmp
 import glob
 import itertools
-import logging
 import multiprocessing
 import os
 import pathlib
@@ -23,29 +22,21 @@ import resource
 import shlex
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
-import traceback
 import xml.etree.ElementTree as ET
 import yaml
-from random import randint
-from tempfile import TemporaryDirectory
 
 from abc import ABC, abstractmethod
 from io import StringIO
 from scripts import coverage    # type: ignore
 from test.pylib.artifact_registry import ArtifactRegistry
-from test.pylib.cpp.ldap.prepare_instance import try_something_backoff, can_connect, setup
 from test.pylib.host_registry import HostRegistry
 from test.pylib.pool import Pool
-from test.pylib.s3_proxy import S3ProxyServer
-from test.pylib.s3_server_mock import MockS3Server
 from test.pylib.resource_gather import setup_cgroup, run_resource_watcher, get_resource_gather
 from test.pylib.util import LogPrefixAdapter, get_configured_modes, ninja
 from test.pylib.scylla_cluster import ScyllaServer, ScyllaCluster, get_cluster_manager, merge_cmdline_options
-from test.pylib.minio_server import MinioServer
 from typing import Dict, List, Callable, Any, Iterable, Optional, Awaitable, Union
 import logging
 from test.pylib import coverage_utils
@@ -310,186 +301,6 @@ class TestSuite(ABC):
     def need_coverage(self):
         return self.options.coverage and (self.mode in self.options.coverage_modes) and bool(self.cfg.get("coverage",True))
 
-class UnitTestSuite(TestSuite):
-    """TestSuite instantiation for non-boost unit tests"""
-
-    def __init__(self, path: str, cfg: dict, options: argparse.Namespace, mode: str) -> None:
-        super().__init__(path, cfg, options, mode)
-        # Map of custom test command line arguments, if configured
-        self.custom_args = cfg.get("custom_args", {})
-        self.extra_cmdline_options = cfg.get("extra_scylla_cmdline_options", [])
-        # Map of tests that cannot run with compaction groups
-        self.all_can_run_compaction_groups_except = cfg.get("all_can_run_compaction_groups_except")
-
-    async def create_test(self, shortname, casename, suite, args):
-        exe = path_to(suite.mode, "test", suite.name, shortname)
-        if not os.access(exe, os.X_OK):
-            print(palette.warn(f"Unit test executable {exe} not found."))
-            return
-        test = UnitTest(self.next_id((shortname, self.suite_key)), shortname, suite, args)
-        self.tests.append(test)
-
-    def prepare_arg(self, arg):
-        extra_cmdline_options = ' '.join(self.extra_cmdline_options)
-        return f'{arg} {extra_cmdline_options}'
-
-    async def add_test(self, shortname, casename) -> None:
-        """Create a UnitTest class with possibly custom command line
-        arguments and add it to the list of tests"""
-        # Skip tests which are not configured, and hence are not built
-        if os.path.join("test", self.name, shortname) not in self.options.tests:
-            return
-
-        # Default seastar arguments, if not provided in custom test options,
-        # are two cores and 2G of RAM
-        args = self.custom_args.get(shortname, ["-c2 -m2G"])
-        args = merge_cmdline_options(args, self.options.extra_scylla_cmdline_options)
-        for a in args:
-            await self.create_test(shortname, casename, self, self.prepare_arg(a))
-
-    @property
-    def pattern(self) -> str:
-        # This should only match individual tests and not combined_tests.cc
-        # file of the combined test.
-        # It is because combined_tests.cc itself does not contain any tests.
-        # To keep the code simple, we have avoided this by renaming
-        # combined test file to “_tests.cc” instead of changing the match
-        # pattern.
-        return "*_test.cc"
-
-
-class BoostTestSuite(UnitTestSuite):
-    """TestSuite for boost unit tests"""
-
-    # A cache of individual test cases, for which we have called
-    # --list_content. Static to share across all modes.
-    _case_cache: Dict[str, List[str]] = dict()
-
-    _exec_name_cache: Dict[str, str] = dict()
-
-    def _generate_cache(self, exec_path, exec_name) -> None:
-        res = subprocess.run(
-                [exec_path, '--list_content'],
-                check=True,
-                capture_output=True,
-                env=dict(os.environ,
-                         **{"ASAN_OPTIONS": "halt_on_error=0"}),
-            )
-        testname = None
-        fqname = None
-        for line in res.stderr.decode().splitlines():
-            if not line.startswith('    '):
-                testname = line.strip().rstrip('*')
-                fqname = os.path.join(self.mode, self.name, testname)
-                self._exec_name_cache[fqname] = exec_name
-                self._case_cache[fqname] = []
-            else:
-                casename = line.strip().rstrip('*')
-                if casename.startswith('_'):
-                    continue
-                self._case_cache[fqname].append(casename)
-
-    def __init__(self, path, cfg: dict, options: argparse.Namespace, mode) -> None:
-        super().__init__(path, cfg, options, mode)
-        exec_name = 'combined_tests'
-        exec_path = path_to(self.mode, "test", self.name, exec_name)
-        # Apply combined test only for test/boost,
-        # cache the tests only if the executable exists, so we can
-        # run test.py with a partially built tree
-        if self.name == 'boost' and os.path.exists(exec_path):
-            self._generate_cache(exec_path, exec_name)
-
-    async def create_test(self, shortname: str, casename: str, suite, args) -> None:
-        fqname = os.path.join(self.mode, self.name, shortname)
-        if fqname in self._exec_name_cache:
-            execname = self._exec_name_cache[fqname]
-            combined_test = True
-        else:
-            execname = None
-            combined_test = False
-        exe = path_to(suite.mode, "test", suite.name, execname if combined_test else shortname)
-        if not os.access(exe, os.X_OK):
-            print(palette.warn(f"Boost test executable {exe} not found."))
-            return
-        options = self.options
-        allows_compaction_groups = self.all_can_run_compaction_groups_except != None and shortname not in self.all_can_run_compaction_groups_except
-        if options.parallel_cases and (shortname not in self.no_parallel_cases) and casename is None:
-            fqname = os.path.join(self.mode, self.name, shortname)
-            # since combined tests are preloaded to self._case_cache, this will
-            # only run in non-combined test mode
-            if fqname not in self._case_cache:
-                process = await asyncio.create_subprocess_exec(
-                    exe, *['--list_content'],
-                    stderr=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    env=dict(os.environ,
-                             **{"ASAN_OPTIONS": "halt_on_error=0"}),
-                    preexec_fn=os.setsid,
-                )
-                _, stderr = await asyncio.wait_for(process.communicate(), options.timeout)
-                # --list_content produces the list of all test cases in the file. When BOOST_DATA_TEST_CASE is used it
-                # will additionally produce the lines with numbers for each case preserving the function name like this:
-                # test_singular_tree_ptr_sz*
-                #     _0*
-                #     _1*
-                #     _2*
-                # however, it's only possible to run test_singular_tree_ptr_sz that will execute all test cases
-                # this line catches only test function name ignoring unrelated lines like '_0'
-                # Note: this will ignore any test case starting with a '_' symbol
-                case_list = [case[:-1] for case in stderr.decode().splitlines() if case.endswith('*') and not case.strip().startswith('_')]
-                self._case_cache[fqname] = case_list
-
-            case_list = self._case_cache[fqname]
-            if len(case_list) == 1:
-                test = BoostTest(self.next_id((shortname, self.suite_key)), shortname, suite, args, None, allows_compaction_groups, execname)
-                self.tests.append(test)
-            else:
-                for case in case_list:
-                    test = BoostTest(self.next_id((shortname, self.suite_key, case)), shortname, suite, args, case, allows_compaction_groups, execname)
-                    self.tests.append(test)
-        else:
-            test = BoostTest(self.next_id((shortname, self.suite_key)), shortname, suite, args, casename, allows_compaction_groups, execname)
-            self.tests.append(test)
-
-    async def add_test(self, shortname, casename) -> None:
-        """Create a UnitTest class with possibly custom command line
-        arguments and add it to the list of tests"""
-        fqname = os.path.join(self.mode, self.name, shortname)
-        if fqname in self._exec_name_cache:
-            execname = self._exec_name_cache[fqname]
-            combined_test = True
-        else:
-            combined_test = False
-        # Skip tests which are not configured, and hence are not built
-        if os.path.join("test", self.name, execname if combined_test else shortname) not in self.options.tests:
-                return
-        # Default seastar arguments, if not provided in custom test options,
-        # are two cores and 2G of RAM
-        args = self.custom_args.get(shortname, ["-c2 -m2G"])
-        args = merge_cmdline_options(args, self.options.extra_scylla_cmdline_options)
-        for a in args:
-            await self.create_test(shortname, casename, self, self.prepare_arg(a))
-
-    def junit_tests(self) -> Iterable['Test']:
-        """Boost tests produce an own XML output, so are not included in a junit report"""
-        return []
-
-    def boost_tests(self) -> Iterable['Tests']:
-        return self.tests
-
-
-class LdapTestSuite(UnitTestSuite):
-    """TestSuite for ldap unit tests"""
-
-    async def create_test(self, shortname, casename, suite, args):
-        test = LdapTest(self.next_id((shortname, self.suite_key)), shortname, suite, args)
-        self.tests.append(test)
-
-    def junit_tests(self):
-        """Ldap tests produce an own XML output, so are not included in a junit report"""
-        return []
-
-
 class PythonTestSuite(TestSuite):
     """A collection of Python pytests against a single Scylla instance"""
 
@@ -598,6 +409,19 @@ class PythonTestSuite(TestSuite):
         if not os.access(self.scylla_exe, os.X_OK):
             raise PermissionError(f"{self.scylla_exe} is not executable.")
         return await super().run(test, options)
+
+class DummyTestSuite(TestSuite):
+    def build_test_list(self) -> List[str]:
+        return []
+
+    async def add_test_list(self) -> None:
+        pass
+
+    def pattern(self) -> str:
+        assert False
+
+    def add_test(self, shortname: str, casename: str) -> None:
+        pass
 
 
 class CQLApprovalTestSuite(PythonTestSuite):
@@ -757,147 +581,8 @@ class Test:
             system_out.text = read_log(self.log_filename)
 
 
-class UnitTest(Test):
-    standard_args = shlex.split("--overprovisioned --unsafe-bypass-fsync 1 "
-                                "--kernel-page-cache 1 "
-                                "--blocked-reactor-notify-ms 2000000 --collectd 0 "
-                                "--max-networking-io-control-blocks=100 ")
-
-    def __init__(self, test_no: int, shortname: str, suite, args: str) -> None:
-        super().__init__(test_no, shortname, suite)
-        self.path = path_to(self.mode, "test", suite.name, shortname.split('.')[0])
-        self.args = shlex.split(args) + UnitTest.standard_args
-        if self.mode == "coverage":
-            self.env.update(coverage.env(self.path))
-
-    def print_summary(self) -> None:
-        print("Output of {} {}:".format(self.path, " ".join(self.args)))
-        print(read_log(self.log_filename))
-
-    async def run(self, options) -> Test:
-        self.success = await run_test(self, options, env=self.env)
-        logging.info("Test %s %s", self.uname, "succeeded" if self.success else "failed ")
-        return self
-
-
 TestPath = collections.namedtuple('TestPath', ['suite_name', 'test_name', 'case_name'])
 
-class BoostTest(Test):
-    """A unit test which can produce its own XML output"""
-
-    standard_args = shlex.split("--overprovisioned --unsafe-bypass-fsync 1 "
-                                "--kernel-page-cache 1 "
-                                "--blocked-reactor-notify-ms 2000000 --collectd 0 "
-                                "--max-networking-io-control-blocks=100 ")
-
-    def __init__(self, test_no: int, shortname: str, suite, args: str,
-                 casename: Optional[str], allows_compaction_groups : bool, execname: Optional[str]) -> None:
-        boost_args = []
-        combined_test = True if execname else False
-        _shortname = shortname
-        if casename:
-            shortname += '.' + casename
-            if combined_test:
-                boost_args += ['--run_test=' + _shortname + '/' + casename]
-            else:
-                boost_args += ['--run_test=' + casename]
-        else:
-            if combined_test:
-                boost_args += ['--run_test=' + _shortname]
-
-        super().__init__(test_no, shortname, suite)
-        if combined_test:
-            self.path = path_to(self.mode, "test", suite.name, execname)
-        else:
-            self.path = path_to(self.mode, "test", suite.name, shortname.split('.')[0])
-        self.args = shlex.split(args) + UnitTest.standard_args
-        if self.mode == "coverage":
-            self.env.update(coverage.env(self.path))
-
-        self.xmlout = os.path.join(suite.options.tmpdir, self.mode, "xml", self.uname + ".xunit.xml")
-        boost_args += ['--report_level=no',
-                       '--logger=HRF,test_suite:XML,test_suite,' + self.xmlout]
-        boost_args += ['--catch_system_errors=no']  # causes undebuggable cores
-        boost_args += ['--color_output=false']
-        boost_args += ['--']
-        self.args = boost_args + self.args
-        self.casename = casename
-        self.__test_case_elements: list[ET.Element] = []
-        self.allows_compaction_groups = allows_compaction_groups
-
-    def reset(self) -> None:
-        """Reset the test before a retry, if it is retried as flaky"""
-        super().reset()
-        self.__test_case_elements = []
-
-    def get_test_cases(self) -> list[ET.Element]:
-        if not self.__test_case_elements:
-            self.__parse_logger()
-        return self.__test_case_elements
-
-    @staticmethod
-    def test_path_of_element(test: ET.Element) -> TestPath:
-        path = test.attrib['path']
-        prefix, case_name = path.rsplit('::', 1)
-        suite_name, test_name = prefix.split('.', 1)
-        return TestPath(suite_name, test_name, case_name)
-
-    def __parse_logger(self) -> None:
-        def attach_path_and_mode(test):
-            # attach the "path" to the test so we can group the tests by this string
-            test_name = test.attrib['name']
-            prefix = self.name.replace(os.path.sep, '.')
-            test.attrib['path'] = f'{prefix}::{test_name}'
-            test.attrib['mode'] = self.mode
-            return test
-
-        try:
-            root = ET.parse(self.xmlout).getroot()
-            # only keep the tests which actually ran, the skipped ones do not have
-            # TestingTime tag in the corresponding TestCase tag.
-            self.__test_case_elements = map(attach_path_and_mode,
-                                            root.findall(".//TestCase[TestingTime]"))
-            os.unlink(self.xmlout)
-        except ET.ParseError as e:
-            message = palette.crit(f"failed to parse XML output '{self.xmlout}': {e}")
-            if e.msg.__contains__("no element found"):
-                message = palette.crit(f"Empty testcase XML output, possibly caused by a crash in the cql_test_env.cc, "
-                                       f"details: '{self.xmlout}': {e}")
-            print(f"error: {self.name}: {message}")
-
-    def check_log(self, trim: bool) -> None:
-        self.__parse_logger()
-        super().check_log(trim)
-
-    async def run(self, options):
-        if options.random_seed:
-            self.args += ['--random-seed', options.random_seed]
-        if self.allows_compaction_groups and options.x_log2_compaction_groups:
-            self.args += [ "--x-log2-compaction-groups", str(options.x_log2_compaction_groups) ]
-        self.success = await run_test(self, options, env=self.env)
-        logging.info("Test %s %s", self.uname, "succeeded" if self.success else "failed ")
-        return self
-
-    def write_junit_failure_report(self, xml_res: ET.Element) -> None:
-        """Does not write junit report for Jenkins legacy reasons"""
-        assert False
-
-    def print_summary(self) -> None:
-        print("Output of {} {}:".format(self.path, " ".join(self.args)))
-        print(read_log(self.log_filename))
-
-
-class LdapTest(BoostTest):
-    """A unit test which can produce its own XML output, and needs an ldap server"""
-
-    def __init__(self, test_no, shortname, args, suite):
-        super().__init__(test_no, shortname, args, suite, None, False, None)
-
-    async def setup(self, port, options):
-        instances_root = pathlib.Path(options.tmpdir) / self.mode / 'ldap_instances'
-        byte_limit = options.byte_limit if options.byte_limit else randint(0, 2000)
-        project_root = pathlib.Path(os.path.dirname(__file__))
-        return setup(project_root=project_root, port=port, instance_root=instances_root, byte_limit=byte_limit)
 
 
 class CQLApprovalTest(Test):
@@ -1327,11 +1012,6 @@ async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, e
     """Run test program, return True if success else False"""
 
     with test.log_filename.open("wb") as log:
-        global toxiproxy_id_gen
-        toxiproxy_id = toxiproxy_id_gen
-        toxiproxy_id_gen += 1
-        ldap_port = 5000 + (toxiproxy_id * 3) % 55000
-        cleanup_fn = None
         finject_desc = None
         def report_error(error, failure_injection_desc = None):
             msg = "=== TEST.PY SUMMARY START ===\n"
@@ -1341,11 +1021,6 @@ async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, e
                 msg += 'failure injection: {}'.format(failure_injection_desc)
             log.write(msg.encode(encoding="UTF-8"))
 
-        try:
-            cleanup_fn, finject_desc, test_env = await test.setup(ldap_port, options)
-        except Exception as e:
-            report_error("Test setup failed ({})\n{}".format(str(e), traceback.format_exc()))
-            return False
         process = None
         stdout = None
         logging.info("Starting test %s: %s %s", test.uname, test.path, " ".join(test.args))
@@ -1361,19 +1036,6 @@ async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, e
             "detect_stack_use_after_return=1",
             os.getenv("ASAN_OPTIONS"),
         ]
-        ldap_instance_path = os.path.join(
-            os.path.abspath(os.path.join(options.tmpdir, test.mode, 'ldap_instances')),
-            str(ldap_port))
-        saslauthd_mux_path = os.path.join(ldap_instance_path, 'mux')
-        if options.manual_execution:
-            print('Please run the following shell command, then press <enter>:')
-            test_env_string = " ".join([f"{k}={v}" for k,v in test_env.items()])
-            print('{} {}'.format(
-                test_env_string, ' '.join([shlex.quote(e) for e in [test.path, *test.args]])))
-            input('-- press <enter> to continue --')
-            if cleanup_fn is not None:
-                cleanup_fn()
-            return True
         try:
             resource_gather = get_resource_gather(options.gather_metrics, test, options.tmpdir)
             resource_gather.make_cgroup()
@@ -1382,8 +1044,6 @@ async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, e
                 ":".join(filter(None, UBSAN_OPTIONS))).encode(encoding="UTF-8"))
             log.write("export ASAN_OPTIONS='{}'\n".format(
                 ":".join(filter(None, ASAN_OPTIONS))).encode(encoding="UTF-8"))
-            for k,v in test_env.items():
-                log.write(f"export {k}={v}\n".encode(encoding="UTF-8"))
             log.write("{} {}\n".format(test.path, " ".join(test.args)).encode(encoding="UTF-8"))
             log.write("=== TEST.PY TEST {} OUTPUT ===\n".format(test.uname).encode(encoding="UTF-8"))
             log.flush()
@@ -1399,8 +1059,7 @@ async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, e
             test_running_event = asyncio.Event()
             test_resource_watcher = resource_gather.cgroup_monitor(test_event=test_running_event)
 
-            test_env.update(
-                dict(os.environ,
+            test_env = dict(os.environ,
                          UBSAN_OPTIONS=":".join(filter(None, UBSAN_OPTIONS)),
                          ASAN_OPTIONS=":".join(filter(None, ASAN_OPTIONS)),
                          # TMPDIR env variable is used by any seastar/scylla
@@ -1409,7 +1068,6 @@ async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, e
                          SCYLLA_TEST_ENV='yes',
                          **env,
                  )
-            )
             process = await asyncio.create_subprocess_exec(
                 path, *args,
                 stderr=log,
@@ -1458,9 +1116,6 @@ async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, e
                 report_error("Test was cancelled: the parent process is exiting")
         except Exception as e:
             report_error("Failed to run the test:\n{e}".format(e=e))
-        finally:
-            if cleanup_fn is not None:
-                cleanup_fn()
     return False
 
 
@@ -1654,17 +1309,62 @@ async def find_tests(options: argparse.Namespace) -> None:
                 suite = TestSuite.opt_create(f, options, mode)
                 await suite.add_test_list()
 
-    if not TestSuite.test_count():
-        if len(options.name):
-            print("Test {} not found".format(palette.path(options.name[0])))
-            sys.exit(1)
-        else:
-            print(palette.warn("No tests found. Please enable tests in ./configure.py first."))
-            sys.exit(0)
-
     logging.info("Found %d tests, repeat count is %d, starting %d concurrent jobs",
                  TestSuite.test_count(), options.repeat, options.jobs)
     print("Found {} tests.".format(TestSuite.test_count()))
+
+def run_pytest(options: argparse.Namespace, run_id: int):
+    tmp_dir = pathlib.Path(options.tmpdir)
+    allure_dir = tmp_dir / 'allure'
+    expression = ''
+    if options.name:
+        expression += ' '.join(options.name)
+    expression += f'{"and not ".join(options.skip_patterns)}' if options.skip_patterns else ''
+    modes = ' '.join([f'--mode={mode}' for mode in options.modes])
+    args = [
+        'python',
+        '-m',
+        'pytest',
+        "-s",  # don't capture print() output inside pytest
+        '--color=yes',
+        "--log-level=DEBUG",  # Capture logs
+        '-v',
+        "--junit-xml={}".format(tmp_dir / f'pytest_cpp_{run_id}.xml'),
+        "-rs",
+        "--run_id={}".format(run_id),
+        f'--maxfail={options.max_failures}',
+        modes,
+        f'-n{int(options.jobs)}',
+    ]
+    if options.list_tests:
+        args.extend(['--collect-only', '-q'])
+    if options.gather_metrics:
+        args.append('--gather-metrics')
+    if len(expression) > 1:
+        args.extend(['-k',expression])
+    args.append(f"--alluredir={allure_dir}")
+    if not options.save_log_on_success:
+        args.append("--allure-no-capture")
+    if options.markers:
+        args.append(f"-m={options.markers}")
+    args.append('test/boost test/unit test/ldap test/raft')
+
+    args = shlex.split(' '.join(args))
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True)
+    try:
+        # Read output from pytest and print it to the console
+        for line in iter(p.stdout.readline, ''):
+            sys.stdout.write(line)
+            sys.stdout.flush()
+
+        # Wait for pytest to finish and get its return code
+        p.wait(timeout=60)
+    except subprocess.TimeoutExpired:
+        print('Timeout reached')
+        p.kill()
+    except KeyboardInterrupt:
+        p.kill()
+        raise
 
 
 async def run_all_tests(signaled: asyncio.Event, options: argparse.Namespace) -> None:
@@ -1693,22 +1393,8 @@ async def run_all_tests(signaled: asyncio.Event, options: argparse.Namespace) ->
                 console.print_progress(result)
         return failed
 
-    ms = MinioServer(options.tmpdir, '127.0.0.1', LogPrefixAdapter(logging.getLogger('minio'), {'prefix': 'minio'}))
-    await ms.start()
-    TestSuite.artifacts.add_exit_artifact(None, ms.stop)
-
-    hosts = HostRegistry()
-    mock_s3_server = MockS3Server(await hosts.lease_host(), 2012,
-                                  LogPrefixAdapter(logging.getLogger('s3_mock'), {'prefix': 's3_mock'}))
-    await mock_s3_server.start()
-    TestSuite.artifacts.add_exit_artifact(None, mock_s3_server.stop)
-
-    minio_uri = "http://" + os.environ[ms.ENV_ADDRESS] + ":" + os.environ[ms.ENV_PORT]
-    proxy_s3_server = S3ProxyServer(await hosts.lease_host(), 9002, minio_uri, 3, int(time.time()),
-                                    LogPrefixAdapter(logging.getLogger('s3_proxy'), {'prefix': 's3_proxy'}))
-    await proxy_s3_server.start()
-    TestSuite.artifacts.add_exit_artifact(None, proxy_s3_server.stop)
-
+    for i in range(1, options.repeat+1):
+        run_pytest(options, run_id=i)
     console.print_start_blurb()
     max_failures = options.max_failures
     failed = 0
@@ -1796,192 +1482,6 @@ def format_unidiff(fromfile: str, tofile: str) -> str:
         return buf.getvalue()
 
 
-def write_junit_report(tmpdir: str, mode: str) -> None:
-    junit_filename = os.path.join(tmpdir, mode, "xml", "junit.xml")
-    total = 0
-    failed = 0
-    skipped = 0
-    xml_results = ET.Element("testsuite", name="non-boost tests", errors="0")
-    for suite in TestSuite.suites.values():
-        for test in suite.junit_tests():
-            if test.mode != mode:
-                continue
-            total += 1
-            test_time = f"{test.time_end - test.time_start:.3f}"
-            # add the suite name to disambiguate tests named "run"
-            xml_res = ET.SubElement(xml_results, 'testcase',
-                                    name="{}.{}.{}.{}".format(test.suite.name, test.shortname, mode, test.id),
-                                    time=test_time)
-            if test.failed:
-                failed += 1
-                test.write_junit_failure_report(xml_res)
-            if test.did_not_run:
-                skipped += 1
-    if total == 0:
-        return
-    xml_results.set("tests", str(total))
-    xml_results.set("failures", str(failed))
-    xml_results.set("skipped", str(skipped))
-    with open(junit_filename, "w") as f:
-        ET.ElementTree(xml_results).write(f, encoding="unicode")
-
-
-def summarize_boost_tests(tests):
-    # in case we run a certain test multiple times
-    # - if any of the runs failed, the test is considered failed, and
-    #   the last failed run is returned.
-    # - otherwise, the last successful run is returned
-    failed_test = None
-    passed_test = None
-    num_failed_tests = collections.defaultdict(int)
-    num_passed_tests = collections.defaultdict(int)
-    for test in tests:
-        error = None
-        for tag in ['Error', 'FatalError', 'Exception']:
-            error = test.find(tag)
-            if error is not None:
-                break
-        mode = test.attrib['mode']
-        if error is None:
-            passed_test = test
-            num_passed_tests[mode] += 1
-        else:
-            failed_test = test
-            num_failed_tests[mode] += 1
-
-    if failed_test is not None:
-        test = failed_test
-    else:
-        test = passed_test
-
-    num_failed = sum(num_failed_tests.values())
-    num_passed = sum(num_passed_tests.values())
-    num_total = num_failed + num_passed
-    if num_total == 1:
-        return test
-    if num_failed == 0:
-        return test
-    # we repeated this test for multiple times.
-    #
-    # Boost::test's XML logger schema does not allow us to put text directly in a
-    # TestCase tag, so create a dummy Message tag in the TestCase for carrying the
-    # summary. and the schema requires that the tags should be listed in following order:
-    # 1. TestSuite
-    # 2. Info
-    # 3. Error
-    # 3. FatalError
-    # 4. Message
-    # 5. Exception
-    # 6. Warning
-    # and both "file" and "line" are required in an "Info" tag, so appease it. assuming
-    # there is no TestSuite under tag TestCase, we always add Info as the first subelements
-    if num_passed == 0:
-        message = ET.Element('Info', file=test.attrib['file'], line=test.attrib['line'])
-        message.text = f'The test failed {num_failed}/{num_total} times'
-        test.insert(0, message)
-    else:
-        message = ET.Element('Info', file=test.attrib['file'], line=test.attrib['line'])
-        modes = ', '.join(f'{mode}={n}' for mode, n in num_failed_tests.items())
-        message.text = f'failed: {modes}'
-        test.insert(0, message)
-
-        message = ET.Element('Info', file=test.attrib['file'], line=test.attrib['line'])
-        modes = ', '.join(f'{mode}={n}' for mode, n in num_passed_tests.items())
-        message.text = f'passed: {modes}'
-        test.insert(0, message)
-
-        message = ET.Element('Info', file=test.attrib['file'], line=test.attrib['line'])
-        message.text = f'{num_failed} out of {num_total} times failed.'
-        test.insert(0, message)
-    return test
-
-
-def write_consolidated_boost_junit_xml(tmpdir: str, mode: str) -> str:
-    # collects all boost tests sorted by their full names
-    boost_tests = itertools.chain.from_iterable(suite.boost_tests()
-                                                for suite in TestSuite.suites.values())
-    test_cases = itertools.chain.from_iterable(test.get_test_cases()
-                                               for test in boost_tests)
-    test_cases = sorted(test_cases, key=BoostTest.test_path_of_element)
-
-    xml = ET.Element("TestLog")
-    for full_path, tests in itertools.groupby(
-            test_cases,
-            key=BoostTest.test_path_of_element):
-        # dedup the tests with the same name, so only the representative one is
-        # preserved
-        test_case = summarize_boost_tests(tests)
-        test_case.attrib.pop('path')
-        test_case.attrib.pop('mode')
-
-        suite_name, test_name, _ = full_path
-        suite = xml.find(f"./TestSuite[@name='{suite_name}']")
-        if suite is None:
-            suite = ET.SubElement(xml, 'TestSuite', name=suite_name)
-        test = suite.find(f"./TestSuite[@name='{test_name}']")
-        if test is None:
-            test = ET.SubElement(suite, 'TestSuite', name=test_name)
-        test.append(test_case)
-    et = ET.ElementTree(xml)
-    xunit_file = f'{tmpdir}/{mode}/xml/boost.xunit.xml'
-    et.write(xunit_file, encoding='unicode')
-    return xunit_file
-
-
-def boost_to_junit(boost_xml, junit_xml):
-    boost_root = ET.parse(boost_xml).getroot()
-    junit_root = ET.Element('testsuites')
-
-    def parse_tag_output(test_case_element: ET.Element, tag_output: str) -> str:
-        text_template = '''
-            [{level}] - {level_message}
-            [FILE] - {file_name}
-            [LINE] - {line_number}
-            '''
-        text = ''
-        tag_outputs = test_case_element.findall(tag_output)
-        if tag_outputs:
-            for tag_output in tag_outputs:
-                text += text_template.format(level='Info', level_message=tag_output.text,
-                                             file_name=tag_output.get('file'), line_number=tag_output.get('line'))
-        return text
-
-    # report produced {write_consolidated_boost_junit_xml} have the nested structure suite_boost -> [suite1, suite2, ...]
-    # so we are excluding the upper suite with name boost
-    for test_suite in boost_root.findall('./TestSuite/TestSuite'):
-        suite_time = 0.0
-        suite_test_total = 0
-        suite_test_fails_number = 0
-
-        junit_test_suite = ET.SubElement(junit_root, 'testsuite')
-        junit_test_suite.attrib['name'] = test_suite.attrib['name']
-
-        test_cases = test_suite.findall('TestCase')
-        for test_case in test_cases:
-            # convert the testing time: boost uses microseconds and Junit uses seconds
-            test_case_time = int(test_case.find('TestingTime').text) / 1_000_000
-            suite_time += test_case_time
-            suite_test_total += 1
-
-            junit_test_case = ET.SubElement(junit_test_suite, 'testcase')
-            junit_test_case.set('name', test_case.get('name'))
-            junit_test_case.set('time', str(test_case_time))
-            junit_test_case.set('file', test_case.get('file'))
-            junit_test_case.set('line', test_case.get('line'))
-
-            system_out = ET.SubElement(junit_test_case, 'system-out')
-            system_out.text = ''
-            for tag in ['Info', 'Message', 'Exception']:
-                output = parse_tag_output(test_case, tag)
-                if output:
-                    system_out.text += output
-
-        junit_test_suite.set('tests', str(suite_test_total))
-        junit_test_suite.set('time', str(suite_time))
-        junit_test_suite.set('failures', str(suite_test_fails_number))
-    ET.ElementTree(junit_root).write(junit_xml, encoding='UTF-8')
-
-
 def open_log(tmpdir: str, log_file_name: str, log_level: str) -> None:
     pathlib.Path(tmpdir).mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
@@ -2017,28 +1517,18 @@ async def main() -> int:
 
     setup_signal_handlers(asyncio.get_running_loop(), signaled)
 
-    tp_server = None
     try:
-        if [t for t in TestSuite.all_tests() if isinstance(t, LdapTest)]:
-            tp_server = subprocess.Popen('toxiproxy-server', stderr=subprocess.DEVNULL)
-            def can_connect_to_toxiproxy():
-                return can_connect(('127.0.0.1', 8474))
-            if not try_something_backoff(can_connect_to_toxiproxy):
-                raise Exception('Could not connect to toxiproxy')
-
-        try:
-            logging.info('running all tests')
-            await run_all_tests(signaled, options)
-            logging.info('after running all tests')
-            stop_event.set()
-            async with asyncio.timeout(5):
-                await resource_watcher
-        except Exception as e:
-            print(palette.fail(e))
-            raise
-    finally:
-        if tp_server is not None:
-            tp_server.terminate()
+        logging.info('running all tests')
+        await run_all_tests(signaled, options)
+        logging.info('after running all tests')
+        stop_event.set()
+        async with asyncio.timeout(5):
+            await resource_watcher
+    except Exception as e:
+        print(palette.fail(e))
+        raise
+    # finally:
+    #     go_back_to_parent_cgroup(options.gather_metrics)
 
     if signaled.is_set():
         return -signaled.signo      # type: ignore
@@ -2047,12 +1537,6 @@ async def main() -> int:
     cancelled_tests = sum(1 for test in TestSuite.all_tests() if test.did_not_run)
 
     print_summary(failed_tests, cancelled_tests, options)
-
-    for mode in options.modes:
-        junit_file = f"{options.tmpdir}/{mode}/allure/boost.junit.xml"
-        write_junit_report(options.tmpdir, mode)
-        xunit_file = write_consolidated_boost_junit_xml(options.tmpdir, mode)
-        boost_to_junit(xunit_file, junit_file)
 
     if 'coverage' in options.modes:
         coverage.generate_coverage_report(path_to("coverage", "tests"))

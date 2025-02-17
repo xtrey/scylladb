@@ -25,18 +25,30 @@
 #
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import subprocess
+import time
+from asyncio import AbstractEventLoopPolicy
 from collections.abc import Sequence
 from pathlib import Path
+from time import sleep
+from types import SimpleNamespace
 from xml.etree import ElementTree
 
+import allure
+
+from scripts.get_description import metric
 from test.pylib.cpp.facade import CppTestFacade, CppTestFailure, run_process
+from test.pylib.resource_gather import get_resource_gather
 
 TIMEOUT_DEBUG = 60 * 5 # seconds
 TIMEOUT = 60 * 2 # seconds
-COMBINED_TESTS = Path('build', 'dev', 'test', 'boost', 'combined_tests')
+COMBINED_TESTS = Path('test/boost/combined_tests')
+
+def get_combined_tests_path(mode: str) -> Path:
+    return Path('build', mode) / COMBINED_TESTS
 
 class BoostTestFacade(CppTestFacade):
     """
@@ -85,7 +97,30 @@ class BoostTestFacade(CppTestFacade):
         mode: str,
         file_name: Path,
         test_args:Sequence[str] = (),
+        env: dict = None,
+        gather_metrics: bool = False,
     ) -> tuple[list[CppTestFailure], str] | tuple[None, str]:
+
+        test = SimpleNamespace()
+        test.time_end = 0
+        test.id = test_name
+        test.mode = mode
+        test.success = False
+        test.suite = SimpleNamespace()
+        test.shortname = original_name
+        test.suite.mode = mode or 'no_mode'
+        test.suite.name = 'boost'
+        test_name_parts = test_name.split('.')
+        if len(test_name_parts) == 1:
+            test.suite.id = 1
+        else:
+            test_name_parts.remove(original_name)
+            if mode in test_name_parts:
+                test_name_parts.remove(mode)
+            test.suite.id = test_name_parts[0]
+        resource_gather = get_resource_gather(True, test=test, tmpdir=str(self.temp_dir))
+        resource_gather.make_cgroup()
+        test_running_event = asyncio.Event()
         def read_file(name: Path) -> str:
             try:
                 with io.open(name) as f:
@@ -97,12 +132,9 @@ class BoostTestFacade(CppTestFacade):
         root_log_dir = self.temp_dir / mode / 'pytest'
         log_xml = root_log_dir / f"{test_name}.log"
         stdout_file_path = root_log_dir/ f"{test_name}_stdout.log"
-        stderr_file_path = root_log_dir / f"{test_name}_stderr.log"
         report_xml = root_log_dir / f"{test_name}.xml"
         args = [ str(executable),
-                 '--output_format=XML',
-                 f"--report_sink={report_xml}",
-                 f"--log_sink={log_xml}",
+                 '--report_level=no',
                  '--catch_system_errors=no',
                  '--color_output=false',
                  ]
@@ -115,24 +147,36 @@ class BoostTestFacade(CppTestFacade):
         args.append('--')
         args.extend(test_args)
         os.chdir(self.temp_dir.parent)
-        p, stderr, stdout = run_process(args, timeout)
+        test_resource_watcher = resource_gather.cgroup_monitor(test_event=test_running_event)
+        test.time_start = time.time()
+        p, out = run_process(args, timeout, env, preexec_fn=resource_gather.put_process_to_cgroup(), cgroup=resource_gather.cgroup_path)
+        p.wait(600)
+        test_running_event.set()
+        test.time_end = time.time()
+        loop = test_resource_watcher.get_loop()
+        loop.run_until_complete(asyncio.gather(test_resource_watcher))
+
+
 
         with open(stdout_file_path, 'w') as fd:
-            fd.write(stdout)
-        with open(stderr_file_path, 'w') as fd:
-            fd.write(stderr)
+            fd.write(out)
         log = read_file(log_xml)
         report = read_file(report_xml)
 
         results = self._parse_log(log=log)
 
+
         if p.returncode != 0:
+            allure.attach(out, name='output', attachment_type=allure.attachment_type.TEXT)
+            metrics = resource_gather.get_test_metrics()
+
+            resource_gather.write_metrics_to_db(metrics)
+            resource_gather.remove_cgroup()
             msg = (
                 'working_dir: {working_dir}\n'
                 'Internal Error: calling {executable} '
                 'for test {test_id} failed (return_code={return_code}):\n'
                 'output file:{stdout}\n'
-                'std error file:{stderr}\n'
                 'log:{log}\n'
                 'report:{report}\n'
                 'command to repeat:{command}'
@@ -145,19 +189,25 @@ class BoostTestFacade(CppTestFacade):
                     executable=executable,
                     test_id=test_name,
                     stdout=stdout_file_path.absolute(),
-                    stderr=stderr_file_path.absolute(),
                     log=log,
                     report=report,
                     command=' '.join(p.args),
                     return_code=p.returncode,
                 ),
             )
-            return [failure], stdout
+            return [failure], out
+
+        test.success = True
+        metrics = resource_gather.get_test_metrics()
+        resource_gather.write_metrics_to_db(metrics)
+        resource_gather.remove_cgroup()
+        report_xml.unlink()
+        log_xml.unlink()
 
         if results:
-            return results, stdout
+            return results, out
 
-        return None, stdout
+        return None, out
 
     def _parse_log(self, log: str) -> list[CppTestFailure]:
         """

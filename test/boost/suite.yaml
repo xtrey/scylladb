@@ -1,4 +1,4 @@
-type: boost
+type: dummy
 extra_scylla_cmdline_options:
     - '--reactor-backend linux-aio'
 # A list of long tests, which should be started early

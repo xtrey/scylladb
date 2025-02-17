@@ -144,7 +144,7 @@ class PrepareMainProcessEnv:
         self.modes = modes
         self.root_dir = root_dir
         pytest_dirs = [self.temp_dir / mode / 'pytest' for mode in modes]
-        for directory in [self.temp_dir, *pytest_dirs]:
+        for directory in [self.temp_dir, *pytest_dirs, self.temp_dir / 'ldap_instances']:
             if not directory.exists():
                 os.makedirs(directory, exist_ok=True)
         self.env_file = env_file

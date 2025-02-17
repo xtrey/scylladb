@@ -12,7 +12,7 @@ from pytest import Collector
 
 from test.pylib.cpp.boost.boost_facade import BoostTestFacade
 from test.pylib.cpp.ldap.prepare_instance import get_env_manager
-from test.pylib.cpp.common_cpp_conftest import collect_items, get_modes_to_run, get_root_path, get_combined_tests
+from test.pylib.cpp.common_cpp_conftest import collect_items, get_modes_to_run, get_root_path
 
 
 def pytest_addoption(parser):
