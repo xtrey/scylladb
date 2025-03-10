@@ -6,8 +6,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import subprocess
 import sys
+from argparse import BooleanOptionalAction
+from pathlib import Path
+from random import randint
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,7 +20,7 @@ import pytest
 from test import TEST_RUNNER
 from test.pylib.report_plugin import ReportPlugin
 from test.pylib.suite.base import TestSuite, init_testsuite_globals
-from test.pylib.util import get_configured_modes, prepare_dirs, start_s3_mock_services
+from test.pylib.util import get_configured_modes, prepare_dirs, start_3rd_party_services
 
 if TYPE_CHECKING:
     from asyncio import AbstractEventLoop
@@ -33,6 +38,10 @@ def pytest_addoption(parser):
     parser.addoption('--tmpdir', action='store', default='testlog', help='''Path to temporary test data and log files. The data is
             further segregated per build mode. Default: ./testlog.''', )
     parser.addoption('--run_id', action='store', default=None, help='Run id for the test run')
+    parser.addoption('--byte-limit', action="store", default=randint(0, 2000), type=int,
+                     help="Specific byte limit for failure injection (random by default)")
+    parser.addoption("--gather-metrics", action=BooleanOptionalAction, default=False,
+                     help='Switch on gathering cgroup metrics')
 
     # Following option is to use with bare pytest command.
     #
@@ -89,6 +98,8 @@ def pytest_collection_modifyitems(config, items):
                 item._nodeid = f'{item._nodeid}.{run_id}'
                 item.name = f'{item.name}.{run_id}'
 
+tp_server = None
+finalize = None
 
 def pytest_sessionstart(session: pytest.Session) -> None:
     # test.py starts S3 mock and create/cleanup testlog by itself. Also, if we run with --collect-only option,
@@ -104,11 +115,19 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
     # Run stuff just once for the pytest session even running under xdist.
     if "xdist" not in sys.modules or not sys.modules["xdist"].is_xdist_worker(request_or_session=session):
-        temp_dir = os.path.join(session.config.rootpath, "..", session.config.getoption("--tmpdir"))
+        global tp_server, finalize
+        temp_dir = Path(session.config.getoption("--tmpdir")).absolute()
         prepare_dirs(tempdir_base=temp_dir, modes=session.config.getoption("--mode") or get_configured_modes())
-        start_s3_mock_services(minio_tempdir_base=temp_dir)
+        tp_server = subprocess.Popen('toxiproxy-server', stderr=subprocess.DEVNULL)
+        finalize = start_3rd_party_services(tempdir_base=temp_dir,
+                                                       byte_limit=session.config.getoption('byte_limit'))
 
 
 def pytest_sessionfinish() -> None:
+    global tp_server, finalize
+    if finalize is not None:
+        finalize()
+    if tp_server is not None:
+        tp_server.terminate()
     if getattr(TestSuite, "artifacts", None) is not None:
         asyncio.get_event_loop().run_until_complete(TestSuite.artifacts.cleanup_before_exit())
