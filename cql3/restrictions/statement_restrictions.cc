@@ -270,6 +270,8 @@ make_conjunction(predicate a, predicate b) {
         .on = a.on,
         .is_singleton = false,  // Even if both columns are singletons, the conjunction of them can return zero values.
         .comparable = a.comparable && b.comparable,  // Result is only comparable if both inputs follow CQL comparison semantics.
+        .is_multi_column = a.is_multi_column,  // Both predicates are on the same target, so they agree on multi-column-ness.
+        .is_not_null_single_column = false,  // A conjunction is not a pure IS NOT NULL check.
     };
 }
 
@@ -280,6 +282,15 @@ require_on_single_column(const predicate& p) {
         return pcol->column;
     }
     on_internal_error(rlogger, "require_on_single_column: predicate is not on a single column");
+}
+
+static
+bool
+is_null_constant(const expression& e) {
+    if (auto* c = as_if<constant>(&e)) {
+        return c->value.is_null();
+    }
+    return false;
 }
 
 /// Given an expression, decompose it into a set of predicates, on individual columns,
@@ -356,6 +367,14 @@ to_predicates(
                         [&] (const column_value& col) -> std::vector<predicate> {
                             auto cdef = col.col;
                             auto type = &cdef->type->without_reversed();
+                            if (oper.op == oper_t::IS_NOT) {
+                              return to_vector(predicate{
+                                  .solve_for = nullptr,
+                                  .filter = oper,
+                                  .on = on_column{col.col},
+                                  .is_not_null_single_column = is_null_constant(oper.rhs),
+                              });
+                            }
                             if (is_compare(oper.op)) {
                               auto solve = [oper] (const query_options& options) {
                                 managed_bytes_opt val = evaluate(oper.rhs, options).to_managed_bytes_opt();
@@ -453,6 +472,7 @@ to_predicates(
                                 .filter = oper,
                                 .on = on_clustering_key_prefix{std::move(columns)},
                                 .is_singleton = oper.op == oper_t::EQ,
+                                .is_multi_column = true,
                             });
                         },
                         [&] (const function_call& token_fun_call) -> std::vector<predicate> {
