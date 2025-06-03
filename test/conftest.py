@@ -5,6 +5,7 @@
 #
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import sys
@@ -17,6 +18,7 @@ import pytest
 
 from test import ALL_MODES, TEST_RUNNER, TOP_SRC_DIR
 from test.pylib.report_plugin import ReportPlugin
+from test.pylib.suite.python import add_s3_options
 from test.pylib.util import get_configured_modes
 from test.pylib.suite.base import (
     TestSuite,
@@ -78,6 +80,23 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     # Pass information about Scylla node from test.py to pytest.
     parser.addoption("--scylla-log-filename",
                      help="Path to a log file of a ScyllaDB node (for suites with type: Python)")
+    parser.addoption("--use-vnodes", action="store_true", default=True,
+                     help="Determines wither or not to setup clusters using vnodes for tests")
+    parser.addoption("--num-tokens", action="store", default=256,
+                     help="Number of tokens to set num_tokens yaml setting to when creating instances with vnodes enabled")
+    parser.addoption("--experimental-features", type=lambda s: s.split(","), action="store",
+                     help="Pass experimental features <feature>,<feature> to enable")
+    parser.addoption("--tablets", action=argparse.BooleanOptionalAction, default=False,
+                     help="Whether to enable tablets support (default: %(default)s)")
+    parser.addoption("--force-gossip-topology-changes", action="store_true", default=False,
+                     help="force gossip topology changes in a fresh cluster")
+    s3_options = parser.getgroup("S3 server settings")
+    s3_options.addoption('--s3-server-address')
+    s3_options.addoption('--s3-server-port', type=int)
+    s3_options.addoption('--aws-access-key')
+    s3_options.addoption('--aws-secret-key')
+    s3_options.addoption('--aws-region')
+    s3_options.addoption('--s3-server-bucket')
 
 
 @pytest.fixture(scope="session")

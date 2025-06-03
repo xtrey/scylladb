@@ -288,10 +288,10 @@ def add_cql_connection_options(parser: Parser) -> None:
 def add_s3_options(parser: Parser) -> None:
     """Options for tests which use S3 server (i.e., cluster/object_store and cqlpy/test_tools.py)"""
 
-    s3_options = parser.getgroup("S3 server settings")
-    s3_options.addoption('--s3-server-address')
-    s3_options.addoption('--s3-server-port', type=int)
-    s3_options.addoption('--aws-access-key')
-    s3_options.addoption('--aws-secret-key')
-    s3_options.addoption('--aws-region')
-    s3_options.addoption('--s3-server-bucket')
+    # s3_options = parser.getgroup("S3 server settings")
+    # s3_options.addoption('--s3-server-address')
+    # s3_options.addoption('--s3-server-port', type=int)
+    # s3_options.addoption('--aws-access-key')
+    # s3_options.addoption('--aws-secret-key')
+    # s3_options.addoption('--aws-region')
+    # s3_options.addoption('--s3-server-bucket')

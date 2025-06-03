@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import random
 import shlex
 from random import randint
 
@@ -53,7 +54,7 @@ from test.pylib.util import LogPrefixAdapter, get_configured_modes, ninja
 if TYPE_CHECKING:
     from typing import List
 
-PYTEST_RUNNER_DIRECTORIES = [TEST_DIR / 'boost', TEST_DIR / 'ldap', TEST_DIR / 'raft', TEST_DIR / 'unit']
+PYTEST_RUNNER_DIRECTORIES = [TEST_DIR / 'boost', TEST_DIR / 'cluster', TEST_DIR / 'ldap', TEST_DIR / 'raft', TEST_DIR / 'unit']
 
 launch_time = time.monotonic()
 
@@ -265,9 +266,10 @@ def parse_cmd_line() -> argparse.Namespace:
 async def find_tests(options: argparse.Namespace) -> None:
 
     for f in glob.glob(os.path.join("test", "*")):
-        if os.path.isdir(f) and os.path.isfile(os.path.join(f, "suite.yaml")):
+        suite_config = pathlib.Path(f, "suite.yaml")
+        if os.path.isdir(f) and os.path.isfile(suite_config):
             for mode in options.modes:
-                suite = TestSuite.opt_create(f, options, mode)
+                suite = TestSuite.opt_create(suite_config, options, mode)
                 await suite.add_test_list()
 
 
@@ -275,7 +277,7 @@ def run_pytest(options: argparse.Namespace, run_id: int) -> tuple[int, list[Simp
     failed_tests = []
     temp_dir = pathlib.Path(options.tmpdir).absolute()
     report_dir =  temp_dir / 'report'
-    junit_output_file = report_dir / f'pytest_cpp_{run_id}.xml'
+    junit_output_file = report_dir / f'pytest_{run_id}.xml'
     files_to_run = []
     test_names = []
     for name in options.name:
@@ -306,6 +308,7 @@ def run_pytest(options: argparse.Namespace, run_id: int) -> tuple[int, list[Simp
             "--log-level=DEBUG",  # Capture logs
             f'--junit-xml={junit_output_file}',
             "-rf",
+            '--test-py-init',
             f'-n{int(options.jobs)}',
             f'--tmpdir={temp_dir}',
             f'--run_id={run_id}',
@@ -324,7 +327,8 @@ def run_pytest(options: argparse.Namespace, run_id: int) -> tuple[int, list[Simp
     args.extend(files_to_run)
 
     args = shlex.split(' '.join(args))
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True)
+    os.environ["TOPOLOGY_RANDOM_FAILURES_TEST_SHUFFLE_SEED"] = str(random.randrange(sys.maxsize))
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True, env=os.environ.copy())
     try:
         # Read output from pytest and print it to the console
         if options.verbose:
@@ -352,8 +356,6 @@ def run_pytest(options: argparse.Namespace, run_id: int) -> tuple[int, list[Simp
     if options.list_tests:
         return 0, []
 
-    if p.returncode != 0:
-        raise RuntimeError(f"Pytest failed with return code {p.returncode}.")
     suite = ET.parse(junit_output_file).getroot().find('testsuite')
     total_tests = int(suite.get('tests'))
 
@@ -457,7 +459,7 @@ def print_summary(failed_tests: List["Test"], cancelled_tests: int, options: arg
     if failed_tests or failed_pytest_tests:
         all_fails = [*failed_tests, *failed_pytest_tests]
         total_tests = TestSuite.test_count() + total_tests_pytest
-        print(f'The following test(s) have failed: {" ".join(t.name for t in all_fails)}')
+        print(f'The following test(s) have failed: {palette.path(" ".join(t.name for t in all_fails))}')
         if options.verbose:
             for test in failed_tests:
                 test.print_summary()

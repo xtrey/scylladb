@@ -14,8 +14,8 @@ from test.pylib.minio_server import MinioServer
 from test.pylib.suite.python import add_s3_options
 
 
-def pytest_addoption(parser):
-    add_s3_options(parser)
+# def pytest_addoption(parser):
+#     add_s3_options(parser)
 
 
 def format_tuples(tuples=None, **kwargs):
