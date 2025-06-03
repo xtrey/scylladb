@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import random
 import shlex
 from random import randint
 
@@ -54,7 +55,13 @@ if TYPE_CHECKING:
     from typing import List
 
 
-PYTEST_RUNNER_DIRECTORIES    = [pathlib.Path('test/boost'), pathlib.Path('test/unit'), pathlib.Path('test/ldap'), pathlib.Path('test/raft')]
+PYTEST_RUNNER_DIRECTORIES    = [
+    pathlib.Path('test/boost'),
+    pathlib.Path('test/unit'),
+    pathlib.Path('test/ldap'),
+    pathlib.Path('test/raft'),
+    pathlib.Path('test/cluster')
+]
 
 launch_time = time.monotonic()
 
@@ -275,9 +282,10 @@ def parse_cmd_line() -> argparse.Namespace:
 async def find_tests(options: argparse.Namespace) -> None:
 
     for f in glob.glob(os.path.join("test", "*")):
-        if os.path.isdir(f) and os.path.isfile(os.path.join(f, "suite.yaml")):
+        suite_config = pathlib.Path(f, "suite.yaml")
+        if os.path.isdir(f) and os.path.isfile(suite_config):
             for mode in options.modes:
-                suite = TestSuite.opt_create(f, options, mode)
+                suite = TestSuite.opt_create(suite_config, options, mode)
                 await suite.add_test_list()
 
 
@@ -285,7 +293,7 @@ def run_pytest(options: argparse.Namespace, run_id: int) -> tuple[int, list[Simp
     failed_tests = []
     temp_dir = pathlib.Path(options.tmpdir).absolute()
     report_dir =  temp_dir / 'report'
-    junit_output_file = report_dir / f'pytest_cpp_{run_id}.xml'
+    junit_output_file = report_dir / f'pytest_{run_id}.xml'
     files_to_run = []
     test_names = []
     for name in options.name:
@@ -293,7 +301,7 @@ def run_pytest(options: argparse.Namespace, run_id: int) -> tuple[int, list[Simp
             file_name, _ = name.split('::')
             if pathlib.Path(file_name).parent in PYTEST_RUNNER_DIRECTORIES:
                 files_to_run.append(name)
-        elif pathlib.Path(name) in PYTEST_RUNNER_DIRECTORIES or pathlib.Path(name).parent in PYTEST_RUNNER_DIRECTORIES:
+        elif any([pathlib.Path(name).is_relative_to(x) for x in PYTEST_RUNNER_DIRECTORIES]):
                 files_to_run.append(name)
     if len(options.name) == 0:
         files_to_run = [str(directory) for directory in PYTEST_RUNNER_DIRECTORIES]
@@ -316,6 +324,7 @@ def run_pytest(options: argparse.Namespace, run_id: int) -> tuple[int, list[Simp
             "--log-level=DEBUG",  # Capture logs
             "--junit-xml={}".format(junit_output_file),
             "-rf",
+            "--test-py-init",
             f'-n{int(options.jobs)}',
             f'--tmpdir={temp_dir}',
             "--run_id={}".format(run_id),
@@ -334,7 +343,10 @@ def run_pytest(options: argparse.Namespace, run_id: int) -> tuple[int, list[Simp
     args.extend(files_to_run)
 
     args = shlex.split(' '.join(args))
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True)
+    with open(os.path.join(temp_dir, 'pytest.log'), 'w+') as log_file:
+        log_file.write(' '.join(args) + '\n')
+    os.environ["TOPOLOGY_RANDOM_FAILURES_TEST_SHUFFLE_SEED"] = str(random.randrange(sys.maxsize))
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True, env=os.environ.copy())
     try:
         # Read output from pytest and print it to the console
         if options.verbose:

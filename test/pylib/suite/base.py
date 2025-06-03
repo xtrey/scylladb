@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
 
 SUITE_CONFIG_FILENAME = "suite.yaml"
+SUITE_CONFIG_FILENAME_PYTEST = "test_config.yaml"
 
 output_is_a_tty = sys.stdout.isatty()
 
@@ -157,18 +158,18 @@ class TestSuite(ABC):
         return sum(TestSuite._next_id.values())
 
     @staticmethod
-    def load_cfg(path: str) -> dict:
-        with open(os.path.join(path, "suite.yaml"), "r") as cfg_file:
+    def load_cfg(path: pathlib.Path) -> dict:
+        with open(path, "r") as cfg_file:
             cfg = yaml.safe_load(cfg_file.read())
             if not isinstance(cfg, dict):
                 raise RuntimeError("Failed to load tests in {}: suite.yaml is empty".format(path))
             return cfg
 
     @staticmethod
-    def opt_create(path: str, options: argparse.Namespace, mode: str) -> 'TestSuite':
+    def opt_create(path: pathlib.Path, options: argparse.Namespace, mode: str) -> 'TestSuite':
         """Return a subclass of TestSuite with name cfg["type"].title + TestSuite.
         Ensures there is only one suite instance per path."""
-        suite_key = os.path.join(path, mode)
+        suite_key = os.path.join(path.parent, mode)
         suite = TestSuite.suites.get(suite_key)
         if not suite:
             cfg = TestSuite.load_cfg(path)
@@ -186,7 +187,7 @@ class TestSuite(ABC):
             SpecificTestSuite = getattr(import_module("test.pylib.suite"), suite_type_to_class_name(kind), None)
             if not SpecificTestSuite:
                 raise RuntimeError("Failed to load tests in {}: suite type '{}' not found".format(path, kind))
-            suite = SpecificTestSuite(path, cfg, options, mode)
+            suite = SpecificTestSuite(path.parent, cfg, options, mode)
             assert suite is not None
             TestSuite.suites[suite_key] = suite
         return suite
@@ -576,17 +577,18 @@ async def start_3rd_party_services(tempdir_base: pathlib.Path, toxiproxy_byte_li
 
 
 def find_suite_config(path: pathlib.Path) -> pathlib.Path:
+    config_file_name = SUITE_CONFIG_FILENAME_PYTEST if TEST_RUNNER == "pytest" else SUITE_CONFIG_FILENAME
     for directory in (path.joinpath("_") if path.is_dir() else path).absolute().relative_to(TEST_DIR).parents:
-        suite_config = TEST_DIR / directory / SUITE_CONFIG_FILENAME
+        suite_config = TEST_DIR / directory / config_file_name
         if suite_config.exists():
             return suite_config
-    raise FileNotFoundError(f"Unable to find a suite config file ({SUITE_CONFIG_FILENAME}) related to {path}")
+    raise FileNotFoundError(f"Unable to find a suite config file ({config_file_name}) related to {path}")
 
 
 async def get_testpy_test(path: pathlib.Path, options: argparse.Namespace, mode: str) -> Test:
     """Create an instance of Test class for the path provided."""
 
     suite_config = find_suite_config(path)
-    suite = TestSuite.opt_create(path=str(suite_config.parent), options=options, mode=mode)
+    suite = TestSuite.opt_create(path=suite_config, options=options, mode=mode)
     await suite.add_test(shortname=str(path.relative_to(suite.suite_path).with_suffix("")), casename=None)
     return suite.tests[-1]
