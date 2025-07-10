@@ -15,6 +15,10 @@
 #include "test/lib/simple_schema.hh"
 #include "utils/to_string.hh"
 #include "seastarx.hh"
+#include <boost/stacktrace.hpp>
+#include <boost/test/unit_test.hpp>
+#include <signal.h>
+#include <iostream>
 #include <random>
 
 namespace tests {
@@ -61,7 +65,6 @@ extern boost::test_tools::assertion_result has_scylla_test_env(boost::unit_test:
         "Check test/pylib/minio_server.py for an example of how to configure the environment for it to run.");
     return false;
 }
-
 }
 
 sstring make_random_string(size_t size) {
@@ -100,3 +103,44 @@ future<> touch_file(std::string name) {
 std::mutex boost_logger_mutex;
 
 }
+
+namespace {
+    struct SignalHandlerRestorer {
+        int sig;
+        struct sigaction old_action;
+        SignalHandlerRestorer(int s, struct sigaction oa) : sig(s), old_action(oa) {}
+        ~SignalHandlerRestorer() {
+            sigaction(sig, &old_action, nullptr);
+        }
+    };
+}
+
+void signal_handler(int sig) {
+    // Print stacktrace
+    std::cerr << "Signal " << sig << " received.\n"
+              << boost::stacktrace::stacktrace() << std::endl;
+    // Restore default handler and re-raise
+    struct sigaction sa;
+    sigaction(sig, nullptr, &sa);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+struct StacktraceFixture {
+    struct sigaction old_segv{};
+    struct sigaction old_abrt{};
+    StacktraceFixture() {
+        struct sigaction sa{};
+        sa.sa_handler = signal_handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        sigaction(SIGSEGV, &sa, &old_segv);
+        sigaction(SIGABRT, &sa, &old_abrt);
+    }
+    ~StacktraceFixture() {
+        sigaction(SIGSEGV, &old_segv, nullptr);
+        sigaction(SIGABRT, &old_abrt, nullptr);
+    }
+};
+BOOST_GLOBAL_FIXTURE(StacktraceFixture);
+

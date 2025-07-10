@@ -582,3 +582,53 @@ BOOST_AUTO_TEST_CASE(test_swap) {
     BOOST_REQUIRE(std::ranges::equal(v1, std::array{2, 4}));
     BOOST_REQUIRE(std::ranges::equal(v2, std::array{1}));
 }
+
+#include <boost/stacktrace.hpp>
+#include <boost/test/unit_test.hpp>
+#include <signal.h>
+#include <iostream>
+
+
+#include <boost/test/included/unit_test.hpp>
+#include <seastar/core/on_internal_error.hh>
+#include <seastar/util/bool_class.hh>
+#include <seastar/core/gate.hh>
+#include "utils/assert.hh"
+#include "utils/log.hh"
+
+
+
+extern logging::logger testlog;
+
+BOOST_AUTO_TEST_CASE(test_abort) {
+    testlog.info("abort ahead");
+    abort();
+}
+
+BOOST_AUTO_TEST_CASE(test_assert) {
+    testlog.info("SCYLLA_ASSERT ahead");
+    SCYLLA_ASSERT(false);
+}
+
+BOOST_AUTO_TEST_CASE(test_fatal) {
+    testlog.info("on_fatal_internal_error ahead");
+    on_fatal_internal_error(testlog, "test_fatal");
+}
+
+void throw_exception() {
+    throw std::runtime_error("throw in noexcept context");
+}
+
+BOOST_AUTO_TEST_CASE(test_segfault) {
+    auto p = std::make_unique<int>(42);
+    auto q = std::move(p);
+    testlog.info("Segfault ahead");
+    testlog.info("{}", *p);
+}
+
+BOOST_AUTO_TEST_CASE(test_terminate) {
+    testlog.info("throw in noexcept context ahead");
+    std::invoke([] () noexcept {
+        throw_exception();
+    });
+}
