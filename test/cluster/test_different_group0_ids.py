@@ -11,6 +11,7 @@ import pytest
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_different_group0_ids(manager: ManagerClient):
     """
     The reproducer for #14448.

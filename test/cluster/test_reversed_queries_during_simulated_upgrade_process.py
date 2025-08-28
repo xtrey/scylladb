@@ -21,6 +21,7 @@ def verify_data(response, expected_data):
 
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=2)
 async def test_reversed_queries_during_upgrade(manager: ManagerClient) -> None:
     """
     Use `suppress_features` error injection to simulate cluster upgrade process

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_error_while_becoming_voter(request: pytest.FixtureRequest, manager: ManagerClient) -> None:
     """
     Test that a node is starting successfully if while joining a cluster and becoming a voter, it

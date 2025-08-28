@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import hashlib
 import logging
 import os
 import platform
 import shlex
+import socket
 import subprocess
 import time
 from abc import ABC

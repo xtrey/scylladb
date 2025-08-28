@@ -37,6 +37,7 @@ async def change_version(manager: ManagerClient, s: ServerInfo, exe: str):
     await manager.server_switch_executable(s.server_id, exe)
     await manager.server_start(s.server_id)
 
+@pytest.mark.max_running_servers(amount=2)
 async def test_upgrade_and_rollback(manager: ManagerClient, scylla_2025_1: ScyllaVersionDescription):
     new_exe = os.getenv("SCYLLA")
     assert new_exe

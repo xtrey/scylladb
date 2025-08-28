@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Checks basic functionality on the cluster with different values of the --smp parameter on the nodes.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_nodes_with_different_smp(request: FixtureRequest, manager: ManagerClient) -> None:
     # In this test it's more convenient to start with a fresh cluster.
 

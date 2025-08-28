@@ -18,6 +18,7 @@ ERROR_INJECTIONS_AT_STARTUP_CONFIG_KEY = "error_injections_at_startup"
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_feature_deprecation_works(manager: ManagerClient) -> None:
     """Simulate a very old node which, long ago, has enabled some features,
        persisted them in system.scylla_local, and now some of them became
@@ -51,6 +52,7 @@ async def check_features_status(cql, features, enabled):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_features_suppress_works(manager: ManagerClient, build_mode) -> None:
     """ `suppress_features` error injection allows to revoke support for
         specified cluster features. It can be used to simulate upgrade process.

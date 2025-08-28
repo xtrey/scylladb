@@ -58,6 +58,7 @@ async def wait_for_tablet_stage(manager, server, keyspace_name, table_name, toke
 # check that those views with the same partition key are co-located by reading
 # their tablet map from system.tablets and checking they have base_table set.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_base_view_colocation(manager: ManagerClient):
     cfg = {'enable_tablets': True}
     cmdline = [
@@ -105,6 +106,7 @@ async def test_base_view_colocation(manager: ManagerClient):
 # base and view tablets, and verify we can read both tables from this node.
 @pytest.mark.parametrize("move_table", ["base", "child"])
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_move_tablet(manager: ManagerClient, move_table: str):
     cfg = {'enable_tablets': True}
     cmdline = [
@@ -181,6 +183,7 @@ async def test_move_tablet(manager: ManagerClient, move_table: str):
         pytest.param(True, id="with_merge", marks=pytest.mark.xfail(reason="issue #17265")),
     ],
 )
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_split_and_merge(manager: ManagerClient, with_merge: bool):
     logger.info("Bootstrapping cluster")
     cmdline = [
@@ -308,6 +311,7 @@ async def test_tablet_split_and_merge(manager: ManagerClient, with_merge: bool):
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
 @pytest.mark.parametrize("wait_stage", [("streaming", "stream_tablet_wait"), ("cleanup", "cleanup_tablet_wait")])
+@pytest.mark.max_running_servers(amount=2)
 async def test_create_colocated_table_while_base_is_migrating(manager: ManagerClient, wait_stage):
     cfg = {'enable_tablets': True, 'tablet_load_stats_refresh_interval_in_seconds': 1 }
     cmdline = [
@@ -393,6 +397,7 @@ async def test_create_colocated_table_while_base_is_migrating(manager: ManagerCl
 # 4. run tablet repair on the base table
 # 5. verify both the base table and the view contain the missing data on the node that was down
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_repair_colocated_base_and_view(manager: ManagerClient):
     cfg = {'enable_tablets': True}
     cmdline = [

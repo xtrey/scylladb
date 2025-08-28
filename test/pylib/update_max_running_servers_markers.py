@@ -9,8 +9,14 @@
 import argparse
 import ast
 import sqlite3
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+# Add the project root to sys.path for package imports
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 from test import TEST_DIR
 from test.pylib.db.writer import CLUSTER_METRICS_TABLE

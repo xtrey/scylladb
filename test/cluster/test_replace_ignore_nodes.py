@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=7)
 async def test_replace_ignore_nodes(manager: ManagerClient) -> None:
     """Replace a node in presence of multiple dead nodes.
        Regression test for #14487. Does not apply to Raft-topology mode.

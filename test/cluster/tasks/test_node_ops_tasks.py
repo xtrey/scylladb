@@ -196,6 +196,7 @@ async def check_decommission_tasks_tree(manager: ManagerClient, tm: TaskManagerC
     return servers, previous_vts + [vts_list[0].task_id]
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_node_ops_tasks_tree(manager: ManagerClient):
     """Test node ops task manager tasks."""
     module_name = "node_ops"
@@ -217,6 +218,7 @@ async def test_node_ops_tasks_tree(manager: ManagerClient):
         servers, vt_ids = await check_decommission_tasks_tree(manager, tm, module_name, servers, vt_ids)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_node_ops_tasks_ttl(manager: ManagerClient):
     """Test node ops virtual tasks' ttl."""
     module_name = "node_ops"
@@ -227,6 +229,7 @@ async def test_node_ops_tasks_ttl(manager: ManagerClient):
     await get_new_virtual_tasks_statuses(tm, module_name, servers, [], expected_task_num=0)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_node_ops_task_wait(manager: ManagerClient):
     """Test node ops virtual task's wait."""
     async def _decommission(manager: ManagerClient, server: ServerInfo):
@@ -257,6 +260,7 @@ async def test_node_ops_task_wait(manager: ManagerClient):
     await waiting_task
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_get_children(manager: ManagerClient):
     module_name = "node_ops"
     tm = TaskManagerClient(manager.api)

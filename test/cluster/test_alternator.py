@@ -79,6 +79,7 @@ def unique_table_name():
 unique_table_name.last_ms = 0
 
 
+@pytest.mark.max_running_servers(amount=3)
 async def test_alternator_ttl_scheduling_group(manager: ManagerClient):
     """A reproducer for issue #18719: The expiration scans and deletions
        initiated by the Alternator TTL feature are supposed to run entirely in
@@ -182,6 +183,7 @@ async def test_alternator_ttl_scheduling_group(manager: ManagerClient):
     table.delete()
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_localnodes_broadcast_rpc_address(manager: ManagerClient):
     """Test that if the "broadcast_rpc_address" of a node is set, the
        "/localnodes" request returns not the node's internal IP address,
@@ -221,6 +223,7 @@ async def test_localnodes_broadcast_rpc_address(manager: ManagerClient):
             await asyncio.sleep(0.1)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_localnodes_drained_node(manager: ManagerClient):
     """Test that if in a cluster one node is brought down with "nodetool drain"
        a "/localnodes" request should NOT return that node. This test does
@@ -263,6 +266,7 @@ async def test_localnodes_drained_node(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_localnodes_down_normal_node(manager: ManagerClient):
     """Test that if in a cluster one node reaches "normal" state and then
        brought down (so is now in "DN" state), a "/localnodes" request
@@ -308,6 +312,7 @@ async def test_localnodes_down_normal_node(manager: ManagerClient):
 @pytest.mark.asyncio
 @pytest.mark.nightly
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_localnodes_joining_nodes(manager: ManagerClient):
     """Test that if a cluster is being enlarged and a node is coming up but
        not yet responsive, a "/localnodes" request should NOT return that node.
@@ -359,6 +364,7 @@ async def test_localnodes_joining_nodes(manager: ManagerClient):
     await task
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=8)
 async def test_localnodes_multi_dc_multi_rack(manager: ManagerClient):
     """A test for /localnodes on a more general setup, with multiple DCs and
        multiple racks - an 8-node setup with two DCs, two racks in each, and
@@ -445,6 +451,7 @@ async def test_localnodes_multi_dc_multi_rack(manager: ManagerClient):
 # Here in this file we have the opportunity to create clusters with different
 # configurations, so we can check how these configuration settings affect RBAC.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_alternator_enforce_authorization_false(manager: ManagerClient):
     """A basic test for how Alternator authentication and authorization
        work when alternator_enfore_authorization is *false* (and CQL's
@@ -466,6 +473,7 @@ async def test_alternator_enforce_authorization_false(manager: ManagerClient):
     table.get_item(Key={'p': 42})
     table.delete()
 
+@pytest.mark.max_running_servers(amount=1)
 async def test_alternator_enforce_authorization_false2(manager: ManagerClient):
     """A variant of the above test for alternator_enforce_authorization=false
        Here we check what happens when CQL's authenticator/authorizer are
@@ -515,6 +523,7 @@ def get_secret_key(cql, user):
 #flaky, see https://github.com/scylladb/scylladb/issues/20135")
 @pytest.mark.unstable
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_alternator_enforce_authorization_true(manager: ManagerClient):
     """A basic test for how Alternator authentication and authorization
        work when authentication and authorization is enabled in CQL, and
@@ -600,6 +609,7 @@ class ThreadWrapper(threading.Thread):
 # serializes its own schema modifications. This is why these tests must
 # be here, in test/cluster, and not in the single-node test/alternator.
 
+@pytest.mark.max_running_servers(amount=3)
 async def test_concurrent_createtable(manager: ManagerClient):
     """A reproducer for issue #13152 for the CreateTable operation:
        concurrent CreateTable operations shouldn't fail "due to concurrent
@@ -666,6 +676,7 @@ async def test_concurrent_createtable(manager: ManagerClient):
                         break
                     raise
 
+@pytest.mark.max_running_servers(amount=3)
 async def test_concurrent_deletetable(manager: ManagerClient):
     """A reproducer for issue #13152 for the DeleteTable operation:
        concurrent DeleteTable operations shouldn't fail "due to concurrent
@@ -715,6 +726,7 @@ async def test_concurrent_deletetable(manager: ManagerClient):
             if not 'ResourceNotFoundException' in str(e):
                 raise
 
+@pytest.mark.max_running_servers(amount=3)
 async def test_concurrent_updatetable(manager: ManagerClient):
     """A reproducer for issue #13152 for the UpdateTable operation:
        concurrent UpdateTable operations shouldn't fail "due to concurrent
@@ -767,6 +779,7 @@ async def test_concurrent_updatetable(manager: ManagerClient):
                 raise
 
 @pytest.mark.parametrize('op', ['TagResource', 'UntagResource', 'UpdateTimeToLive'])
+@pytest.mark.max_running_servers(amount=3)
 async def test_concurrent_modify_tags(manager: ManagerClient, op):
     """A reproducer for issue #13152 for the TagResource, UntagResource
        and UpdateTimeToLive operation (each one in a separate parametrization
@@ -844,6 +857,7 @@ async def nodes_with_data(manager, ks, cf, host):
 
 @pytest.mark.parametrize("tablets", [True, False])
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_zero_token_node_load_balancer(manager, tablets):
     """Test that a zero-token node (a.k.a. coordinator-only or proxy node),
        can be used as an Alternator server-side load balancer as proposed in
@@ -898,6 +912,7 @@ async def test_zero_token_node_load_balancer(manager, tablets):
     table.delete()
 
 @pytest.mark.xfail(reason="#16261")
+@pytest.mark.max_running_servers(amount=3)
 async def test_alternator_concurrent_rmw_same_partition_different_server(manager: ManagerClient):
     """A reproducer for issue #16261: When sending RMW (read-modify-write)
        operations to the same partition (different item) on different server

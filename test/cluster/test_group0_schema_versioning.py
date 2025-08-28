@@ -115,6 +115,7 @@ async def verify_in_memory_table_versions(srvs: list[ServerInfo], logs: list[Scy
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_schema_versioning_with_recovery(manager: ManagerClient):
     """
     Perform schema changes while mixing nodes in RECOVERY mode with nodes in group 0 mode.
@@ -282,6 +283,7 @@ async def test_schema_versioning_with_recovery(manager: ManagerClient):
             await verify_in_memory_table_versions(servers, logs, marks, table)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_upgrade(manager: ManagerClient):
     """
     This test uses the gossip-based recovery procedure.

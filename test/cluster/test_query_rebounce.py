@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_query_rebounce(manager: ManagerClient):
     """
     Issue https://github.com/scylladb/scylladb/issues/15465.

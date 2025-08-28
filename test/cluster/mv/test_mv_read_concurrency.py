@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # Reproduces https://github.com/scylladb/scylladb/issues/8873
 @pytest.mark.asyncio
 @skip_mode('release', "error injections aren't enabled in release mode")
+@pytest.mark.max_running_servers(amount=1)
 async def test_mv_read_concurrency(manager: ManagerClient) -> None:
     node_count = 1
     # Disable cache to make reads use the read concurrency semaphore.
@@ -93,6 +94,7 @@ async def test_mv_read_concurrency(manager: ManagerClient) -> None:
 # Reproduces https://github.com/scylladb/scylladb/issues/15805
 @pytest.mark.asyncio
 @skip_mode('release', "error injections aren't enabled in release mode")
+@pytest.mark.max_running_servers(amount=1)
 async def test_mv_read_memory(manager: ManagerClient) -> None:
     node_count = 1
     # Disable cache to make reads use the read concurrency semaphore.

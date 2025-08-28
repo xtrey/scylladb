@@ -23,6 +23,7 @@ from test.cluster.util import check_system_topology_and_cdc_generations_v3_consi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("remove_dead_nodes_with", ["remove", "replace"])
+@pytest.mark.max_running_servers(amount=7)
 async def test_raft_recovery_user_data(manager: ManagerClient, remove_dead_nodes_with: str):
     """
     Test that the Raft-based recovery procedure works correctly with the user data. It involves testing:

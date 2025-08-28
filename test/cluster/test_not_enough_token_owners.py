@@ -13,6 +13,7 @@ from test.cluster.util import new_test_keyspace
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_not_enough_token_owners(manager: ManagerClient):
     """
     Test that:

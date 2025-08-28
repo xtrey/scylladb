@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_pinned_cl_segment_doesnt_resurrect_data(manager: ManagerClient):
     """
         The tested scenario is as follows:

@@ -62,6 +62,7 @@ async def change_support_for_test_feature_and_restart(manager: ManagerClient, sr
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_rolling_upgrade_happy_path(manager: ManagerClient) -> None:
     """Simulates an upgrade of a cluster by doing a rolling restart
        and marking the test-only feature as supported on restarted nodes.
@@ -95,6 +96,7 @@ async def test_rolling_upgrade_happy_path(manager: ManagerClient) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_downgrade_after_partial_upgrade(manager: ManagerClient) -> None:
     """Simulates a partial upgrade of a cluster by enabling the test features
        in all nodes but one, then downgrading the upgraded nodes.
@@ -122,6 +124,7 @@ async def test_downgrade_after_partial_upgrade(manager: ManagerClient) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_joining_old_node_fails(manager: ManagerClient) -> None:
     """Upgrades the cluster to enable a new feature. Then, it first tries to
        add a new node without the feature, and then replace an existing node
@@ -156,6 +159,7 @@ async def test_joining_old_node_fails(manager: ManagerClient) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_downgrade_after_successful_upgrade_fails(manager: ManagerClient) -> None:
     """Upgrades the cluster to enable the test feature. Then, shuts down all nodes,
        disables support for the feature, then restarts all nodes. All nodes

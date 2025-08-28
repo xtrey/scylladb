@@ -44,6 +44,7 @@ async def guarantee_repair_time_next_second():
     await asyncio.sleep(1)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_manual_repair(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager, fast_stats_refresh=False, disable_flush_cache_time=True)
     token = -1
@@ -69,6 +70,7 @@ async def test_tablet_manual_repair(manager: ManagerClient):
     assert t2 > t1
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tombstone_gc_insert_flush(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager, fast_stats_refresh=False, disable_flush_cache_time=True)
     token = "all"
@@ -100,6 +102,7 @@ async def test_tombstone_gc_insert_flush(manager: ManagerClient):
             assert time.time() < deadline
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_manual_repair_all_tokens(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager, fast_stats_refresh=False, disable_flush_cache_time=True)
     token = "all"
@@ -119,6 +122,7 @@ async def test_tablet_manual_repair_all_tokens(manager: ManagerClient):
         assert v > now
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_manual_repair_async(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager, fast_stats_refresh=False)
     token = "-1"
@@ -132,6 +136,7 @@ async def test_tablet_manual_repair_async(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_manual_repair_reject_parallel_requests(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager, fast_stats_refresh=False)
     token = -1
@@ -161,6 +166,7 @@ async def test_tablet_manual_repair_reject_parallel_requests(manager: ManagerCli
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_error_and_retry(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager)
 
@@ -172,6 +178,7 @@ async def test_tablet_repair_error_and_retry(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_error_not_finish(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager)
 
@@ -187,6 +194,7 @@ async def test_tablet_repair_error_not_finish(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_error_delete(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager)
 
@@ -232,6 +240,7 @@ def check_repairs(row_num_before: list[int], row_num_after: list[int], expected_
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
 @pytest.mark.parametrize("included_host_count", [2, 1, 0])
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_hosts_filter(manager: ManagerClient, included_host_count):
     injection = "handle_tablet_migration_repair_fail"
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager)
@@ -281,6 +290,7 @@ async def prepare_multi_dc_repair(manager) -> tuple[list[ServerInfo], CassandraS
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
 @pytest.mark.parametrize("dcs_filter_and_res", [("DC1", [0, 1]), ("DC2", []), ("DC3", [])])
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_dcs_filter(manager: ManagerClient, dcs_filter_and_res):
     dcs_filter, expected_repairs = dcs_filter_and_res
     servers, cql, hosts, ks, table_id = await prepare_multi_dc_repair(manager)
@@ -310,6 +320,7 @@ async def test_tablet_repair_dcs_filter(manager: ManagerClient, dcs_filter_and_r
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_hosts_and_dcs_filter(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await prepare_multi_dc_repair(manager)
     dcs_filter = "DC1,DC2"
@@ -340,6 +351,7 @@ async def test_tablet_repair_hosts_and_dcs_filter(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_multiple_rows(manager: ManagerClient):
     cmdline = ["--hinted-handoff-enabled", "0"]
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair_multiple_rows(manager, cmdline=cmdline)
@@ -408,10 +420,12 @@ async def run_tablet_repair_multiple_rows_merge(manager: ManagerClient, inject_e
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_multiple_rows_merge_fragments_nr(manager: ManagerClient):
     await run_tablet_repair_multiple_rows_merge(manager, "row_level_repair_max_fragments_nr", "10")
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_multiple_rows_merge_fragments_size(manager: ManagerClient):
     await run_tablet_repair_multiple_rows_merge(manager, "row_level_repair_max_fragments_size", "1000")

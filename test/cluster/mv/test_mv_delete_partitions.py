@@ -59,6 +59,7 @@ async def insert_with_concurrency(cql, table, value_count, concurrency):
 # exceed the limit, the test will pass
 @pytest.mark.asyncio
 @skip_mode('release', "error injections aren't enabled in release mode")
+@pytest.mark.max_running_servers(amount=2)
 async def test_delete_partition_rows_from_table_with_mv(manager: ManagerClient) -> None:
     node_count = 2
     await manager.servers_add(node_count, config={'error_injections_at_startup': ['view_update_limit', 'delay_before_remote_view_update']})
@@ -82,6 +83,7 @@ async def test_delete_partition_rows_from_table_with_mv(manager: ManagerClient) 
 # Reproduces #8199
 @pytest.mark.asyncio
 @pytest.mark.parametrize("permuted", [False, True])
+@pytest.mark.max_running_servers(amount=1)
 async def test_base_partition_deletion_with_metrics(manager: ManagerClient, permuted):
     server = await manager.server_add()
     cql = manager.get_cql()
@@ -130,6 +132,7 @@ async def test_base_partition_deletion_with_metrics(manager: ManagerClient, perm
 # partition is deleted correctly and that a single update is generated for the view for deleting
 # the whole partition, and no view updates for each row.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_base_partition_deletion_in_batch_with_delete_row_with_metrics(manager: ManagerClient):
     server = await manager.server_add()
     cql = manager.get_cql()

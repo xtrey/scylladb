@@ -19,6 +19,7 @@ from test.cluster.test_group0_schema_versioning import get_group0_schema_version
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_raft_recovery_entry_lose(manager: ManagerClient):
     """
     Test that the Raft-based recovery procedure works correctly if some committed group 0 entry has been permanently

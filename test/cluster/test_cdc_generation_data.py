@@ -14,6 +14,7 @@ The injection forces the topology coordinator to send CDC generation data in mul
 if it didn't the command size would go over commitlog segment size limit making it impossible to commit and apply the command.
 """
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_send_data_in_parts(manager: ManagerClient):
     config = {
         'schema_commitlog_segment_size_in_mb': 2
@@ -40,6 +41,7 @@ async def test_send_data_in_parts(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_group0_apply_while_node_is_being_shutdown(manager: ManagerClient):
     # This a regression test for #24401.
 

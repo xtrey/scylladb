@@ -61,6 +61,7 @@ async def safe_rolling_restart(manager, servers, with_down):
     return cql
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_metadata_propagates_with_schema_changes_in_snapshot_mode(manager: ManagerClient):
     """Test that you can create a table and insert and query data"""
 
@@ -134,6 +135,7 @@ async def test_tablet_metadata_propagates_with_schema_changes_in_snapshot_mode(m
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_scans(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     servers = await manager.servers_add(3)
@@ -155,6 +157,7 @@ async def test_scans(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_table_drop_with_auto_snapshot(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cfg = { 'auto_snapshot': True }
@@ -175,6 +178,7 @@ async def test_table_drop_with_auto_snapshot(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_topology_changes(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     servers = await manager.servers_add(3)
@@ -254,6 +258,7 @@ async def get_two_servers_to_move_tablet(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_streaming_rx_error_no_failed_message_with_fail_stream_plan(manager: ManagerClient):
     servers, cql, s0_host_id, s1_host_id, replica, tablet_token, dst_shard, ks = await get_two_servers_to_move_tablet(manager)
 
@@ -295,6 +300,7 @@ async def test_streaming_rx_error_no_failed_message_with_fail_stream_plan(manage
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_streaming_rx_error_no_failed_message_no_fail_stream_plan_hang(manager: ManagerClient):
     servers, cql, s0_host_id, s1_host_id, replica, tablet_token, dst_shard, ks = await get_two_servers_to_move_tablet(manager)
 
@@ -320,6 +326,7 @@ async def test_streaming_rx_error_no_failed_message_no_fail_stream_plan_hang(man
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_streaming_is_guarded_by_topology_guard(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = [
@@ -395,6 +402,7 @@ async def test_streaming_is_guarded_by_topology_guard(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_table_dropped_during_streaming(manager: ManagerClient):
     """
     Verifies that load balancing recovers when table is dropped during streaming phase of tablet migration.
@@ -469,6 +477,7 @@ async def test_table_dropped_during_streaming(manager: ManagerClient):
         assert replica == (s1_host_id, 0)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_cleanup(manager: ManagerClient):
     cmdline = ['--smp=2', '--commitlog-sync=batch']
 
@@ -541,6 +550,7 @@ async def test_tablet_cleanup(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_cleanup_failure(manager: ManagerClient):
     cmdline = ['--smp=1']
 
@@ -591,6 +601,7 @@ async def test_tablet_cleanup_failure(manager: ManagerClient):
         assert len(ssts) == 0
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_tablet_resharding(manager: ManagerClient):
     cmdline = ['--smp=3']
     config = {'tablets_mode_for_new_keyspaces': 'enabled'}
@@ -615,6 +626,7 @@ async def test_tablet_resharding(manager: ManagerClient):
 @pytest.mark.parametrize("injection_error", ["foreach_compaction_group_wait", "major_compaction_wait"])
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_split(manager: ManagerClient, injection_error: str):
     logger.info("Bootstrapping cluster")
     cmdline = [
@@ -684,6 +696,7 @@ async def test_tablet_split(manager: ManagerClient, injection_error: str):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_correctness_of_tablet_split_finalization_after_restart(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = [
@@ -759,6 +772,7 @@ async def test_correctness_of_tablet_split_finalization_after_restart(manager: M
 @pytest.mark.parametrize("injection_error", ["foreach_compaction_group_wait", "major_compaction_wait"])
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_concurrent_tablet_migration_and_major(manager: ManagerClient, injection_error):
     logger.info("Bootstrapping cluster")
     cmdline = []
@@ -815,6 +829,7 @@ async def test_concurrent_tablet_migration_and_major(manager: ManagerClient, inj
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_concurrent_table_drop_and_major(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     injection_error = "major_compaction_wait"
@@ -901,6 +916,7 @@ def get_shard_that_has_tablets(tablet_count_per_shard: list[int]) -> int:
     return -1
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_count_metric_per_shard(manager: ManagerClient):
     # Given two running servers
     shards_count = 4
@@ -988,6 +1004,7 @@ async def test_tablet_count_metric_per_shard(manager: ManagerClient):
         await assert_tablet_count_metric_value_for_shards(manager, dest_server, dest_expected_count_per_shard)
 
 @pytest.mark.parametrize("primary_replica_only", [False, True])
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_load_and_stream(manager: ManagerClient, primary_replica_only):
     logger.info("Bootstrapping cluster")
     cmdline = [
@@ -1073,6 +1090,7 @@ async def test_tablet_load_and_stream(manager: ManagerClient, primary_replica_on
     await asyncio.gather(*[cql.run_async(f"drop keyspace {i}") for i in [ks, ks2]])
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_storage_service_api_uneven_ownership_keyspace_and_table_params_used(manager: ManagerClient):
     # Given two running servers
     shards_count = 4
@@ -1108,6 +1126,7 @@ async def test_storage_service_api_uneven_ownership_keyspace_and_table_params_us
             already_verified.add(actual_ip)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_storage_freeing(manager: ManagerClient):
     logger.info("Start first node")
     servers = [await manager.server_add()]
@@ -1150,6 +1169,7 @@ async def test_tablet_storage_freeing(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_schema_change_during_cleanup(manager: ManagerClient):
     logger.info("Start first node")
     servers = [await manager.server_add()]
@@ -1192,6 +1212,7 @@ async def test_schema_change_during_cleanup(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_tombstone_gc_correctness_during_tablet_split(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = [
@@ -1342,6 +1363,7 @@ def verify_replicas_per_server(desc: str, expected_replicas_per_server: dict[Ser
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=6)
 async def test_decommission_rack_basic(manager: ManagerClient):
     """
     Test decommissioning of all nodes in a rack
@@ -1384,6 +1406,7 @@ async def test_decommission_rack_basic(manager: ManagerClient):
         verify_replicas_per_server("After decommission", expected_replicas_per_server, tablet_count, ctx.initial_tablets, ctx.rf)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=8)
 async def test_decommission_rack_after_adding_new_rack(manager: ManagerClient):
     """
     Test decommissioning a rack, after a rack with new nodes is added
@@ -1438,6 +1461,7 @@ async def test_decommission_rack_after_adding_new_rack(manager: ManagerClient):
         verify_replicas_per_server("After decommission", expected_replicas_per_server, tablet_count, ctx.initial_tablets, ctx.rf)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=6)
 async def test_decommission_not_enough_racks(manager: ManagerClient):
     """
     Test that decommissioning a rack fails if the number of rack is
@@ -1482,6 +1506,7 @@ async def test_decommission_not_enough_racks(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_cleanup_vs_snapshot_race(manager: ManagerClient):
     cmdline = ['--smp=1']
 
@@ -1523,6 +1548,7 @@ async def test_tablet_cleanup_vs_snapshot_race(manager: ManagerClient):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ['DROP TABLE', 'TRUNCATE'])
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_drop_table_and_truncate_after_migration(manager: ManagerClient, operation):
     cmdline = [ '--smp=2' ]
     cfg = { 'auto_snapshot': True }
@@ -1563,6 +1589,7 @@ async def test_drop_table_and_truncate_after_migration(manager: ManagerClient, o
 @pytest.mark.asyncio
 @pytest.mark.nightly
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=4)
 async def test_truncate_during_topology_change(manager: ManagerClient):
     """Test truncate operation during topology change."""
 
@@ -1598,6 +1625,7 @@ async def test_truncate_during_topology_change(manager: ManagerClient):
 # Reproducer for https://github.com/scylladb/scylladb/issues/22040.
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_concurrent_schema_change_with_compaction_completion(manager: ManagerClient):
     cmdline = ['--smp=2']
     servers = [await manager.server_add(cmdline=cmdline)]

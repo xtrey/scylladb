@@ -211,6 +211,7 @@ async def preapre_cluster_for_incremental_repair(manager, nr_keys = 100 , cmdlin
     return servers, cql, hosts, ks, table_id, logs, repaired_keys,  unrepaired_keys, current_key, token
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_sstable_skipped_read_metrics(manager: ManagerClient):
     servers, cql, hosts, ks, table_id, logs, _, _, _, token = await preapre_cluster_for_incremental_repair(manager)
 
@@ -240,6 +241,7 @@ async def test_tablet_repair_sstable_skipped_read_metrics(manager: ManagerClient
     assert read_bytes3 > read_bytes2
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager, fast_stats_refresh=False, disable_flush_cache_time=True)
     token = -1
@@ -301,6 +303,7 @@ async def test_tablet_incremental_repair(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_error(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager)
     token = -1
@@ -361,26 +364,32 @@ async def do_tablet_incremental_repair_and_ops(manager: ManagerClient, ops: str)
         assert len(sst_skip) == 1
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_and_scrubsstables_abort(manager: ManagerClient):
     await do_tablet_incremental_repair_and_ops(manager, 'scrub_abort')
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_and_scrubsstables_validate(manager: ManagerClient):
     await do_tablet_incremental_repair_and_ops(manager, 'scrub_validate')
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_and_cleanup(manager: ManagerClient):
     await do_tablet_incremental_repair_and_ops(manager, 'cleanup')
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_and_upgradesstables(manager: ManagerClient):
     await do_tablet_incremental_repair_and_ops(manager, 'upgradesstables')
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_and_major(manager: ManagerClient):
     await do_tablet_incremental_repair_and_ops(manager, 'major')
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_and_minor(manager: ManagerClient):
     nr_keys = 100
     servers, cql, hosts, ks, table_id, logs, repaired_keys, unrepaired_keys, current_key, token = await preapre_cluster_for_incremental_repair(manager, nr_keys)
@@ -483,10 +492,12 @@ async def test_tablet_incremental_repair_with_split(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_with_merge(manager: ManagerClient):
     await do_test_tablet_incremental_repair_with_split_and_merge(manager, do_split=False, do_merge=True)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_existing_and_repair_produced_sstable(manager: ManagerClient):
     nr_keys = 100
     cmdline = ["--hinted-handoff-enabled", "0"]
@@ -512,6 +523,7 @@ async def test_tablet_incremental_repair_existing_and_repair_produced_sstable(ma
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_merge_higher_repaired_at_number(manager):
     nr_keys = 100
     servers, cql, hosts, ks, table_id, logs, repaired_keys, unrepaired_keys, current_key, token = await preapre_cluster_for_incremental_repair(manager, nr_keys)
@@ -552,6 +564,7 @@ async def test_tablet_incremental_repair_merge_higher_repaired_at_number(manager
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_merge_correct_repaired_at_number_after_merge(manager):
     nr_keys = 100
     servers, cql, hosts, ks, table_id, logs, repaired_keys, unrepaired_keys, current_key, token = await preapre_cluster_for_incremental_repair(manager, nr_keys)
@@ -619,10 +632,12 @@ async def do_test_tablet_incremental_repair_merge_error(manager, error):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_merge_error_in_merge_finalization(manager):
     await do_test_tablet_incremental_repair_merge_error(manager, 'handle_tablet_resize_finalization_for_merge_error')
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_incremental_repair_merge_error_in_merge_completion_fiber(manager):
     await do_test_tablet_incremental_repair_merge_error(manager, 'merge_completion_fiber_error')

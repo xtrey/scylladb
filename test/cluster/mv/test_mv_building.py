@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Reproduces https://github.com/scylladb/scylladb/issues/21232
 @pytest.mark.asyncio
 @skip_mode('debug', 'the test needs to do some work which takes too much time in debug mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_view_building_scheduling_group(manager: ManagerClient):
     server = await manager.server_add()
     cql = manager.get_cql()
@@ -53,6 +54,7 @@ async def test_view_building_scheduling_group(manager: ManagerClient):
 # A sanity check test ensures that starting and shutting down Scylla when view building is
 # disabled is conducted properly and we don't run into any issues.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_start_scylla_with_view_building_disabled(manager: ManagerClient):
     server = await manager.server_add(config={"view_building": "false"})
     await manager.server_stop_gracefully(server_id=server.server_id)
@@ -69,6 +71,7 @@ async def test_start_scylla_with_view_building_disabled(manager: ManagerClient):
 # with tokens >=F are moved, and it causes the view builder to enter an infinite loop
 # building the same token ranges repeatedly because it doesn't reach F.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_view_building_with_tablet_move(manager: ManagerClient, build_mode: str):
     servers = [await manager.server_add()]
 
@@ -122,6 +125,7 @@ async def test_view_building_with_tablet_move(manager: ManagerClient, build_mode
 # may become inconsistent with the base table because they got detached.
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_view_building_during_drop_index(manager: ManagerClient):
     server = await manager.server_add()
     cql = manager.get_cql()

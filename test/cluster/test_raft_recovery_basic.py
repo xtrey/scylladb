@@ -18,6 +18,7 @@ from test.cluster.util import reconnect_driver, enter_recovery_state, \
 
 @pytest.mark.asyncio
 @log_run_time
+@pytest.mark.max_running_servers(amount=4)
 async def test_raft_recovery_basic(request, manager: ManagerClient):
     # This test uses the gossip-based recovery procedure.
     cfg = {'enable_user_defined_functions': False,

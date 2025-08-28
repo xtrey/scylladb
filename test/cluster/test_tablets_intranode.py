@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_intranode_migration(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = [
@@ -62,6 +63,7 @@ async def test_intranode_migration(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_crash_during_intranode_migration(manager: ManagerClient):
     cmdline = [
         '--logger-log-level', 'tablets=trace',
@@ -114,6 +116,7 @@ async def test_crash_during_intranode_migration(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_cross_shard_migration(manager: ManagerClient):
     """
     Test scenario where writes are concurrently made with migration, where

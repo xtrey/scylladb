@@ -19,6 +19,7 @@ def workdir():
     with tempfile.TemporaryDirectory() as tmp_dir:
         yield tmp_dir
 
+@pytest.mark.max_running_servers(amount=2)
 async def test_file_streaming_respects_encryption(request, manager: ManagerClient, workdir):
     cfg = {
         'tablets_mode_for_new_keyspaces': 'enabled',
