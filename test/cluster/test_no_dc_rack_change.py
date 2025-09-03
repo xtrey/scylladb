@@ -12,6 +12,7 @@ from test.pylib.manager_client import ManagerClient
 logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_no_dc_rack_change(manager: ManagerClient) -> None:
     """
     Check that it is not possible to change node's DC or rack during restart.

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_restart_cluster(manager: ManagerClient) -> None:
     """Test that cluster can restart fine after all nodes are stopped gracefully"""
     servers = await manager.servers_add(3)

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
     ("SELECT_WHERE", True, False),
     ("SELECT_COUNT_WHERE", True, False),
 ])
+@pytest.mark.max_running_servers(amount=4)
 async def test_long_query_timeout_erm(request, manager: ManagerClient, query_type, should_wait_for_timeout, shutdown_nodes):
     """
     Test verifies that a query with long timeout doesn't block ERM on failure.
@@ -144,6 +145,7 @@ async def test_long_query_timeout_erm(request, manager: ManagerClient, query_typ
 @skip_mode('release', 'error injections are not supported in release mode')
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enable_tablets", [True, False])
+@pytest.mark.max_running_servers(amount=4)
 async def test_long_query_timeout_without_failure_erm(request, manager: ManagerClient, enable_tablets):
     """
     Test verifies that a long mapreduce query does not block ERM.

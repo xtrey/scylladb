@@ -36,6 +36,7 @@ async def wait_for_log_on_any_node(logs: List[ScyllaLogFile], marks: List[int], 
 @skip_mode('release', 'error injections are not supported in release mode')
 @skip_mode('debug', 'test performs many topology changes')
 @log_run_time
+@pytest.mark.max_running_servers(amount=5)
 async def test_topology_upgrade_stuck(request, manager: ManagerClient):
     """
     Simulates a situation where upgrade procedure gets stuck due to majority

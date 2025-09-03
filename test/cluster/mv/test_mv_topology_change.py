@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # with the writes.
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=4)
 async def test_mv_topology_change(manager: ManagerClient):
     cfg = {'force_gossip_topology_changes': True,
            'tablets_mode_for_new_keyspaces': 'disabled',
@@ -96,6 +97,7 @@ async def test_mv_topology_change(manager: ManagerClient):
 @pytest.mark.parametrize("intranode", [True, False])
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_mv_update_on_pending_replica(manager: ManagerClient, intranode):
     cfg = {'tablets_mode_for_new_keyspaces': 'enabled'}
     cmd = ['--smp', '2']
@@ -177,6 +179,7 @@ async def test_mv_update_on_pending_replica(manager: ManagerClient, intranode):
 # during this time.
 @pytest.mark.asyncio
 @skip_mode('debug', 'the test requires a short timeout for remove_node, but it is unpredictably slow in debug')
+@pytest.mark.max_running_servers(amount=4)
 async def test_mv_write_to_dead_node(manager: ManagerClient):
     servers = await manager.servers_add(4, property_file=[
         {"dc": "dc1", "rack": "r1"},

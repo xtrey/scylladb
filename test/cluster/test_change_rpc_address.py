@@ -39,6 +39,7 @@ async def two_nodes_cluster(manager: ManagerClient) -> list[ServerNum]:
 
 @pytest.mark.asyncio
 @pytest.mark.replication_factor(N_SERVERS)
+@pytest.mark.max_running_servers(amount=2)
 async def test_change_rpc_address(two_nodes_cluster: list[ServerNum],
                                   manager: ManagerClient,
                                   random_tables: RandomTables) -> None:

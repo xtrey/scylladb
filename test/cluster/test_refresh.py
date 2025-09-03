@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
         (topo(rf = 3, nodes = 6, racks = 3, dcs = 1), True),
         (topo(rf = 2, nodes = 8, racks = 4, dcs = 2), True)
     ])
+@pytest.mark.max_running_servers(amount=8)
 async def test_refresh_with_streaming_scopes(manager: ManagerClient, topology_rf_validity):
     '''
     Check that refreshing a cluster with stream scopes works

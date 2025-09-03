@@ -19,6 +19,7 @@ import pytest
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.max_running_servers(amount=4)
 async def test_remove_garbage_group0_members(manager: ManagerClient):
     """
     Verify that failing to leave group 0 or remove a node from group 0 in removenode/decommission

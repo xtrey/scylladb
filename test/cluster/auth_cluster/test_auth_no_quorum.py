@@ -20,6 +20,7 @@ Tests how cluster behaves when lost quorum. Ideally for operations with CL=1 liv
 cluster should still work but that's guaranteed only if auth data is replicated everywhere.
 """
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_auth_no_quorum(manager: ManagerClient) -> None:
     config = {
         **auth_config,
@@ -61,6 +62,7 @@ async def test_auth_no_quorum(manager: ManagerClient) -> None:
 Tests raft snapshot transfer of auth data.
 """
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_auth_raft_snapshot_transfer(manager: ManagerClient) -> None:
     servers = await manager.servers_add(1, config=auth_config)
 

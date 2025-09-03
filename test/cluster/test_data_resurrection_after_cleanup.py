@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_data_resurrection_after_cleanup(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = [

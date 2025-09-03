@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 @pytest.mark.parametrize("mode", ['vnode', 'tablet'])
 @skip_mode('release', 'error injections are not supported in release mode')
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_partitioned_sstable_set(manager: ManagerClient, mode):
     cfg = {
         'tablets_mode_for_new_keyspaces': 'enabled',

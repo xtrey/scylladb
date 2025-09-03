@@ -11,6 +11,7 @@ import pytest
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_removing_alive_node_fails(manager: ManagerClient) -> None:
     """
     Test verifying that an attempt to remove an alive node fails as expected.

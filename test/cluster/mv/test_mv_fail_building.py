@@ -18,6 +18,7 @@ from cassandra.query import SimpleStatement  # type: ignore
 # Reproduces the scenario in #19261
 @pytest.mark.asyncio
 @skip_mode('release', "error injections aren't enabled in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_mv_fail_building(manager: ManagerClient) -> None:
     node_count = 3
     servers = await manager.servers_add(node_count)
@@ -49,6 +50,8 @@ async def test_mv_fail_building(manager: ManagerClient) -> None:
 # database write failures.
 @pytest.mark.asyncio
 @skip_mode('release', "error injections aren't enabled in release mode")
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_mv_build_during_shutdown(manager: ManagerClient):
     server = await manager.server_add()
 
