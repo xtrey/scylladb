@@ -81,6 +81,7 @@ async def check_and_abort_repair_task(manager: ManagerClient, tm: TaskManagerCli
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_task(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -129,6 +130,7 @@ async def check_repair_task_list(tm: TaskManagerClient, servers: list[ServerInfo
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_task_list(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -153,6 +155,7 @@ async def test_tablet_repair_task_list(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_repair_task_children(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -210,6 +213,7 @@ async def prepare_migration_test(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_migration_task(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -245,6 +249,7 @@ async def test_tablet_migration_task(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_migration_task_list(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -292,6 +297,7 @@ async def test_tablet_migration_task_list(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_migration_task_failed(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -333,6 +339,7 @@ async def test_tablet_migration_task_failed(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_repair_task_info_is_none_when_no_running_repair(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -393,6 +400,7 @@ cmdline.extend(extra_scylla_cmdline_options)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_tablet_resize_task(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -434,6 +442,7 @@ async def test_tablet_resize_task(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_resize_list(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -494,6 +503,7 @@ async def test_tablet_resize_list(manager: ManagerClient):
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
 @skip_mode('debug', 'debug mode is too time-sensitive')
+@pytest.mark.max_running_servers(amount=1)
 async def test_tablet_resize_revoked(manager: ManagerClient):
     module_name = "tablets"
     tm = TaskManagerClient(manager.api)
@@ -535,6 +545,7 @@ async def test_tablet_resize_revoked(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_task_sees_latest_state(manager: ManagerClient):
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager)
 

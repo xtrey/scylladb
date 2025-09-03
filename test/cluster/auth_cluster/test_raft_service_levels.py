@@ -23,6 +23,7 @@ from test.cluster.auth_cluster import extra_scylla_config_options as auth_config
 logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_service_levels_snapshot(manager: ManagerClient):
     """
         Cluster with 3 nodes.
@@ -60,6 +61,7 @@ async def test_service_levels_snapshot(manager: ManagerClient):
     assert set([sl.service_level for sl in result]) == set([sl.service_level for sl in new_result])
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_service_levels_upgrade(request, manager: ManagerClient, build_mode: str):
     # First, force the first node to start in legacy mode
     cfg = {**auth_config, 'force_gossip_topology_changes': True, 'tablets_mode_for_new_keyspaces': 'disabled'}
@@ -110,6 +112,7 @@ async def test_service_levels_upgrade(request, manager: ManagerClient, build_mod
     assert set([sl.service_level for sl in result_with_sl_v2]) == set(sls + [sl_v2])
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_service_levels_work_during_recovery(manager: ManagerClient):
     # FIXME: move this test to the Raft-based recovery procedure or remove it if unneeded.
     servers = await manager.servers_add(3, config=auth_config, auto_rack_dc="dc1")
@@ -241,6 +244,7 @@ async def assert_connections_params(manager: ManagerClient, hosts, expect):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'cql server testing REST API is not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_connections_parameters_auto_update(manager: ManagerClient, build_mode):
     servers = await manager.servers_add(3, config=auth_config, auto_rack_dc="dc1")
     cql = manager.get_cql()
@@ -324,6 +328,7 @@ async def test_connections_parameters_auto_update(manager: ManagerClient, build_
         cluster_conn.shutdown()
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_service_level_cache_after_restart(manager: ManagerClient):
     servers = await manager.servers_add(1, config=auth_config, auto_rack_dc="dc1")
     cql = manager.get_cql()
@@ -352,6 +357,7 @@ async def test_service_level_cache_after_restart(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injection is disabled in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_shares_check(manager: ManagerClient):
     srv = await manager.server_add(config={
         "error_injections_at_startup": [
@@ -381,6 +387,7 @@ async def test_shares_check(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injection is not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_workload_prioritization_upgrade(manager: ManagerClient):
     # This test simulates OSS->enterprise upgrade in v1 service levels.
     # Using error injection, the test disables WORKLOAD_PRIORITIZATION feature
@@ -425,6 +432,7 @@ async def test_workload_prioritization_upgrade(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injection is disabled in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_service_levels_over_limit(manager: ManagerClient):
     srv = await manager.server_add(config={**auth_config,
         "error_injections_at_startup": ['allow_service_level_over_limit']
@@ -453,6 +461,7 @@ async def test_service_levels_over_limit(manager: ManagerClient):
 
 # Reproduces issue scylla-enterprise#4912
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_service_level_metric_name_change(manager: ManagerClient) -> None:
     servers = await manager.servers_add(2, config=auth_config, auto_rack_dc="dc1")
     s = servers[0]

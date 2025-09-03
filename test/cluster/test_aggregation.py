@@ -23,6 +23,7 @@ pytestmark = pytest.mark.prepare_3_racks_cluster
 
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_cancel_mapreduce(manager: ManagerClient):
     """
     This test verifies that stopping the supercoordinator of a mapreduce task cancels

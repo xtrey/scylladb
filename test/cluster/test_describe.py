@@ -16,6 +16,7 @@ from test.pylib.manager_client import ManagerClient
 #
 # Reproducer for issue scylladb/scylladb#24018.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_large_create_statement(manager: ManagerClient):
     cmdline = ["--logger-log-level", "describe=trace"]
     srv = await manager.server_add(cmdline=cmdline)

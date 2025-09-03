@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_remove_rpc_client_with_pending_requests(request, manager: ManagerClient) -> None:
     # Regression test for #17445
 

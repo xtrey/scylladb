@@ -17,6 +17,7 @@ pytestmark = pytest.mark.prepare_3_racks_cluster
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_upgrade_to_ssl(manager: ManagerClient) -> None:
     """Tests rolling upgrade/downgrade from non-SSL to SSL and back
     """

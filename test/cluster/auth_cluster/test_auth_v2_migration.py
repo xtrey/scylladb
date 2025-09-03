@@ -148,6 +148,7 @@ async def check_auth_v2_works(manager: ManagerClient, hosts):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_auth_v2_migration(request, manager: ManagerClient):
     # First, force the first node to start in legacy mode
     cfg = {**auth_config, 'force_gossip_topology_changes': True, 'tablets_mode_for_new_keyspaces': 'disabled'}
@@ -188,6 +189,7 @@ async def test_auth_v2_migration(request, manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_auth_v2_during_recovery(manager: ManagerClient):
     # FIXME: move this test to the Raft-based recovery procedure or remove it if unneeded.
     servers = await manager.servers_add(3, config=auth_config, auto_rack_dc="dc1")

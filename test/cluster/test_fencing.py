@@ -60,6 +60,7 @@ def all_hints_metrics(metrics: ScyllaMetrics) -> list[str]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tablets_enabled", [True, False])
+@pytest.mark.max_running_servers(amount=3)
 async def test_fence_writes(request, manager: ManagerClient, tablets_enabled: bool):
     cfg = {'tablets_mode_for_new_keyspaces' : 'enabled' if tablets_enabled else 'disabled'}
 
@@ -124,6 +125,7 @@ async def test_fence_writes(request, manager: ManagerClient, tablets_enabled: bo
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_fence_hints(request, manager: ManagerClient):
     logger.info("Bootstrapping cluster with three nodes")
     s0 = await manager.server_add(

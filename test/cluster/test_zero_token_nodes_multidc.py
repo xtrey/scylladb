@@ -19,6 +19,7 @@ from test.cluster.util import create_new_test_keyspace
 @pytest.mark.asyncio
 @pytest.mark.parametrize('zero_token_nodes', [1, 2])
 @pytest.mark.parametrize('rf_rack_valid_keyspaces', [False, True])
+@pytest.mark.max_running_servers(amount=4)
 async def test_zero_token_nodes_multidc_basic(manager: ManagerClient, zero_token_nodes: int, rf_rack_valid_keyspaces: bool):
     """
     Test the basic functionality of a DC with zero-token nodes:

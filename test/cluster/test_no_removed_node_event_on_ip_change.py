@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_no_removed_node_event_on_ip_change(manager: ManagerClient, caplog: pytest.LogCaptureFixture):
     logger.info("starting the first node (leader)")
     servers = [await manager.server_add()]

@@ -10,6 +10,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_boot(manager):
     rbno = True
     cfg = {'enable_repair_based_node_ops': rbno, 'num_tokens': 256}

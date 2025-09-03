@@ -52,6 +52,7 @@ async def with_retries(test_once: typing.Callable[[], typing.Awaitable], timeout
                 break
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_basic(manager: ManagerClient) -> None:
     """Tests basic functionality of internode compression.
     Also, tests that changing internode_compression_zstd_max_cpu_fraction from 0.0 to 1.0 enables zstd as expected.
@@ -93,6 +94,7 @@ async def test_basic(manager: ManagerClient) -> None:
         await with_retries(functools.partial(test_algo, "zstd", 0.25), timeout=600)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_dict_training(manager: ManagerClient) -> None:
     """Tests population of system.dicts with dicts trained on RPC traffic."""
     training_min_bytes = 128*1024
@@ -155,6 +157,7 @@ async def test_dict_training(manager: ManagerClient) -> None:
         await with_retries(test_once, timeout=600)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_external_dicts(manager: ManagerClient) -> None:
     """Tests internode compression with external dictionaries"""
     cfg = {
@@ -218,6 +221,7 @@ async def test_external_dicts(manager: ManagerClient) -> None:
 
 # Similar to test_external_dicts, but simpler.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_external_dicts_sanity(manager: ManagerClient) -> None:
     """Tests internode compression with external dictionaries, by spamming the same UPDATE statement."""
     cfg = {

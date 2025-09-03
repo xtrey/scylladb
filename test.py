@@ -12,7 +12,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import shlex
+from multiprocessing import Process
 from random import randint
+
+import pytest
 
 from types import SimpleNamespace
 
@@ -320,98 +323,124 @@ async def find_tests(options: argparse.Namespace) -> None:
                 await suite.add_test_list()
 
 
-def run_pytest(options: argparse.Namespace,
-               group: str,
-               concurrency: Callable[[int], int],
-               dirs: list[pathlib.Path]) -> tuple[int, list[SimpleNamespace]]:
+async def run_pytest(options: argparse.Namespace) -> tuple[int, list[SimpleNamespace]]:
+               # group: str,
+               # concurrency: Callable[[int], int],
+               # dirs: list[pathlib.Path]) -> tuple[int, list[SimpleNamespace]]:
     # When tests are executed in parallel on different hosts, we need to distinguish results from them.
     # So HOST_ID needed to not overwrite results from different hosts during Jenkins will copy to one directory.
-
     failed_tests = []
     temp_dir = pathlib.Path(options.tmpdir).absolute()
     report_dir =  temp_dir / 'report'
-    junit_output_file = report_dir / f"pytest_{group}_{HOST_ID}.xml"
-    files_to_run = []
-    for name in options.name:
-        file_name = name
-        if '::' in name:
-            file_name, _ = name.split('::', maxsplit=1)
-        if any((TOP_SRC_DIR / file_name).is_relative_to(x) for x in dirs):
-            files_to_run.append(name)
-    if not options.name:
-        files_to_run = [str(directory) for directory in dirs]
-    if not files_to_run:
-        logging.info(f"No {group} found. Skipping pytest execution for boost tests.")
-        return 0, []
-    args = [
-        'pytest',
-        "-s",  # don't capture print() output inside pytest
-        '--color=yes',
-        f'--repeat={options.repeat}',
-        *[f'--mode={mode}' for mode in options.modes],
-    ]
-    if options.list_tests:
-        args.extend(['--collect-only', '--quiet'])
-    else:
-        args.extend([
-            "--log-level=DEBUG",  # Capture logs
-            f'--junit-xml={junit_output_file}',
-            "-rf",
-            f'-n{getattr(options, f"pytest_{group}_jobs") or concurrency(options.jobs)}',
-            f'--tmpdir={temp_dir}',
-            f'--maxfail={options.max_failures}',
-            f'--alluredir={report_dir / f"allure_{HOST_ID}"}',
-            '--test-py-init',
-            '-v' if options.verbose else '-q',
-        ])
-    if options.pytest_arg:
-        # If pytest_arg is provided, it should be a string with arguments to pass to pytest
-        args.extend(shlex.split(options.pytest_arg))
-    if options.random_seed:
-        args.append(f'--random-seed={options.random_seed}')
-    if options.x_log2_compaction_groups:
-        args.append(f'--x-log2-compaction-groups={options.x_log2_compaction_groups}')
-    if options.gather_metrics:
-        args.append('--gather-metrics')
-    if options.timeout:
-        args.append(f'--timeout={options.timeout}')
-    if options.session_timeout:
-        args.append(f'--session-timeout={options.session_timeout}')
-    if options.skip_patterns:
-        args.append(f'-k={" and ".join([f"not {pattern}" for pattern in options.skip_patterns])}')
-    if options.k:
-        args.append(f'-k={options.k}')
-    if not options.save_log_on_success:
-        args.append('--allure-no-capture')
-    else:
-        args.append('--save-log-on-success')
-    if options.markers:
-        args.append(f'-m={options.markers}')
-    args.extend(files_to_run)
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True)
-    try:
-        # Read output from pytest and print it to the console
-        if options.verbose:
-            for line in p.stdout:
-                print(line, end='', flush=True)
-        else:
-            # without verbose, pytest output only one line, so to have live progress, need to read it by char,
-            # because each char is a test result
-            while True:
-                char = p.stdout.read(1)
-                if char == '' and p.poll() is not None:
-                    break
-                if char:
-                    print(char, end='', flush=True)
-
-        # Wait for pytest to finish and get its return code
-        p.wait(timeout=60)
-    except subprocess.TimeoutExpired:
-        print('Timeout reached')
-        p.kill()
-    except KeyboardInterrupt:
-        p.kill()
-        raise
+    report_dir.mkdir(parents=True, exist_ok=True)
+    # files_to_run = []
+    # for name in options.name:
+    #     file_name = name
+    #     if '::' in name:
+    #         file_name, _ = name.split('::', maxsplit=1)
+    #     if any((TOP_SRC_DIR / file_name).is_relative_to(x) for x in dirs):
+    #         files_to_run.append(name)
+    # if not options.name:
+    #     files_to_run = [str(directory) for directory in dirs]
+    # if not files_to_run:
+    #     logging.info(f"No {group} found. Skipping pytest execution for boost tests.")
+    #     return 0, []
+    # args = [
+    #     "-s",  # don't capture print() output inside pytest
+    #     '--color=yes',
+    #     f'--repeat={options.repeat}',
+    #     *[f'--mode={mode}' for mode in options.modes],
+    # ]
+    # if options.list_tests:
+    #     args.extend(['--collect-only', '--quiet'])
+    # else:
+    #     args.extend([
+    #         "--log-level=DEBUG",  # Capture logs
+    #         f'--junit-xml={junit_output_file}',
+    #         "-rf",
+    #         # f'-n{int(options.jobs)}',
+    #         f'--tmpdir={temp_dir}',
+    #         f'--maxfail={options.max_failures}',
+    #         # f'--alluredir={report_dir / f"allure_{HOST_ID}"}',
+    #         '--test-py-init',
+    #         '-v' if options.verbose else '-q',
+    #     ])
+    # if options.pytest_arg:
+    #     # If pytest_arg is provided, it should be a string with arguments to pass to pytest
+    #     args.extend(shlex.split(options.pytest_arg))
+    # if options.random_seed:
+    #     args.append(f'--random-seed={options.random_seed}')
+    # if options.x_log2_compaction_groups:
+    #     args.append(f'--x-log2-compaction-groups={options.x_log2_compaction_groups}')
+    # if options.gather_metrics:
+    #     args.append('--gather-metrics')
+    # if options.gather_cluster_metrics:
+    #     args.append('--gather-cluster-metrics')
+    # if options.timeout:
+    #     args.append(f'--timeout={options.timeout}')
+    # if options.session_timeout:
+    #     args.append(f'--session-timeout={options.session_timeout}')
+    # if options.skip_patterns:
+    #     args.append(f'-k={" and ".join([f"not {pattern}" for pattern in options.skip_patterns])}')
+    # if options.k:
+    #     args.append(f'-k={options.k}')
+    # if not options.save_log_on_success:
+    #     args.append('--allure-no-capture')
+    # else:
+    #     args.append('--save-log-on-success')
+    # if options.markers:
+    #     args.append(f'-m={options.markers}')
+    # args.extend(files_to_run)
+    # for index, i in enumerate(range(10,40, 5)):
+    # args.append(f'-n{1}')
+    # args.append("-m='max_running_servers(amount=1)'")
+    # args.append(f'--run_id={2}')
+    # pytest.main(args)
+    # p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True)
+    # try:
+    #     # Read output from pytest and print it to the console
+    #     if options.verbose:
+    #         for line in p.stdout:
+    #             print(line, end='', flush=True)
+    #     else:
+    #         # without verbose, pytest output only one line, so to have live progress, need to read it by char,
+    #         # because each char is a test result
+    #         while True:
+    #             char = p.stdout.read(1)
+    #             if char == '' and p.poll() is not None:
+    #                 break
+    #             if char:
+    #                 print(char, end='', flush=True)
+    #
+    #     # Wait for pytest to finish and get its return code
+    #     p.wait(timeout=60)
+    # except subprocess.TimeoutExpired:
+    #     print('Timeout reached')
+    #     p.kill()
+    # except KeyboardInterrupt:
+    #     p.kill()
+    #     raise
+    nr_cpus = multiprocessing.cpu_count()
+    for i in range(1, 13):
+        for n in range(5, nr_cpus, 5):
+            junit_output_file = report_dir / f"pytest_{HOST_ID}_size{i}_threads{n}.xml"
+            args = [
+                '--mode=dev',
+                'test/cluster/',
+                '--test-py-init',
+                '-n', str(n),
+                f'--threads={n}',
+                f'--server-amount={i}',
+                f'--junit-xml={junit_output_file}',
+                f'-m=max_running_servers(amount={i})',
+                '--gather-metrics',
+                f'--run_id={i}',
+                '-vvv'
+            ]
+            p = Process(target=pytest.main, kwargs={'args': args})
+            p.start()
+            while p.is_alive():
+                await asyncio.sleep(3)
 
     if options.list_tests:
         return 0, []
@@ -478,25 +507,28 @@ async def run_all_tests(signaled: asyncio.Event, options: argparse.Namespace) ->
     deadline = time.perf_counter() + options.session_timeout
     try:
         await start_3rd_party_services(tempdir_base=pathlib.Path(options.tmpdir), toxiproxy_byte_limit=options.byte_limit)
-        for group in PYTEST_RUNNER_DIRECTORIES:
-            result = run_pytest(options, **group)
-            total_tests += result[0]
-            failed_tests.extend(result[1])
+        # for group in PYTEST_RUNNER_DIRECTORIES:
+        #     result = run_pytest(options, **group)
+        #     total_tests += result[0]
+        #     failed_tests.extend(result[1])
+        result = await run_pytest(options)
+        total_tests += result[0]
+        failed_tests.extend(result[1])
         console.print_start_blurb()
         TestSuite.artifacts.add_exit_artifact(None, TestSuite.hosts.cleanup)
-        for test in TestSuite.all_tests():
-            # +1 for 'signaled' event
-            if len(pending) > options.jobs:
-                # Wait for some task to finish
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                failed += await reap(done, pending, signaled)
-                if time.perf_counter() > deadline:
-                    print("Session timeout reached")
-                    await cancel(pending, "Session timeout reached")
-                if max_failures != 0 and max_failures <= failed:
-                    print("Too much failures, stopping")
-                    await cancel(pending, "Too much failures, stopping")
-            pending.add(asyncio.create_task(test.suite.run(test, options)))
+        # for test in TestSuite.all_tests():
+        #     # +1 for 'signaled' event
+        #     if len(pending) > options.jobs:
+        #         # Wait for some task to finish
+        #         done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        #         failed += await reap(done, pending, signaled)
+        #         if time.perf_counter() > deadline:
+        #             print("Session timeout reached")
+        #             await cancel(pending, "Session timeout reached")
+        #         if max_failures != 0 and max_failures <= failed:
+        #             print("Too much failures, stopping")
+        #             await cancel(pending, "Too much failures, stopping")
+        #     pending.add(asyncio.create_task(test.suite.run(test, options)))
         # Wait & reap ALL tasks but signaled_task
         # Do not use asyncio.ALL_COMPLETED to print a nice progress report
         while len(pending) > 1:
@@ -564,7 +596,7 @@ async def main() -> int:
     if options.list_tests:
         print('\n'.join([f"{t.suite.mode:<8} {type(t.suite).__name__[:-9]:<11} {t.name}"
                          for t in TestSuite.all_tests()]))
-        run_pytest(options)
+        await run_pytest(options)
         return 0
 
     if options.manual_execution and TestSuite.test_count() > 1:
@@ -574,7 +606,7 @@ async def main() -> int:
 
     signaled = asyncio.Event()
     stop_event = asyncio.Event()
-    resource_watcher = run_resource_watcher(options.gather_metrics, signaled, stop_event, options.tmpdir)
+    resource_watcher = run_resource_watcher(True, signaled, stop_event, options.tmpdir)
 
     setup_signal_handlers(asyncio.get_running_loop(), signaled)
 
@@ -583,6 +615,8 @@ async def main() -> int:
         total_tests_pytest, failed_pytest_tests = await run_all_tests(signaled, options)
         logging.info('after running all tests')
         stop_event.set()
+        # resource_watcher.do_run = False
+        # resource_watcher.join()
         async with asyncio.timeout(5):
             await resource_watcher
     except asyncio.CancelledError:

@@ -17,6 +17,7 @@ from test.cluster.util import reconnect_driver, enter_recovery_state, \
 
 @pytest.mark.asyncio
 @log_run_time
+@pytest.mark.max_running_servers(amount=3)
 async def test_recovery_after_majority_loss(request, manager: ManagerClient):
     """
     This test uses the gossip-based recovery procedure.
