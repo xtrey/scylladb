@@ -42,6 +42,7 @@ async def with_retries(test_once: typing.Callable[[], typing.Awaitable], timeout
             else:
                 break
 
+@pytest.mark.max_running_servers(amount=2)
 async def test_autoretrain_dict(manager: ManagerClient):
     """
     Tests that sstable compression dictionary autotraining is doing its job.

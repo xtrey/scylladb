@@ -29,6 +29,7 @@ from tools.assertions import (
 )
 from tools.data import insert_c1c2, rows_to_list
 from tools.files import corrupt_file
+from tools.metrics import get_node_metrics
 
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,7 @@ class TestCommitLog(Tester):
                 else:
                     raise e
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_commitlog_replay_on_startup(self):
         """Test commit log replay"""
         node1 = self.node1
@@ -220,6 +222,7 @@ class TestCommitLog(Tester):
         res = session.execute("SELECT * FROM Test. users")
         assert_lists_equal_ignoring_order(rows_to_list(res), [["gandalf", 1955, "male", "p@$$", "WA"]])
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_commitlog_replay_with_alter_table(self):
         """
         Test commit log replay with alter table
@@ -320,21 +323,25 @@ class TestCommitLog(Tester):
                 ignore_order=True,
             )
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_default_segment_size(self):
         """Test default commitlog_segment_size_in_mb (32MB)"""
 
         self._segment_size_test(32)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_small_segment_size(self):
         """Test a small commitlog_segment_size_in_mb (5MB)"""
 
         self._segment_size_test(5)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_default_compressed_segment_size(self):
         """Test default compressed commitlog_segment_size_in_mb (32MB)"""
         # Scylla: Unknown option commitlog_compression
         self._segment_size_test(32, compressed=True)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_small_compressed_segment_size(self):
         """Test a small compressed commitlog_segment_size_in_mb (5MB)"""
         # Scylla: Unknown option commitlog_compression
@@ -365,6 +372,7 @@ class TestCommitLog(Tester):
         )
         return session, node1
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_periodic_commitlog(self):
         """
         Test periodic mode of commitlog flushing
@@ -520,18 +528,21 @@ class TestCommitLog(Tester):
         insert_c1c2(session, n=int(total_size * 1.5))
         assert_row_count(session=session, table_name="ks.cf", expected=int(total_size * 1.5))
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_total_space_limit_of_commitlog_with_memory_based_limit(self):
         """
         Test with auto-sized commitlog files, and total space limit (based on available memory)
         """
         self._test_total_space_limit_of_commitlog(commitlog_segment_size_in_mb=-1, commitlog_total_space_in_mb=-1)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_total_space_limit_of_commitlog_with_small_limit(self):
         """
         Test with 5M commitlog files, total space limit is 30M
         """
         self._test_total_space_limit_of_commitlog(commitlog_segment_size_in_mb=5, commitlog_total_space_in_mb=30)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_alter_keyspace_durable_writes_false(self):
         """
         Test 'CREATE KEYSPACE ... WITH durable_writes = false;'
@@ -571,6 +582,7 @@ class TestCommitLog(Tester):
         session = self.patient_cql_connection(node1)
         assert_all(session=session, query="SELECT * FROM dw.cf", expected=[[1], [2]], ignore_order=True)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_alter_keyspace_durable_writes_true(self):
         """
         Test 'ALTER KEYSPACE ... WITH durable_writes = true;'
@@ -635,6 +647,7 @@ class TestCommitLog(Tester):
         session.execute(create_statement)
         self.insert_statement = session.prepare(f"INSERT INTO {self.ks}.{self.cf} ({', '.join(f'c{i:05d}' for i in range(columns))}) VALUES({', '.join(f'?' for i in range(columns))});")
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_one_big_mutation_replay_on_startup(self):
         """
         Test commit log replay with a single big (larger than mutation limit) commitlog mutation
@@ -662,6 +675,7 @@ class TestCommitLog(Tester):
         assert node1.grep_log(f"large_data - Writing large row {self.ks}/{self.cf}:")
         assert in_table == [self.values]
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_one_big_mutation_corrupted_on_startup(self):
         """
         Test commit log replay with a single big (larger than mutation limit) commitlog mutation
@@ -694,6 +708,7 @@ class TestCommitLog(Tester):
         assert node1.grep_log("commitlog_replayer - Corrupted file:")
         assert in_table == []
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_one_big_mutation_rollback_on_startup(self):
         """
         Test commit log replay with a single big (larger than mutation limit) commitlog mutation
@@ -720,3 +735,113 @@ class TestCommitLog(Tester):
         in_table = rows_to_list(session.execute(f"SELECT * FROM {self.ks}.{self.cf};"))
         assert not node1.grep_log(f"large_data - Writing large row {self.ks}/{self.cf}")
         assert in_table == []
+
+    @pytest.mark.max_running_servers(amount=1)
+    
+    def test_pinned_cl_segment_doesnt_resurrect_data(self):
+        """
+        The tested scenario is as follows:
+        * Two tables, ks1.tbl1 and ks2.tbl2.
+        * A commitlog segment contains writes for both tables.
+        * ks1.tbl1 has very low write traffix, memtables are very rarely
+          flushed, this results in ks1.tbl1 "pinning" any commitlog segment
+          which has writes, that are still in the memtable.
+        * ks2.tbl2 deletes the data, some of which is still in the segment
+          pinned by ks1.tbl1.
+        * ks2.tbl2 flushes the memtable, data gets to sstables, commitlog
+          segments containing writes for both tables are still pinned.
+        * ks2.tbl2 compacts and purges away both the data and the tombstone.
+        * The node has an unclean restart, the pinned segments are replayed and
+          data is resurrected, as the tombstone is already purged.
+
+        This test uses gc_grace_seconds=0 to make the test fast.
+
+        See https://github.com/scylladb/scylladb/issues/14870
+        """
+        node1 = self.node1
+        node1.set_configuration_options(batch_commitlog=True, values={"commitlog_segment_size_in_mb": 1, "enable_cache": False})
+        node1.start()
+
+        session = self.patient_cql_connection(node1)
+
+        logger.debug("Create keyspace")
+        create_ks(session, "ks1", 1)
+        create_ks(session, "ks2", 1)
+
+        logger.debug("Create table")
+        session.execute("CREATE TABLE ks1.tbl1 (pk int, ck int, PRIMARY KEY (pk, ck))")
+        session.execute("CREATE TABLE ks2.tbl2 (pk int, ck int, v text, PRIMARY KEY (pk, ck)) WITH gc_grace_seconds = 0")
+
+        def get_segments_num():
+            metrics_res = get_node_metrics(node_ip=self.cluster.get_node_ip(1), metrics=["scylla_commitlog_segments"])
+            return int(metrics_res["scylla_commitlog_segments"])
+
+        def get_cl_segments():
+            cl_path = self._get_commitlog_path()
+            return {os.path.basename(s) for s in glob.glob(os.path.join(cl_path, "CommitLog-*"))}
+
+        segments_before_writes = get_segments_num()
+        segments_after_writes = segments_before_writes
+
+        logger.debug(f"Have {segments_after_writes} segments before writing data")
+
+        insert_id_tbl1 = session.prepare("INSERT INTO ks1.tbl1 (pk, ck) VALUES (?, ?)")
+        insert_id_tbl2 = session.prepare("INSERT INTO ks2.tbl2 (pk, ck, v) VALUES (?, ?, ?)")
+        pk1 = 0
+        pk2 = 1
+        ck = 0
+        value = "v" * 1024
+
+        logger.debug(f"Filling segment with mixed data from ks1.tbl1 and ks2.tbl2")
+
+        # Ensure at least one segment with writes from both tables
+        while segments_after_writes < segments_before_writes + 1:
+            session.execute(insert_id_tbl1, (pk1, ck))
+            session.execute(insert_id_tbl2, (pk1, ck, value))
+            ck = ck + 1
+            segments_after_writes = get_segments_num()
+
+        logger.debug(f"Filling segment(s) with ks2.tbl2 only")
+
+        while segments_after_writes < segments_before_writes + 3:
+            session.execute(insert_id_tbl2, (pk1, ck, value))
+            ck = ck + 1
+            segments_after_writes = get_segments_num()
+
+        session.execute(f"DELETE FROM ks2.tbl2 WHERE pk = {pk1}")
+
+        # We need to make sure the segment in which the above delete landed in
+        # is full, otherwise the memtable flush will not be able to destroy it.
+        logger.debug(f"Filling another segment with ks2.tbl2 (pk={pk2})")
+
+        while segments_after_writes < segments_before_writes + 4:
+            session.execute(insert_id_tbl2, (pk2, ck, value))
+            ck = ck + 1
+            segments_after_writes = get_segments_num()
+
+        segments_before = get_cl_segments()
+        logger.debug(f"Wrote {ck} rows, now have {segments_after_writes} segments ({segments_before}")
+
+        logger.debug("Flush ks2.tbl2")
+        node1.flush(ks="ks2", table="tbl2")
+        node1.compact(keyspace="ks2", tables=["tbl2"])
+
+        segments_after = get_cl_segments()
+        logger.debug(f"After flush+compact, now have {get_segments_num()} segments ({segments_after})")
+
+        assert len(list(session.execute(f"SELECT * FROM ks2.tbl2 WHERE pk = {pk1}"))) == 0
+        # Need to ensure at least one segment was freed.
+        # We assume the last segment, containing the tombstone, was among the freed ones.
+        removed_segments = segments_before - segments_after
+        assert len(removed_segments) > 0
+
+        logger.debug(f"The following segments were removed: {removed_segments}")
+
+        logger.debug("Kill + restart the node")
+        node1.stop(gently=False)
+        node1.start(wait_for_binary_proto=True)
+
+        session = self.patient_cql_connection(node1)
+
+        # CL replay should not have resurrected the data
+        assert len(list(session.execute(f"SELECT * FROM ks2.tbl2 WHERE pk = {pk1}"))) == 0

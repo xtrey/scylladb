@@ -36,6 +36,7 @@ async def get_injection_params(manager, node_ip, injection):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_enable_compacting_data_for_streaming_and_repair_live_update(manager):
     """
     Check that enable_compacting_data_for_streaming_and_repair is live_update.
@@ -77,6 +78,7 @@ async def test_enable_compacting_data_for_streaming_and_repair_live_update(manag
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tombstone_gc_for_streaming_and_repair(manager):
     """
     Check that:
@@ -153,6 +155,7 @@ async def test_tombstone_gc_for_streaming_and_repair(manager):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_repair_succeeds_with_unitialized_bm(manager):
     servers = await manager.servers_add(2, auto_rack_dc="dc1")
     cql = manager.get_cql()
@@ -216,16 +219,19 @@ async def do_batchlog_flush_in_repair(manager, cache_time_in_ms):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_batchlog_flush_in_repair_with_cache(manager):
     await do_batchlog_flush_in_repair(manager, 5000);
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_batchlog_flush_in_repair_without_cache(manager):
     await do_batchlog_flush_in_repair(manager, 0);
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_keyspace_drop_during_data_sync_repair(manager):
     cfg = {
         'tablets_mode_for_new_keyspaces': 'disabled',
@@ -241,6 +247,7 @@ async def test_keyspace_drop_during_data_sync_repair(manager):
     await manager.server_add(config=cfg)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_vnode_keyspace_describe_ring(manager: ManagerClient):
     cfg = {
         'tablets_mode_for_new_keyspaces': 'disabled',

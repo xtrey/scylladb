@@ -546,6 +546,7 @@ class TestCQLAudit(AuditTester):
                 session.execute(query)
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_using_non_existent_keyspace(self, helper_class):
         """
         Test tha using a non-existent keyspace generates an audit entry with an
@@ -662,25 +663,30 @@ class TestCQLAudit(AuditTester):
                 session.execute(query)
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_keyspace(self, helper_class):
         with helper_class() as helper:
             self.verify_keyspace(audit_settings=AuditTester.audit_default_settings, helper=helper)
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_keyspace_extra_parameter(self, helper_class):
         with helper_class() as helper:
             self.verify_keyspace(audit_settings={"audit": "table", "audit_categories": "ADMIN,AUTH,DML,DDL,DCL", "audit_keyspaces": "ks", "extra_parameter": "new"}, helper=helper)
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_keyspace_many_ks(self, helper_class):
         with helper_class() as helper:
             self.verify_keyspace(audit_settings={"audit": "table", "audit_categories": "ADMIN,AUTH,QUERY,DML,DDL,DCL", "audit_keyspaces": "a,b,c,ks"}, helper=helper)
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_keyspace_table_not_exists(self, helper_class):
         with helper_class() as helper:
             self.verify_keyspace(audit_settings={"audit": "table", "audit_categories": "DML,DDL", "audit_keyspaces": "ks", "audit_tables": "ks.fake"}, helper=helper)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_type_none(self):
         """
         'audit': None
@@ -701,6 +707,7 @@ class TestCQLAudit(AuditTester):
         session.execute("DROP KEYSPACE ks")
         assert_invalid(session, "use audit;", expected=InvalidRequest)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_type_invalid(self):
         """
         'audit': invalid
@@ -724,6 +731,7 @@ class TestCQLAudit(AuditTester):
         self.cluster.nodes["node1"].watch_log_for(expected_error)
 
     # TODO: verify that the syslog file doesn't exist
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_empty_settings(self):
         """
         'audit': none
@@ -732,6 +740,7 @@ class TestCQLAudit(AuditTester):
         session = self.prepare(create_keyspace=False, audit_settings={"audit": "none"})
         assert_invalid(session, "use audit;", expected=InvalidRequest)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_audit_ks(self):
         """
         'audit_keyspaces': 'audit'
@@ -744,6 +753,7 @@ class TestCQLAudit(AuditTester):
 
     @pytest.mark.single_node
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_categories_invalid(self, helper_class):
         """
         'audit_categories': invalid
@@ -769,33 +779,40 @@ class TestCQLAudit(AuditTester):
 
     # compact storage is current required for all tests that call verify_table
     @pytest.mark.cluster_options(enable_create_table_with_compact_storage=True)
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_table(self):
         self.verify_table(audit_settings=AuditTester.audit_default_settings, table_prefix="test_audit_table")
 
     @pytest.mark.cluster_options(enable_create_table_with_compact_storage=True)
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_table_extra_parameter(self):
         self.verify_table(audit_settings={"audit": "table", "audit_categories": "ADMIN,AUTH,QUERY,DML,DDL,DCL", "audit_keyspaces": "ks", "extra_parameter": "new"}, table_prefix="test_audit_table_extra_parameter")
 
     @pytest.mark.cluster_options(enable_create_table_with_compact_storage=True)
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_table_audit_keyspaces_empty(self):
         self.verify_table(audit_settings={"audit": "table", "audit_categories": "ADMIN,AUTH,QUERY,DML,DDL,DCL"}, table_prefix="test_audit_table_audit_keyspaces_empty", overwrite_audit_tables=True)
 
     @pytest.mark.cluster_options(enable_create_table_with_compact_storage=True)
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_table_no_ks(self):
         self.verify_table(audit_settings={"audit": "table", "audit_categories": "ADMIN,AUTH,QUERY,DML,DDL,DCL"}, table_prefix="test_audit_table_no_ks", overwrite_audit_tables=True)
 
     @pytest.mark.cluster_options(enable_create_table_with_compact_storage=True)
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_categories_part1(self):
         self.verify_table(audit_settings={"audit": "table", "audit_categories": "AUTH,QUERY,DDL"}, table_prefix="test_audit_categories_part1", overwrite_audit_tables=True)
 
     @pytest.mark.cluster_options(enable_create_table_with_compact_storage=True)
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_categories_part2(self, helper_class):
         with helper_class() as helper:
             self.verify_table(audit_settings={"audit": "table", "audit_categories": "DDL, ADMIN,AUTH,DCL", "audit_keyspaces": "ks"}, helper=helper, table_prefix="test_audit_categories_part2")
 
     @pytest.mark.cluster_options(enable_create_table_with_compact_storage=True)
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_audit_categories_part3(self, helper_class):
         with helper_class() as helper:
             self.verify_table(audit_settings={"audit": "table", "audit_categories": "DDL, ADMIN,AUTH", "audit_keyspaces": "ks"}, helper=helper, table_prefix="test_audit_categories_part3")
@@ -803,6 +820,7 @@ class TestCQLAudit(AuditTester):
     PasswordMaskingCase = namedtuple("PasswordMaskingCase", ["name", "password", "new_password"])
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_user_password_masking(self, helper_class):
         """
         CREATE USER, ALTER USER, DROP USER statements
@@ -830,6 +848,7 @@ class TestCQLAudit(AuditTester):
                     category="DCL",
                 )
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_negative_audit_records_auth(self):
         """
         Test that failed AUTH attempts are audited.
@@ -847,6 +866,7 @@ class TestCQLAudit(AuditTester):
                 error = next(iter(errors))
                 assert isinstance(error, AuthenticationFailed)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_negative_audit_records_admin(self):
         """
         Test that failed ADMIN statements are audited.
@@ -861,6 +881,7 @@ class TestCQLAudit(AuditTester):
         with self.assert_entries_were_added(session, [expected_entry]):
             assert_invalid(session, stmt, expected=InvalidRequest)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_negative_audit_records_ddl(self):
         """
         Test that failed DDL statements are audited.
@@ -874,6 +895,7 @@ class TestCQLAudit(AuditTester):
         with self.assert_entries_were_added(session, [expected_entry]):
             assert_invalid(session, stmt, expected=AlreadyExists)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_negative_audit_records_dml(self):
         """
         Test that failed DML statements are audited.
@@ -890,6 +912,7 @@ class TestCQLAudit(AuditTester):
         with self.assert_entries_were_added(session, [expected_entry]):
             assert_invalid(session, stmt, expected=Unavailable)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_negative_audit_records_dcl(self):
         """
         Test that failed DCL statements are audited.
@@ -903,6 +926,7 @@ class TestCQLAudit(AuditTester):
         with self.assert_entries_were_added(session, [expected_entry]):
             assert_invalid(session, stmt, expected=InvalidRequest)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_negative_audit_records_query(self):
         """
         Test that failed QUERY statements are audited.
@@ -920,6 +944,7 @@ class TestCQLAudit(AuditTester):
             assert_invalid(session, stmt, expected=Unavailable)
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_role_password_masking(self, helper_class):
         """
         CREATE ROLE, ALTER ROLE, DROP ROLE statements
@@ -948,6 +973,7 @@ class TestCQLAudit(AuditTester):
                     category="DCL",
                 )
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_login(self):
         """
         USER LOGIN
@@ -960,6 +986,7 @@ class TestCQLAudit(AuditTester):
         with self.assert_entries_were_added(session, expected_audit_entries, filter_out_cassandra_auth=True):
             self.prepare(user="test", password="test", create_keyspace=False)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_cassandra_login(self):
         """
         Test user login to default (cassandra) user
@@ -970,6 +997,7 @@ class TestCQLAudit(AuditTester):
         with self.assert_entries_were_added(session, expected_audit_entries, filter_out_cassandra_auth=False):
             self.prepare(user="cassandra", password="cassandra", create_keyspace=False)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_categories(self):
         """
         Test filtering audit categories
@@ -1044,6 +1072,7 @@ class TestCQLAudit(AuditTester):
         return [], [], None, None
 
     @pytest.mark.exclude_errors("audit - Unexpected exception when writing log with: node_ip")
+    @pytest.mark.max_running_servers(amount=7)
     def test_insert_failure_doesnt_report_success(self):
         """
         Test that if an insert fails, the audit log doesn't report the insert
@@ -1111,6 +1140,7 @@ class TestCQLAudit(AuditTester):
                 break
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_prepare(self, helper_class):
         """Test prepare statement"""
         with helper_class() as helper:
@@ -1139,6 +1169,7 @@ class TestCQLAudit(AuditTester):
             )
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_permissions(self, helper_class):
         """Test user permissions"""
 
@@ -1171,6 +1202,7 @@ class TestCQLAudit(AuditTester):
             )
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_batch(self, helper_class):
         """
         BATCH statement
@@ -1211,6 +1243,7 @@ class TestCQLAudit(AuditTester):
             with self.assert_entries_were_added(session, expected_entries, merge_duplicate_rows=False):
                 session.execute(batch_query)
 
+    @pytest.mark.max_running_servers(amount=1)
     def test_service_level_statements(self):
         """
         Test auditing service level statements - ones that use the ADMIN audit category.
@@ -1307,6 +1340,7 @@ class TestCQLAudit(AuditTester):
 
     @pytest.mark.parametrize("audit_config_changer", [AuditSighupConfigChanger, AuditCqlConfigChanger])
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=3)
     def test_config_liveupdate(self, helper_class, audit_config_changer):
         """
         Test liveupdate config changes in audit.
@@ -1368,6 +1402,7 @@ class TestCQLAudit(AuditTester):
 
     @pytest.mark.parametrize("audit_config_changer", [AuditSighupConfigChanger, AuditCqlConfigChanger])
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_config_no_liveupdate(self, helper_class, audit_config_changer):
         """
         Test audit config parameters that don't allow config changes.
@@ -1400,6 +1435,7 @@ class TestCQLAudit(AuditTester):
                 session.execute(auditted_query)
 
     @pytest.mark.parametrize("helper_class", [AuditBackendTable, AuditBackendSyslog])
+    @pytest.mark.max_running_servers(amount=1)
     def test_parallel_syslog_audit(self, helper_class):
         """
         Test that cluster doesn't fail if multiple queries are audited in parallel

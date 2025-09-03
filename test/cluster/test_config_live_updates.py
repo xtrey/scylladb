@@ -7,6 +7,7 @@ from test.pylib.util import wait_for
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_config_live_updates(manager):
     config = {
         "maintenance_socket": "ignore"  # bring back the default value

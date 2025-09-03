@@ -31,6 +31,7 @@ def get_expected_tombstone_gc_mode(rf, tablets):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rf", [1, 2])
 @pytest.mark.parametrize("tablets", [True, False])
+@pytest.mark.max_running_servers(amount=2)
 async def test_default_tombstone_gc(manager: ManagerClient, rf: int, tablets: bool):
     _ = await manager.servers_add(2, auto_rack_dc="dc1")
     cql = manager.get_cql()
@@ -43,6 +44,7 @@ async def test_default_tombstone_gc(manager: ManagerClient, rf: int, tablets: bo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rf", [1, 2])
 @pytest.mark.parametrize("tablets", [True, False])
+@pytest.mark.max_running_servers(amount=2)
 async def test_default_tombstone_gc_does_not_override(manager: ManagerClient, rf: int, tablets: bool):
     _ = await manager.servers_add(2, auto_rack_dc="dc1")
     cql = manager.get_cql()
@@ -54,6 +56,7 @@ async def test_default_tombstone_gc_does_not_override(manager: ManagerClient, rf
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_group0_tombstone_gc(manager: ManagerClient):
     """
     Regression test for #15607.
@@ -207,6 +210,8 @@ async def test_group0_tombstone_gc(manager: ManagerClient):
 @pytest.mark.asyncio
 @skip_mode('release', "test only needs to run once - allowing only the 'dev' mode")
 @skip_mode('debug', "test only needs to run once - allowing only the 'dev' mode")
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_group0_state_id_failure(manager: ManagerClient):
     """
     Issue #21117 regression test.

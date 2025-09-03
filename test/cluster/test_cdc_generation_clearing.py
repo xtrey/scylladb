@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=4)
 async def test_cdc_generation_clearing(manager: ManagerClient):
     """Test that obsolete CDC generations are removed from CDC_GENERATIONS_V3 and TOPOLOGY.committed_cdc_generations
        if their timestamp is old enough according to the topology coordinator's clock."""
@@ -93,6 +94,7 @@ async def test_cdc_generation_clearing(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_unpublished_cdc_generations_arent_cleared(manager: ManagerClient):
     """Test that unpublished CDC generations aren't removed from CDC_GENERATIONS_V3 and
        TOPOLOGY.committed_cdc_generations regardless of their timestamps."""

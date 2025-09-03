@@ -68,6 +68,7 @@ common_debug_cli_options = [
     '--dump-memory-diagnostics-on-alloc-failure-kind=all',
 ]
 
+@pytest.mark.max_running_servers(amount=2)
 async def test_retrain_dict(manager: ManagerClient):
     """
     Tests basic functionality of SSTable compression with shared dictionaries.
@@ -192,6 +193,7 @@ async def test_retrain_dict(manager: ManagerClient):
 
     logger.info("Test completed successfully")
 
+@pytest.mark.max_running_servers(amount=2)
 async def test_estimate_compression_ratios(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
 
@@ -284,6 +286,7 @@ async def test_estimate_compression_ratios(manager: ManagerClient):
 
     assert sorted(expected_entries.keys()) == sorted(tuple(r.items()) for r in result)
 
+@pytest.mark.max_running_servers(amount=1)
 async def test_dict_memory_limit(manager: ManagerClient):
     # Bootstrap cluster and configure server
     logger.info("Bootstrapping cluster")
@@ -370,6 +373,7 @@ async def test_dict_memory_limit(manager: ManagerClient):
         await cql.run_async("DROP TABLE test.test")
         await assert_eventually_dict_memory_leq_than(0)
 
+@pytest.mark.max_running_servers(amount=1)
 async def test_sstable_compression_dictionaries_enable_writing(manager: ManagerClient):
     """
     Tests basic functionality of the `sstable_compression_dictionaries_enable_writing` config knob.
@@ -497,6 +501,7 @@ async def test_sstable_compression_dictionaries_enable_writing(manager: ManagerC
         assert (await get_compressor_names(algo)) == {name_prefix + f"{algo}Compressor"}
     assert (await get_compressor_names(no_compression)) == set()
 
+@pytest.mark.max_running_servers(amount=1)
 async def test_sstable_compression_dictionaries_allow_in_ddl(manager: ManagerClient):
     """
     Tests the sstable_compression_dictionaries_allow_in_ddl option.

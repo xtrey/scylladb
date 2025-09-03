@@ -14,6 +14,7 @@ from test.cluster.util import new_test_keyspace
 logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_broken_bootstrap(manager: ManagerClient):
     server_a = await manager.server_add()
     server_b = await manager.server_add(start=False)

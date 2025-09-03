@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_replication_factor_enough_nodes(manager: ManagerClient):
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled'}
     # This test verifies that Scylla rejects creating a table if there are too few token-owning nodes.
@@ -54,6 +55,7 @@ async def test_tablet_replication_factor_enough_nodes(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_tablet_scaling_option_is_respected(manager: ManagerClient):
     # 32 is high enough to ensure we demand more tablets than the default choice.
     cfg = {'tablets_mode_for_new_keyspaces': 'enabled', 'tablets_initial_scale_factor': 32}
@@ -69,6 +71,7 @@ async def test_tablet_scaling_option_is_respected(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_tablet_cannot_decommision_below_replication_factor(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled'}
@@ -103,6 +106,7 @@ async def test_tablet_cannot_decommision_below_replication_factor(manager: Manag
         for r in rows:
             assert r.c == r.pk
 
+@pytest.mark.max_running_servers(amount=1)
 async def test_reshape_with_tablets(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled'}
@@ -141,6 +145,7 @@ async def test_reshape_with_tablets(manager: ManagerClient):
 
 @pytest.mark.parametrize("direction", ["up", "down", "none"])
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_rf_change(manager: ManagerClient, direction):
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled'}
     servers = await manager.servers_add(2, config=cfg, auto_rack_dc="dc1")
@@ -205,6 +210,7 @@ async def test_tablet_rf_change(manager: ManagerClient, direction):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_mutation_fragments_unowned_partition(manager: ManagerClient):
     """Check that MUTATION_FRAGMENTS() queries handle the case when a partition
     not owned by the node is attempted to be read."""
@@ -236,6 +242,7 @@ async def test_tablet_mutation_fragments_unowned_partition(manager: ManagerClien
 # In this test, we verify that in a simple scenario with one DC. We explicitly disable
 # enforcing RF-rack-valid keyspaces to be able to perform more flexible alterations.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_singledc_alter_tablets_rf(manager: ManagerClient):
     await manager.server_add(config={"rf_rack_valid_keyspaces": "false", "enable_tablets": "true"}, property_file={"dc": "dc1", "rack": "r1"})
     cql = manager.get_cql()
@@ -266,6 +273,7 @@ async def test_singledc_alter_tablets_rf(manager: ManagerClient):
 # Reproduces https://github.com/scylladb/scylladb/issues/20039#issuecomment-2271365060
 # See also `test_singledc_alter_tablets_rf` above for basic scenarios tested
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_multidc_alter_tablets_rf(request: pytest.FixtureRequest, manager: ManagerClient) -> None:
     config = {"endpoint_snitch": "GossipingPropertyFileSnitch", "tablets_mode_for_new_keyspaces": "enabled"}
 
@@ -312,6 +320,7 @@ async def test_multidc_alter_tablets_rf(request: pytest.FixtureRequest, manager:
 # Check that an existing cached read, will be cleaned up when the tablet it reads
 # from is migrated away.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_saved_readers_tablet_migration(manager: ManagerClient, build_mode):
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled'}
 
@@ -383,6 +392,7 @@ async def test_saved_readers_tablet_migration(manager: ManagerClient, build_mode
 @pytest.mark.parametrize("with_cache", ['false', 'true'])
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_read_of_pending_replica_during_migration(manager: ManagerClient, with_cache):
     logger.info("Bootstrapping cluster")
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled'}
@@ -448,6 +458,7 @@ async def test_read_of_pending_replica_during_migration(manager: ManagerClient, 
 # Reproducer for https://github.com/scylladb/scylladb/issues/20073
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_explicit_tablet_movement_during_decommission(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cfg = {'enable_user_defined_functions': False, 'enable_tablets': True}
@@ -553,6 +564,7 @@ async def test_explicit_tablet_movement_during_decommission(manager: ManagerClie
 @pytest.mark.parametrize("with_tablets", [True, False])
 @pytest.mark.parametrize("replication_strategy", ["NetworkTopologyStrategy", "SimpleStrategy", "EverywhereStrategy", "LocalStrategy"])
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_keyspace_creation_cql_vs_config_sanity(manager: ManagerClient, with_tablets, replication_strategy):
     cfg = {'tablets_mode_for_new_keyspaces': 'enabled' if with_tablets else 'disabled'}
     server = await manager.server_add(config=cfg)
@@ -590,12 +602,14 @@ async def test_keyspace_creation_cql_vs_config_sanity(manager: ManagerClient, wi
         assert res is None
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=0)
 async def test_tablets_and_gossip_topology_changes_are_incompatible(manager: ManagerClient):
     cfg = {"tablets_mode_for_new_keyspaces": "enabled", "force_gossip_topology_changes": True}
     with pytest.raises(Exception, match="Failed to add server"):
         await manager.server_add(config=cfg)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_tablets_disabled_with_gossip_topology_changes(manager: ManagerClient):
     cfg = {"tablets_mode_for_new_keyspaces": "disabled", "force_gossip_topology_changes": True}
     await manager.server_add(config=cfg)
@@ -613,6 +627,7 @@ async def test_tablets_disabled_with_gossip_topology_changes(manager: ManagerCli
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
 @pytest.mark.xfail(reason="https://github.com/scylladb/scylladb/issues/21564")
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_streaming_with_unbuilt_view(manager: ManagerClient):
     """
     Reproducer for https://github.com/scylladb/scylladb/issues/21564
@@ -667,6 +682,7 @@ async def test_tablet_streaming_with_unbuilt_view(manager: ManagerClient):
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
 @pytest.mark.xfail(reason="https://github.com/scylladb/scylladb/issues/19149")
+@pytest.mark.max_running_servers(amount=1)
 async def test_tablet_streaming_with_staged_sstables(manager: ManagerClient):
     """
     Reproducer for https://github.com/scylladb/scylladb/issues/19149
@@ -739,6 +755,7 @@ async def test_tablet_streaming_with_staged_sstables(manager: ManagerClient):
         assert len(list(rows)) == expected_num_of_rows
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_orphaned_sstables_on_startup(manager: ManagerClient):
     """
     Reproducer for https://github.com/scylladb/scylladb/issues/18038
@@ -794,6 +811,7 @@ async def test_orphaned_sstables_on_startup(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("with_zero_token_node", [False, True])
+@pytest.mark.max_running_servers(amount=6)
 async def test_remove_failure_with_no_normal_token_owners_in_dc(manager: ManagerClient, with_zero_token_node: bool):
     """
     Reproducer for #21826
@@ -836,6 +854,7 @@ async def test_remove_failure_with_no_normal_token_owners_in_dc(manager: Manager
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("with_zero_token_node", [False, True])
+@pytest.mark.max_running_servers(amount=6)
 async def test_remove_failure_then_replace(manager: ManagerClient, with_zero_token_node: bool):
     """
     Verify that a node cannot be removed with tablets when
@@ -872,6 +891,7 @@ async def test_remove_failure_then_replace(manager: ManagerClient, with_zero_tok
 @pytest.mark.asyncio
 @pytest.mark.nightly
 @pytest.mark.parametrize("with_zero_token_node", [False, True])
+@pytest.mark.max_running_servers(amount=6)
 async def test_replace_with_no_normal_token_owners_in_dc(manager: ManagerClient, with_zero_token_node: bool):
     """
     Verify that nodes can be successfully replaced with tablets when
@@ -930,6 +950,7 @@ async def test_replace_with_no_normal_token_owners_in_dc(manager: ManagerClient,
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_drop_keyspace_while_split(manager: ManagerClient):
 
     # Reproducer for: https://github.com/scylladb/scylladb/issues/22431
@@ -981,6 +1002,7 @@ async def test_drop_keyspace_while_split(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_two_tablets_concurrent_repair_and_migration(manager: ManagerClient):
     injection = "repair_shard_repair_task_impl_do_repair_ranges"
     servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(manager)
@@ -1011,6 +1033,7 @@ async def test_two_tablets_concurrent_repair_and_migration(manager: ManagerClien
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_split_finalization_with_migrations(manager: ManagerClient):
     """
     Reproducer for https://github.com/scylladb/scylladb/issues/21762
@@ -1092,6 +1115,7 @@ async def test_tablet_split_finalization_with_migrations(manager: ManagerClient)
 @pytest.mark.asyncio
 @pytest.mark.nightly
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_two_tablets_concurrent_repair_and_migration_repair_writer_level(manager: ManagerClient):
     injection = "repair_writer_impl_create_writer_wait"
     cmdline = [
@@ -1194,10 +1218,12 @@ async def check_tablet_rebuild_with_repair(manager: ManagerClient, fail: bool):
                 assert res[0].count == 0
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_rebuild(manager: ManagerClient):
     await check_tablet_rebuild_with_repair(manager, False)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_tablet_rebuild_failure(manager: ManagerClient):
     await check_tablet_rebuild_with_repair(manager, True)

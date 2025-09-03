@@ -24,6 +24,7 @@ async def wait_for_config(manager, server, config_name, value):
     await wait_for(config_value_equal, deadline=time.time() + 60)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_non_liveupdatable_config(manager):
 
     server = await manager.server_add()

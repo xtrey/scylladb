@@ -5,6 +5,7 @@ from test.cluster.conftest import skip_mode
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_gossip_boot(manager: ManagerClient):
     """
     Regression test for scylladb/scylladb#17493.

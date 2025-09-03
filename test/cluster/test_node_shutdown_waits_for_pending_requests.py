@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_node_shutdown_waits_for_pending_requests(manager: ManagerClient) -> None:
     """Reproducer for #16382"""
 

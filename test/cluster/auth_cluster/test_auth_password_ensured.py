@@ -30,6 +30,7 @@ After CQL is served, user is properily authenticated as superuser (not annonymou
 """
 @pytest.mark.asyncio
 @skip_mode('release', 'error injection is disabled in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_auth_password_ensured(manager: ManagerClient) -> None:
     config = {
         **auth_config,
