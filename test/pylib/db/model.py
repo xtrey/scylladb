@@ -26,6 +26,8 @@ class Metric:
     time_end: datetime = None
     time_start: datetime = None
     time_taken: float = None
+    server_amount: int = None
+    threads: int = None
     usage_sec: float = None
     user_sec: float = None
 

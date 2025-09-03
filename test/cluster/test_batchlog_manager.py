@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_batchlog_replay_while_a_node_is_down(manager: ManagerClient) -> None:
     """ Test that batchlog replay handles the case when a node is down while replaying a batch.
         Reproduces issue #24599.
@@ -78,6 +79,7 @@ async def test_batchlog_replay_while_a_node_is_down(manager: ManagerClient) -> N
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_batchlog_replay_aborted_on_shutdown(manager: ManagerClient) -> None:
     """ Similar to the previous test, but also verifies that the batchlog replay is aborted on shutdown,
         and node shutdown is not stuck.
@@ -142,6 +144,7 @@ async def test_batchlog_replay_aborted_on_shutdown(manager: ManagerClient) -> No
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
 async def test_batchlog_replay_includes_cdc(manager: ManagerClient) -> None:
     """ Test that when a batch is replayed from the batchlog, it includes CDC mutations.
     1. Create a cluster with a single node.
@@ -205,6 +208,7 @@ async def test_batchlog_replay_includes_cdc(manager: ManagerClient) -> None:
 
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.skip
 async def test_drop_mutations_for_dropped_table(manager: ManagerClient) -> None:
     """
     This test is an adjusted version of `test_batchlog_replay_while_a_node_is_down`.

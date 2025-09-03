@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # due to the write.
 @pytest.mark.asyncio
 @skip_mode('release', "error injections aren't enabled in release mode")
+@pytest.mark.max_running_servers(amount=2)
 async def test_view_backlog_increased_after_write(manager: ManagerClient) -> None:
     node_count = 2
     # Use a higher smp to make it more likely that the writes go to a different shard than the coordinator.
@@ -55,6 +56,7 @@ async def test_view_backlog_increased_after_write(manager: ManagerClient) -> Non
 # After a gossip round is performed, the following write should succeed.
 @pytest.mark.asyncio
 @skip_mode('release', "error injections aren't enabled in release mode")
+@pytest.mark.max_running_servers(amount=2)
 async def test_gossip_same_backlog(manager: ManagerClient) -> None:
     node_count = 2
     servers = await manager.servers_add(node_count, config={'error_injections_at_startup': ['view_update_limit', 'update_backlog_immediately'], 'tablets_mode_for_new_keyspaces': 'enabled'})
@@ -99,6 +101,7 @@ async def test_gossip_same_backlog(manager: ManagerClient) -> None:
 # that was set during the measurement.
 @pytest.mark.asyncio
 @skip_mode('release', "error injections aren't enabled in release mode")
+@pytest.mark.max_running_servers(amount=2)
 async def test_configurable_mv_control_flow_delay(manager: ManagerClient) -> None:
     node_count = 2
     servers = await manager.servers_add(node_count,

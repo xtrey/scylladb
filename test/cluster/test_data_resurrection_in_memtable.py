@@ -104,6 +104,7 @@ async def run_test_cache_tombstone_gc(manager: ManagerClient, statement_pairs: l
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_cache_tombstone_gc_partition_tombstone(manager: ManagerClient):
     await run_test_cache_tombstone_gc(manager,
                                       [("INSERT INTO {ks}.tbl (pk, ck, v) VALUES (0, 100, 999)", "DELETE FROM {ks}.tbl WHERE pk = 0")])
@@ -111,6 +112,7 @@ async def test_cache_tombstone_gc_partition_tombstone(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_cache_tombstone_gc_row_tombstone(manager: ManagerClient):
     await run_test_cache_tombstone_gc(manager,
                                       [("INSERT INTO {ks}.tbl (pk, ck, v) VALUES (0, 100, 999)", "DELETE FROM {ks}.tbl WHERE pk = 0 AND ck = 100")])
@@ -118,6 +120,7 @@ async def test_cache_tombstone_gc_row_tombstone(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_cache_tombstone_gc_range_tombstone(manager: ManagerClient):
     await run_test_cache_tombstone_gc(manager,
                                       [("INSERT INTO {ks}.tbl (pk, ck, v) VALUES (0, 100, 999)", "DELETE FROM {ks}.tbl WHERE pk = 0 AND ck > 0 AND ck < 1000")])
@@ -125,6 +128,7 @@ async def test_cache_tombstone_gc_range_tombstone(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_cache_tombstone_gc_cell_tombstone(manager: ManagerClient):
     await run_test_cache_tombstone_gc(manager,
                                       [("UPDATE {ks}.tbl SET v = 999 WHERE pk = 0 AND ck = 100", "DELETE v FROM {ks}.tbl WHERE pk = 0 AND ck = 100")])
@@ -132,6 +136,7 @@ async def test_cache_tombstone_gc_cell_tombstone(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_cache_tombstone_gc_cell_tombstone_and_row_tombstone(manager: ManagerClient):
     await run_test_cache_tombstone_gc(manager,
                                       [

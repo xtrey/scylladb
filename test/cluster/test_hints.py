@@ -55,6 +55,7 @@ def await_sync_point(node: ServerInfo, sync_point: str, timeout: int) -> bool:
 
 # Write with RF=1 and CL=ANY to a dead node should write hints and succeed
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_write_cl_any_to_dead_node_generates_hints(manager: ManagerClient):
     node_count = 2
     servers = await manager.servers_add(node_count)
@@ -84,6 +85,7 @@ async def test_write_cl_any_to_dead_node_generates_hints(manager: ManagerClient)
         await manager.server_start(servers[1].server_id)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_limited_concurrency_of_writes(manager: ManagerClient):
     """
     We want to verify that Scylla correctly limits the concurrency of writing hints to disk.
@@ -115,6 +117,7 @@ async def test_limited_concurrency_of_writes(manager: ManagerClient):
         await manager.server_start(node2.server_id)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_sync_point(manager: ManagerClient):
     """
     We want to verify that the sync point API is compliant with its design.
@@ -165,6 +168,7 @@ async def test_sync_point(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', "error injections aren't enabled in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_hints_consistency_during_decommission(manager: ManagerClient):
     """
     This test reproduces the failure observed in scylladb/scylla-dtest#4582
@@ -248,6 +252,7 @@ async def test_hints_consistency_during_decommission(manager: ManagerClient):
             assert list(await cql.run_async(f"SELECT v FROM {table} WHERE pk = {i}")) == [(i + 1,)]
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_draining_hints(manager: ManagerClient):
     """
     This test verifies that all hints are drained when a node is being decommissioned.
@@ -280,6 +285,7 @@ async def test_draining_hints(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_canceling_hint_draining(manager: ManagerClient):
     """
     This test verifies that draining hints is canceled as soon as we issue a shutdown,

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_cdc_generations_are_published(request, manager: ManagerClient):
     """Test that the CDC generation publisher eventually publishes committed CDC generations in the correct order."""
     query_gen_timestamps = SimpleStatement(
@@ -78,6 +79,7 @@ async def test_cdc_generations_are_published(request, manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_multiple_unpublished_cdc_generations(request, manager: ManagerClient):
     """Test that the CDC generation publisher works correctly when there is more than one unpublished CDC generation."""
     query_gen_timestamps = SimpleStatement(

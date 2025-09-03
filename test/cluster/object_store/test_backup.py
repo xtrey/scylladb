@@ -51,6 +51,8 @@ async def prepare_snapshot_for_backup(manager: ManagerClient, server, snap_name=
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_simple_backup(manager: ManagerClient, s3_server):
     '''check that backing up a snapshot for a keyspace works'''
 
@@ -92,6 +94,8 @@ async def test_simple_backup(manager: ManagerClient, s3_server):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("move_files", [False, True])
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_backup_move(manager: ManagerClient, s3_server, move_files):
     '''check that backing up a snapshot by _moving_ sstable to object storage'''
 
@@ -126,6 +130,8 @@ async def test_backup_move(manager: ManagerClient, s3_server, move_files):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_backup_to_non_existent_bucket(manager: ManagerClient, s3_server):
     '''backup should fail if the destination bucket does not exist'''
 
@@ -151,6 +157,8 @@ async def test_backup_to_non_existent_bucket(manager: ManagerClient, s3_server):
     assert status['state'] == 'failed'
     assert 'S3 request failed. Code: 15. Reason: Access Denied.' in status['error']
 
+
+@pytest.mark.max_running_servers(amount=1)
 
 async def test_backup_to_non_existent_endpoint(manager: ManagerClient, s3_server):
     '''backup should fail if the endpoint is invalid/inaccessible'''
@@ -231,6 +239,8 @@ async def do_test_backup_abort(manager: ManagerClient, s3_server,
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_backup_to_non_existent_snapshot(manager: ManagerClient, s3_server):
     '''backup should fail if the snapshot does not exist'''
 
@@ -264,6 +274,8 @@ async def test_backup_to_non_existent_snapshot(manager: ManagerClient, s3_server
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_backup_is_abortable(manager: ManagerClient, s3_server):
     '''check that backing up a snapshot for a keyspace works'''
     await do_test_backup_abort(manager, s3_server, breakpoint_name="backup_task_pause", min_files=0)
@@ -271,6 +283,8 @@ async def test_backup_is_abortable(manager: ManagerClient, s3_server):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_backup_is_abortable_in_s3_client(manager: ManagerClient, s3_server):
     '''check that backing up a snapshot for a keyspace works'''
     await do_test_backup_abort(manager, s3_server, breakpoint_name="backup_task_pre_upload", min_files=0, max_files=1)
@@ -390,11 +404,15 @@ async def do_test_simple_backup_and_restore(manager: ManagerClient, s3_server, t
     assert objects == post_objects
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_simple_backup_and_restore(manager: ManagerClient, s3_server, tmp_path):
     '''check that restoring from backed up snapshot for a keyspace:table works'''
     await do_test_simple_backup_and_restore(manager, s3_server, tmp_path, False, False)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_abort_simple_backup_and_restore(manager: ManagerClient, s3_server, tmp_path):
     '''check that restoring from backed up snapshot for a keyspace:table works'''
     await do_test_simple_backup_and_restore(manager, s3_server, tmp_path, False, True)
@@ -544,6 +562,8 @@ async def test_abort_restore_with_rpc_error(manager: ManagerClient, s3_server):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_simple_backup_and_restore_with_encryption(manager: ManagerClient, s3_server, tmp_path):
     '''check that restoring from backed up snapshot for a keyspace:table works'''
     await do_test_simple_backup_and_restore(manager, s3_server, tmp_path, True, False)
@@ -673,6 +693,7 @@ async def check_data_is_back(manager, logger, cql, ks, cf, keys, servers, topolo
         (topo(rf = 3, nodes = 6, racks = 3, dcs = 1), True),
         (topo(rf = 2, nodes = 8, racks = 4, dcs = 2), True)
     ])
+@pytest.mark.max_running_servers(amount=8)
 async def test_restore_with_streaming_scopes(manager: ManagerClient, s3_server, topology_rf_validity):
     '''Check that restoring of a cluster with stream scopes works'''
 
@@ -718,6 +739,8 @@ async def test_restore_with_streaming_scopes(manager: ManagerClient, s3_server, 
     await check_data_is_back(manager, logger, cql, ks, cf, keys, servers, topology, r_servers, host_ids, scope)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_restore_with_non_existing_sstable(manager: ManagerClient, s3_server):
     '''Check that restore task fails well when given a non-existing sstable'''
 

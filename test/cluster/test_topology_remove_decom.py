@@ -23,6 +23,7 @@ pytestmark = pytest.mark.prepare_3_racks_cluster
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_remove_node_add_column(manager: ManagerClient, random_tables: RandomTables):
     """Add a node, remove an original node, add a column"""
     servers = await manager.running_servers()
@@ -36,6 +37,7 @@ async def test_remove_node_add_column(manager: ManagerClient, random_tables: Ran
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_decommission_node_add_column(manager: ManagerClient, random_tables: RandomTables):
     """Add a node, remove an original node, add a column"""
     table = await random_tables.add_table(ncolumns=5)
@@ -131,6 +133,7 @@ async def test_remove_node_with_concurrent_ddl(manager: ManagerClient, random_ta
         logger.debug("ddl fiber done, finished")
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_rebuild_node(manager: ManagerClient, random_tables: RandomTables):
     """rebuild a node"""
     servers = await manager.running_servers()
@@ -138,6 +141,7 @@ async def test_rebuild_node(manager: ManagerClient, random_tables: RandomTables)
     await check_token_ring_and_group0_consistency(manager)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_concurrent_removenode_two_initiators_one_dead_node(manager: ManagerClient):
     servers = await manager.running_servers()
     assert len(servers) >= 3
@@ -153,6 +157,7 @@ async def test_concurrent_removenode_two_initiators_one_dead_node(manager: Manag
         raise Exception("concurrent removenode request should result in a failure, but unexpectedly succeeded")
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_concurrent_removenode_one_initiator_two_dead_nodes(manager: ManagerClient):
     """
     Tests the execution flow in case of performing remove node
@@ -172,6 +177,7 @@ async def test_concurrent_removenode_one_initiator_two_dead_nodes(manager: Manag
             manager.remove_node(servers[0].server_id, servers[1].server_id, ignore_dead=ignore_nodes)])
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_concurrent_removenode_two_initiators_two_dead_nodes(manager: ManagerClient):
     """
     Tests the execution flow in case of performing remove node

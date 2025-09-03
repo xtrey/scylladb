@@ -18,7 +18,8 @@ from collections import defaultdict
 from itertools import chain, count, product
 from functools import cache, cached_property
 from random import randint
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Generator
 
 import pytest
 import universalasync
@@ -30,7 +31,7 @@ from test.pylib.azure_vault_server_mock import MockAzureVaultServer
 from test.pylib.host_registry import HostRegistry
 from test.pylib.ldap_server import start_ldap
 from test.pylib.minio_server import MinioServer
-from test.pylib.resource_gather import setup_cgroup
+from test.pylib.resource_gather import setup_cgroup, get_resource_gather
 from test.pylib.s3_proxy import S3ProxyServer
 from test.pylib.s3_server_mock import MockS3Server
 from test.pylib.suite.base import (
@@ -66,7 +67,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption('--run_id', action='store', default=None, help='Run id for the test run')
     parser.addoption('--byte-limit', action="store", default=randint(0, 2000), type=int,
                      help="Specific byte limit for failure injection (random by default)")
-    parser.addoption("--gather-metrics", action=BooleanOptionalAction, default=False,
+    parser.addoption("--gather-metrics", action=BooleanOptionalAction, default=True,
                      help='Switch on gathering cgroup metrics')
     parser.addoption('--random-seed', action="store",
                      help="Random number generator seed to be used by boost tests")
@@ -101,10 +102,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
                      help="Controls number of compaction groups to be used by Scylla tests. Value of 3 implies 8 groups.")
     parser.addoption('--repeat', action="store", default="1", type=int,
                      help="number of times to repeat test execution")
+    parser.addoption("--experimental-features", type=lambda s: s.split(","), action="store",
+                     help="Pass experimental features <feature>,<feature> to enable")
 
     # Pass information about Scylla node from test.py to pytest.
     parser.addoption("--scylla-log-filename",
                      help="Path to a log file of a ScyllaDB node (for suites with type: Python)")
+    parser.addoption("--server-amount", type=int, default=1,)
+    parser.addoption("--threads", type=int, default=1,)
 
 
 # Use cache to execute this function once per pytest session.
@@ -136,12 +141,12 @@ def add_s3_options(parser: pytest.Parser) -> None:
     """Options for tests which use S3 server (i.e., cluster/object_store and cqlpy/test_tools.py)"""
 
     s3_options = parser.getgroup("S3 server settings")
-    s3_options.addoption('--s3-server-address')
-    s3_options.addoption('--s3-server-port', type=int)
-    s3_options.addoption('--aws-access-key')
-    s3_options.addoption('--aws-secret-key')
-    s3_options.addoption('--aws-region')
-    s3_options.addoption('--s3-server-bucket')
+    s3_options.addoption('--s3-server-address', default=None)
+    s3_options.addoption('--s3-server-port', type=int, default=None)
+    s3_options.addoption('--aws-access-key', default=None)
+    s3_options.addoption('--aws-secret-key', default=None)
+    s3_options.addoption('--aws-region', default=None)
+    s3_options.addoption('--s3-server-bucket', default=None)
 
 
 @pytest.fixture(autouse=True)
@@ -227,7 +232,57 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             tempdir_base=temp_dir,
             toxiproxy_byte_limit=session.config.getoption("--byte-limit"),
         )
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> Generator[None, Any, None]:
+    config = item.parent.config
+    test = SimpleNamespace(
+            time_end=time.time(),
+            time_start=time.time(),
+            id=item.stash[RUN_ID],
+            mode=item.stash[BUILD_MODE],
+            server_amount=config.getoption('--server-amount'),
+            threads=config.getoption('--threads'),
+            success=False,
+            shortname=item.name,
+            suite=SimpleNamespace(
+                log_dir=pathlib.Path(config.getoption("--tmpdir")).joinpath(item.stash[BUILD_MODE]).absolute(),
+                name=item.stash[TEST_SUITE].name,
+            ),
+        )
+    resource_gather = get_resource_gather(
+        is_switched_on=config.getoption("--gather-metrics"),
+        test=test,
+    )
+    yield
+    test.time_end = time.time()
+    # Safely access PHASE_REPORT_KEY to avoid KeyError
+    report = item.parent.stash.get(PHASE_REPORT_KEY, None)
+    failed = False
+    if report is not None:
+        failed = (report.when == "call" and report.failed) or (report.when == "setup" and report.outcome == "failed")
+    resource_gather.write_metrics_to_db(
+        metrics=resource_gather.get_test_metrics(),
+        success=not failed,
+    )
 
+# This is a constant used in `pytest_runtest_makereport` below to store the full report for the test case
+# in a stash which can then be accessed from fixtures to print the stacktrace for the failed test
+PHASE_REPORT_KEY = pytest.StashKey[dict[str, pytest.CollectReport]]()
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """This is a post-test hook executed by the pytest library.
+    Use it to access the test result and store a flag indicating failure
+    so we can later retrieve it in our fixtures like `manager`.
+
+    `item.stash` is the same stash as `request.node.stash` (in the `request`
+    fixture provided by pytest).
+    """
+    outcome = yield
+    report = outcome.get_result()
+
+    item.stash[PHASE_REPORT_KEY] = report
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
     if not session.config.getoption("--test-py-init"):
@@ -235,7 +290,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     if getattr(TestSuite, "artifacts", None) is not None:
         loop: AbstractEventLoop = asyncio.get_event_loop()
         if not loop.is_running():
-            loop.run_until_complete(TestSuite.artifacts.cleanup_before_exit())
+            asyncio.new_event_loop().run_until_complete(TestSuite.artifacts.cleanup_before_exit())
         else:
             loop.create_task(TestSuite.artifacts.cleanup_before_exit())
 
@@ -350,7 +405,7 @@ def modify_pytest_item(item: pytest.Item) -> None:
     item._nodeid = f"{item._nodeid}{suffix}"
     item.name = f"{item.name}{suffix}"
 
-
+@universalasync.async_to_sync_wraps
 def init_testsuite_globals() -> None:
     """Create global objects required for a test run."""
 
@@ -377,7 +432,8 @@ def prepare_dirs(tempdir_base: pathlib.Path,
                  save_log_on_success: bool = False) -> None:
     setup_cgroup(gather_metrics)
     prepare_dir(tempdir_base, "*.log", save_log_on_success)
-    for directory in ['report', 'ldap_instances']:
+    # for directory in ['report', 'ldap_instances']:
+    for directory in ['ldap_instances']:
         full_path_directory = tempdir_base / directory
         prepare_dir(full_path_directory, '*', save_log_on_success)
     for mode in modes:

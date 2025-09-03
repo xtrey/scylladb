@@ -158,6 +158,8 @@ class ResourceGatherOn(ResourceGather):
 
     def get_test_metrics(self) -> Metric:
         test_metrics: Metric = Metric(test_id=self.test_id, host_id=HOST_ID)
+        test_metrics.server_amount = self.test.server_amount
+        test_metrics.threads = self.test.threads
         test_metrics.time_taken = self.test.time_end - self.test.time_start
         test_metrics.time_start = datetime.fromtimestamp(self.test.time_start)
         test_metrics.time_end = datetime.fromtimestamp(self.test.time_end)

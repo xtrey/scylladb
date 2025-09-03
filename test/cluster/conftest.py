@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
 import ssl
 import tempfile
 import platform
@@ -155,7 +156,7 @@ def cluster_con(hosts: list[IPAddress | EndPoint], port: int = 9042, use_ssl: bo
                    # where a node can be unavailable for an extended period of time,
                    # this can cause the reconnection retry interval to get very large,
                    # longer than a test timeout.
-                   reconnection_policy = ExponentialReconnectionPolicy(1.0, 4.0),
+                   reconnection_policy = ExponentialReconnectionPolicy(1.0, 4.0, max_attempts=10),
 
                    auth_provider=auth_provider,
                    # Capture messages for debugging purposes.
@@ -163,7 +164,7 @@ def cluster_con(hosts: list[IPAddress | EndPoint], port: int = 9042, use_ssl: bo
                    )
 
 
-@pytest.fixture(scope=testpy_test_fixture_scope)
+@pytest.fixture(scope='module')
 async def manager_api_sock_path(request: pytest.FixtureRequest, testpy_test: Test | None) -> AsyncGenerator[str]:
     if testpy_test is None:
         yield request.config.getoption("--manager-api")
@@ -176,26 +177,37 @@ async def manager_api_sock_path(request: pytest.FixtureRequest, testpy_test: Tes
         start_event = Event()
         stop_event = Event()
 
-        async def run_manager() -> None:
-            mgr = ScyllaClusterManager(test_uname=test_uname, clusters=clusters, base_dir=base_dir, sock_path=sock_path)
-            await mgr.start()
-            start_event.set()
-            try:
-                await asyncio.get_running_loop().run_in_executor(None, stop_event.wait)
-            finally:
-                await mgr.stop()
+        def run_manager_wrapper():
+            """Wrapper function that can be pickled for multiprocessing"""
+            async def run_manager() -> None:
+                mgr = ScyllaClusterManager(test_uname=test_uname, clusters=clusters, base_dir=base_dir, sock_path=sock_path)
+                await mgr.start()
+                start_event.set()
+                try:
+                    await asyncio.get_running_loop().run_in_executor(None, stop_event.wait)
+                finally:
+                    await mgr.stop()
 
-        manager_process = Process(target=lambda: asyncio.run(run_manager()))
+            asyncio.run(run_manager())
+
+        manager_process = Process(target=run_manager_wrapper)
         manager_process.start()
         start_event.wait()
 
-        yield sock_path
+        try:
+            yield sock_path
+        finally:
+            stop_event.set()
+            manager_process.join(timeout=10)
+            if manager_process.is_alive():
+                manager_process.terminate()
+                manager_process.join(timeout=5)
+                if manager_process.is_alive():
+                    manager_process.kill()
+                    manager_process.join()
 
-        stop_event.set()
-        manager_process.join()
 
-
-@pytest.fixture(scope=testpy_test_fixture_scope)
+@pytest.fixture(scope='module')
 async def manager_internal(request: pytest.FixtureRequest, manager_api_sock_path: str) -> Callable[[], ManagerClient]:
     """Session fixture to prepare client object for communicating with the Cluster API.
        Pass the Unix socket path where the Manager server API is listening.

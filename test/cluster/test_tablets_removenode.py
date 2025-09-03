@@ -30,6 +30,7 @@ async def run_async_cl_all(cql, query: str):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_removenode_with_coordinator_restart(manager: ManagerClient):
     """
     Verifies that removenode can proceed when the coordinator is restarted
@@ -62,6 +63,7 @@ async def test_removenode_with_coordinator_restart(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_replace(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = [
@@ -143,6 +145,7 @@ async def test_replace(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_removenode(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = ['--logger-log-level', 'storage_service=trace']
@@ -206,6 +209,7 @@ async def test_removenode(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_removenode_with_ignored_node(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = [

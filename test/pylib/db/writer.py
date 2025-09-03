@@ -20,7 +20,7 @@ TESTS_TABLE = 'tests'
 METRICS_TABLE = 'test_metrics'
 SYSTEM_RESOURCE_METRICS_TABLE = 'system_resource_metrics'
 CGROUP_MEMORY_METRICS_TABLE = 'cgroup_memory_metrics'
-DEFAULT_DB_NAME = f'sqlite_{HOST_ID}.db'
+DEFAULT_DB_NAME = f'sqlite.db'
 DATE_TIME_TEMPLATE = '%Y-%m-%d %H:%M:%S.%f'
 
 create_table = [
@@ -49,6 +49,8 @@ create_table = [
         time_start DATETIME,
         time_end DATETIME,
         success BOOLEAN,
+        server_amount INTEGER,
+        threads INTEGER,
         FOREIGN KEY(test_id) REFERENCES {TESTS_TABLE}(id)
     );
     ''',

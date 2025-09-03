@@ -96,6 +96,7 @@ async def check_view_contents(cql: Session, ks: str, table: str, view: str, part
 #############
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_build_no_data(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers, property_file=[
@@ -112,6 +113,7 @@ async def test_build_no_data(manager: ManagerClient):
         await check_view_contents(cql, ks, "tab", "mv_cf_view")
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_build_one_view(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers, property_file=[
@@ -130,6 +132,7 @@ async def test_build_one_view(manager: ManagerClient):
         await check_view_contents(cql, ks, "tab", "mv_cf_view")
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_build_filtered_view(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers)
@@ -146,6 +149,7 @@ async def test_build_filtered_view(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_build_two_views(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers, property_file=[
@@ -176,6 +180,7 @@ async def test_build_two_views(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_add_view_while_build_in_progress(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers, property_file=[
@@ -239,6 +244,7 @@ async def test_remove_some_view_while_build_in_progress(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_abort_building_by_remove_view(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers)
@@ -333,6 +339,7 @@ async def test_change_rf_while_build_in_progress(manager: ManagerClient, change:
 @pytest.mark.parametrize("operation", ["add", "remove", "decommission", "replace"])
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=4)
 async def test_node_operation_during_view_building(manager: ManagerClient, operation: str):
     node_count = 4 if operation == "remove" or operation == "decommission" else 3
     servers = await manager.servers_add(node_count, config={"rf_rack_valid_keyspaces": "false", "enable_tablets": "true"}, cmdline=cmdline_loggers)
@@ -371,6 +378,7 @@ async def test_node_operation_during_view_building(manager: ManagerClient, opera
 
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_leader_change_while_building(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers, property_file=[
@@ -406,6 +414,7 @@ async def test_leader_change_while_building(manager: ManagerClient):
 @pytest.mark.asyncio
 @pytest.mark.xfail
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_truncate_while_building(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers, property_file=[
@@ -438,6 +447,7 @@ async def test_truncate_while_building(manager: ManagerClient):
 @pytest.mark.parametrize("view_action", ["finish_build", "drop_while_building"])
 @pytest.mark.asyncio
 @skip_mode("release", "error injections are not supported in release mode")
+@pytest.mark.max_running_servers(amount=3)
 async def test_scylla_views_builds_in_progress(manager: ManagerClient, view_action):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers, property_file=[
@@ -485,6 +495,7 @@ async def test_scylla_views_builds_in_progress(manager: ManagerClient, view_acti
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_view_building_while_tablet_streaming_fail(manager: ManagerClient):
     servers = [await manager.server_add(cmdline=cmdline_loggers)]
     await manager.api.disable_tablet_balancing(servers[0].ip_addr)
@@ -515,6 +526,7 @@ async def test_view_building_while_tablet_streaming_fail(manager: ManagerClient)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_view_building_failure(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count, cmdline=cmdline_loggers, property_file=[
@@ -542,6 +554,8 @@ async def test_view_building_failure(manager: ManagerClient):
 
 # Reproduces scylladb/scylladb#25912
 @pytest.mark.asyncio
+@pytest.mark.skip
+@pytest.mark.max_running_servers(amount=3)
 async def test_concurrent_tablet_migrations(manager: ManagerClient):
     """
     The test creates a situation where a single tablet is replicated across

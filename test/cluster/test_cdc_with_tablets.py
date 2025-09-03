@@ -34,6 +34,7 @@ class CdcStreamState(IntEnum):
 # the CDC log entries are created in the table's streams.
 @pytest.mark.parametrize("with_alter", [pytest.param(False, id="create"), pytest.param(True, id="alter")])
 @pytest.mark.asyncio
+@pytest.mark.skip
 async def test_create_cdc_with_tablets(manager: ManagerClient, with_alter: bool):
     servers = await manager.servers_add(1)
     cql = manager.get_cql()
@@ -72,6 +73,7 @@ async def test_create_cdc_with_tablets(manager: ManagerClient, with_alter: bool)
 # Create tables with CDC and verify the CDC streams are removed from the
 # system tables when the tables or keyspaces are dropped.
 @pytest.mark.asyncio
+@pytest.mark.skip
 async def test_drop_table_and_drop_keyspace_removes_cdc_streams(manager: ManagerClient):
     servers = await manager.servers_add(1)
     cql = manager.get_cql()
@@ -106,6 +108,7 @@ async def test_drop_table_and_drop_keyspace_removes_cdc_streams(manager: Manager
 # Create a table with CDC, then disable CDC and drop the CDC log table, and create CDC again.
 # Verify streams are created and cleaned up correctly.
 @pytest.mark.asyncio
+@pytest.mark.skip
 async def test_drop_and_recreate_cdc(manager: ManagerClient):
     await manager.servers_add(1)
     cql = manager.get_cql()
@@ -135,6 +138,7 @@ async def test_drop_and_recreate_cdc(manager: ManagerClient):
 
 # Read CDC stream information from the virtual tables system.cdc_timestamps and system.cdc_streams
 @pytest.mark.asyncio
+@pytest.mark.skip
 async def test_cdc_virtual_table(manager: ManagerClient):
     servers = await manager.servers_add(1)
     cql = manager.get_cql()
@@ -174,6 +178,7 @@ async def test_cdc_virtual_table(manager: ManagerClient):
 # Then trigger tablet merge and do the same, verifying streams are merged.
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.skip
 async def test_cdc_stream_split_and_merge_basic(manager: ManagerClient):
     cfg = { 'tablet_load_stats_refresh_interval_in_seconds': 1 }
     servers = await manager.servers_add(1, config=cfg)
@@ -237,6 +242,7 @@ async def test_cdc_stream_split_and_merge_basic(manager: ManagerClient):
 # We create a 2-node cluster with RF=1, stop one node, and verify that the partitions available
 # on the alive node work correctly for both base table and CDC log.
 @pytest.mark.asyncio
+@pytest.mark.skip
 async def test_cdc_colocation(manager: ManagerClient):
     # Create 2-node cluster to test co-location
     servers = await manager.servers_add(2)

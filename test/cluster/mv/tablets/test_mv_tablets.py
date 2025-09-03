@@ -62,6 +62,8 @@ async def assert_one_tablet(cql, keyspace_name, table_or_view_name):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_tablet_mv_create(manager: ManagerClient):
     """A basic test for creating a materialized view on a table stored
        with tablets on a one-node cluster. We just create the view and
@@ -77,6 +79,8 @@ async def test_tablet_mv_create(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_tablet_mv_simple(manager: ManagerClient):
     """A simple test for reading and writing a materialized view on a table
        stored with tablets on a one-node cluster. Because it's a one-node
@@ -96,6 +100,7 @@ async def test_tablet_mv_simple(manager: ManagerClient):
         assert [(3,2)] == list(await cql.run_async(f"SELECT * FROM {ks}.tv WHERE c=3"))
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=6)
 async def test_tablet_mv_simple_6node(manager: ManagerClient):
     """A simple reproducer for a bug of forgetting that the view table has a
        different tablet mapping from the base: Using the wrong tablet mapping
@@ -122,6 +127,7 @@ async def inject_error_on(manager, error_name, servers):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_alternator_lsi_consistency(manager: ManagerClient):
     """A reproducer for a bug where Alternator LSI was not using synchronous
        view updates when tablets are enabled, which could cause strongly-
@@ -199,6 +205,8 @@ async def test_tablet_alternator_lsi_consistency(manager: ManagerClient):
     table.delete()
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_tablet_si_create(manager: ManagerClient):
     """A basic test for creating a secondary index on a table stored
        with tablets on a one-node cluster. We just create the index and
@@ -212,6 +220,8 @@ async def test_tablet_si_create(manager: ManagerClient):
         await cql.run_async(f"CREATE TABLE {ks}.test (pk int PRIMARY KEY, c int)")
         await cql.run_async(f"CREATE INDEX my_idx ON {ks}.test(c)")
         await cql.run_async(f"DROP INDEX {ks}.my_idx")
+
+@pytest.mark.max_running_servers(amount=1)
 
 async def test_tablet_lsi_create(manager: ManagerClient):
     """A basic test for creating a *local* secondary index on a table stored
@@ -229,6 +239,7 @@ async def test_tablet_lsi_create(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_tablet_cql_lsi(manager: ManagerClient):
     """A simple reproducer for issue #16371 where CQL LSI (local secondary
        index) was not using synchronous view updates when tablets are enabled,
@@ -280,6 +291,8 @@ async def test_tablet_cql_lsi(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_mv_tablet_split(manager: ManagerClient):
     """A basic test for checking that tablet split works on MV tables.
        We create a table with a materialized view, starting with one tablet

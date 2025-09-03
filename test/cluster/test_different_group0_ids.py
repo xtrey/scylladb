@@ -9,8 +9,11 @@ from test.pylib.manager_client import ManagerClient
 import asyncio
 import pytest
 
+from test.pylib.util import wait_for_first_completed
+
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_different_group0_ids(manager: ManagerClient):
     """
     The reproducer for #14448.
@@ -40,13 +43,12 @@ async def test_different_group0_ids(manager: ManagerClient):
     log_file_b = await manager.server_open_log(scylla_b.server_id)
 
     # Wait for a gossip round to finish
-    _, pending = await asyncio.wait([
-            asyncio.create_task(log_file_b.wait_for(f'InetAddress {scylla_a.ip_addr} is now UP')), # The second node joins the cluster
-            asyncio.create_task(log_file_a.wait_for(f'Group0Id mismatch')) # The first node discards gossip from the second node
-        ], return_when=asyncio.FIRST_COMPLETED)
 
-    for task in pending:
-        task.cancel()
+    await wait_for_first_completed([
+            log_file_b.wait_for(f'InetAddress {scylla_a.ip_addr} is now UP'), # The second node joins the cluster
+            log_file_a.wait_for(f'Group0Id mismatch') # The first node discards gossip from the second node
+        ])
+
 
     # Check if decommissioning the second node fails.
     # Repair service throws a runtime exception "zero replica after the removal"

@@ -21,6 +21,7 @@ import time
 logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_maintenance_mode(manager: ManagerClient):
     """
     The test checks that in maintenance mode server A is not available for other nodes and for clients.

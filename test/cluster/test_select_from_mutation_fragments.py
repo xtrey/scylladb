@@ -15,6 +15,7 @@ from test.pylib.manager_client import ManagerClient
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_sticky_coordinator_enforced(manager: ManagerClient) -> None:
     await manager.servers_add(2, cmdline=['--logger-log-level', 'paging=trace'], auto_rack_dc="dc1")
 

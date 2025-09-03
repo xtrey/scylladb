@@ -18,6 +18,7 @@ from test.cluster.util import log_run_time, wait_until_last_generation_is_in_use
 
 @pytest.mark.asyncio
 @log_run_time
+@pytest.mark.max_running_servers(amount=4)
 async def test_topology_upgrade_basic(request, build_mode: str, manager: ManagerClient):
     # First, force the first node to start in legacy mode
     cfg = {

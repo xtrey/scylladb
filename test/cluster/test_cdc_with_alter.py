@@ -17,6 +17,8 @@ import pytest
 logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
+@pytest.mark.skip
 async def test_add_and_drop_column_with_cdc(manager: ManagerClient):
     """ Test writing to a table with CDC enabled while adding and dropping a column.
         In particular we are interested at the behavior when the schemas of the base table

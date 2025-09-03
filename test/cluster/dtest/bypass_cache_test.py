@@ -134,6 +134,8 @@ class TestBypassCache(Tester):
         )
         assert not errors, "Running query that is suppose to read from cache following errors found:\n" + "\n".join(errors)
 
+    @pytest.mark.max_running_servers(amount=1)
+    
     def test_simple_bypass_cache(self):
         session = self.prepare()
         node = self.cluster.nodelist()[0]
@@ -141,6 +143,8 @@ class TestBypassCache(Tester):
 
         self.verify_read_was_from_disk(node=node, query=query, session=session)
 
+    @pytest.mark.max_running_servers(amount=1)
+    
     def test_multiple_bypass_cache(self):
         session = self.prepare()
         node = self.cluster.nodelist()[0]
@@ -149,6 +153,8 @@ class TestBypassCache(Tester):
             query = "SELECT * FROM cf BYPASS CACHE"
             self.verify_read_was_from_disk(node=node, query=query, session=session)
 
+    @pytest.mark.max_running_servers(amount=1)
+    
     def test_read_from_cache_and_then_bypass_cache(self):
         session = self.prepare()
         node = self.cluster.nodelist()[0]
@@ -199,6 +205,8 @@ class TestBypassCache(Tester):
         )
         assert not errors, "Running range query that is suppose to read from disk following errors found:\n" + "\n".join(errors)
 
+    @pytest.mark.max_running_servers(amount=1)
+    
     def test_full_scan_bypass_cache(self):
         session = self.prepare()
         node = self.cluster.nodelist()[0]
@@ -224,6 +232,8 @@ class TestBypassCache(Tester):
         )
 
     @pytest.mark.parametrize("cache_index_pages", [True, False], ids=["cache_index_pages", "no_cache_index_pages"])
+    @pytest.mark.max_running_servers(amount=1)
+    
     def test_create_table_caching_disabled(self, cache_index_pages: bool):
         session = self.prepare(insert_data=False, cache_index_pages=cache_index_pages)
         node = self.cluster.nodelist()[0]
@@ -235,6 +245,8 @@ class TestBypassCache(Tester):
         self.verify_read_was_from_disk(node=node, query=query, session=session, index_cache_involved=cache_index_pages)
 
     @pytest.mark.parametrize("cache_index_pages", [True, False], ids=["cache_index_pages", "no_cache_index_pages"])
+    @pytest.mark.max_running_servers(amount=1)
+    
     def test_alter_table_caching_disable(self, cache_index_pages: bool):
         session = self.prepare(insert_data=False, cache_index_pages=cache_index_pages)
         node = self.cluster.nodelist()[0]
@@ -249,6 +261,8 @@ class TestBypassCache(Tester):
         self.verify_read_was_from_disk(node=node, query=query, session=session, index_cache_involved=cache_index_pages)
 
     @pytest.mark.parametrize("cache_index_pages", [True, False], ids=["cache_index_pages", "no_cache_index_pages"])
+    @pytest.mark.max_running_servers(amount=1)
+    
     def test_alter_table_caching_enable(self, cache_index_pages: bool):
         session = self.prepare(insert_data=False, cache_index_pages=cache_index_pages)
         node = self.cluster.nodelist()[0]
@@ -275,6 +289,8 @@ class TestBypassCache(Tester):
             self.first_key += 10
         return grew > NUM_OF_QUERY_EXECUTIONS / 2
 
+    @pytest.mark.max_running_servers(amount=1)
+    
     def test_writes_caching_disabled(self):
         session = self.prepare(insert_data=False)
         node = self.cluster.nodelist()[0]
@@ -286,6 +302,8 @@ class TestBypassCache(Tester):
         session.execute(alter_cmd)
         assert self.verify_used_memory_grow(node=node, session=session), "expected to have writes through cache"
 
+    @pytest.mark.max_running_servers(amount=1)
+    
     def test_writes_caching_enabled(self):
         session = self.prepare(insert_data=False)
         node = self.cluster.nodelist()[0]

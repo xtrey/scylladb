@@ -20,6 +20,7 @@ from test.cluster.util import wait_until_topology_upgrade_finishes, \
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_topology_upgrade_not_stuck_after_recent_removal(request, manager: ManagerClient):
     """
     Regression test for https://github.com/scylladb/scylladb/issues/18198.

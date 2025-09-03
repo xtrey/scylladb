@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # with the writes.
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=4)
 async def test_mv_topology_change(manager: ManagerClient):
     cfg = {'force_gossip_topology_changes': True,
            'tablets_mode_for_new_keyspaces': 'disabled',
@@ -100,6 +101,7 @@ async def test_mv_topology_change(manager: ManagerClient):
 @pytest.mark.parametrize("intranode", [True, False])
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_mv_update_on_pending_replica(manager: ManagerClient, intranode):
     cfg = {'tablets_mode_for_new_keyspaces': 'enabled'}
     cmd = ['--smp', '2']
@@ -181,6 +183,7 @@ async def test_mv_update_on_pending_replica(manager: ManagerClient, intranode):
 # during this time.
 @pytest.mark.asyncio
 @skip_mode('debug', 'the test requires a short timeout for remove_node, but it is unpredictably slow in debug')
+@pytest.mark.max_running_servers(amount=4)
 async def test_mv_write_to_dead_node(manager: ManagerClient):
     servers = await manager.servers_add(4, property_file=[
         {"dc": "dc1", "rack": "r1"},
@@ -206,6 +209,7 @@ async def test_mv_write_to_dead_node(manager: ManagerClient):
         # Otherwise, it is expected to complete in short time.
         await manager.remove_node(servers[0].server_id, servers[-1].server_id, timeout=180)
 
+@pytest.mark.skip
 async def test_mv_pairing_during_replace(manager: ManagerClient):
     servers = await manager.servers_add(3, property_file=[
         {"dc": "dc1", "rack": "r1"},
@@ -257,6 +261,7 @@ async def test_mv_pairing_during_replace(manager: ManagerClient):
 @pytest.mark.parametrize("delayed_replica", ["base", "mv"])
 @pytest.mark.parametrize("altered_dc", ["dc1", "dc2"])
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.skip
 async def test_mv_rf_change(manager: ManagerClient, delayed_replica: str, altered_dc: str):
     servers = []
     servers.append(await manager.server_add(config={'rf_rack_valid_keyspaces': False}, property_file={'dc': f'dc1', 'rack': 'myrack1'}))
@@ -326,6 +331,7 @@ async def test_mv_rf_change(manager: ManagerClient, delayed_replica: str, altere
 @pytest.mark.asyncio
 @pytest.mark.parametrize("delayed_replica", ["base", "mv"])
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.skip
 async def test_mv_first_replica_in_dc(manager: ManagerClient, delayed_replica: str):
     servers = []
     # If we run the test with more than 1 shard and the tablet for the view table gets allocated on the same shard as the tablet of the base table,

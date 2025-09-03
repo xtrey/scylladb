@@ -44,6 +44,7 @@ async def wait_for_publishing_generations(cql: Session, servers: list[ServerInfo
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_writes_to_recent_previous_cdc_generations(request, manager: ManagerClient):
     """
     Test that writes to previous CDC generations succeed if the timestamp of the generation being written to
@@ -93,6 +94,7 @@ async def test_writes_to_recent_previous_cdc_generations(request, manager: Manag
 
 @pytest.mark.asyncio
 @skip_mode('debug', 'test requires nodes to be started quickly')
+@pytest.mark.max_running_servers(amount=2)
 async def test_writes_to_old_previous_cdc_generation(request, manager: ManagerClient):
     """
     Test that writes to a previous CDC generation succeed if the write's timestamp is greater than

@@ -17,6 +17,7 @@ pytestmark = pytest.mark.prepare_3_nodes_cluster
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=5)
 async def test_coordinator_queue_management(manager: ManagerClient):
     """This test creates a 5 node cluster with 2 down nodes (A and B). After that it
        creates a queue of 3 topology operation: bootstrap, removenode A and removenode B

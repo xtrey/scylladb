@@ -4,6 +4,7 @@ from test.pylib.manager_client import ManagerClient
 import pytest
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_drop_table_during_streaming_receiver_side(manager: ManagerClient):
     servers = [await manager.server_add(config={
         'error_injections_at_startup': ['stream_mutation_fragments_table_dropped'],
@@ -14,6 +15,7 @@ async def test_drop_table_during_streaming_receiver_side(manager: ManagerClient)
     }) for _ in range(2)]
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_drop_table_during_flush(manager: ManagerClient):
     servers = [await manager.server_add() for _ in range(2)]
 

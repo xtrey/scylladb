@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_bad_initial_token(manager: ManagerClient):
     # The validity of "initial_token" option is checked in the topology
     # coordinator, even if this is the first node being bootstrap, and triggers

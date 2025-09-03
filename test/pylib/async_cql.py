@@ -46,17 +46,22 @@ def _wrap_future(driver_response_future: ResponseFuture, all_pages: bool = False
             logger.debug("_wrap_future: on_result() on already done future: %s", result)
         else:
             if result is None:
-                loop.call_soon_threadsafe(aio_future.set_result, None)
+                if not loop.is_closed():
+                    loop.call_soon_threadsafe(aio_future.set_result, None)
             else:
                 _result.extend(result)
                 if driver_response_future.has_more_pages and all_pages:
                     driver_response_future.start_fetching_next_page()
                 else:
-                    loop.call_soon_threadsafe(aio_future.set_result, _result)
+                    if not loop.is_closed():
+                        loop.call_soon_threadsafe(aio_future.set_result, _result)
 
     def on_error(exception, *_):
         if not aio_future.done():
-            loop.call_soon_threadsafe(aio_future.set_exception, exception)
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(aio_future.set_exception, exception)
+            else:
+                logger.debug("_wrap_future: on_error() called but event loop is closed: %s", exception)
         else:
             logger.debug("_wrap_future: on_error(): %s", exception)
 

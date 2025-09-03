@@ -23,6 +23,7 @@ from test.cluster.conftest import cluster_con
 @pytest.mark.nightly
 @pytest.mark.asyncio
 @log_run_time
+@pytest.mark.max_running_servers(amount=4)
 async def test_topology_recovery_basic(request, build_mode: str, manager: ManagerClient):
     # FIXME: move this test to the Raft-based recovery procedure or remove it if unneeded.
 

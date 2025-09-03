@@ -23,6 +23,7 @@ def disable_auto_compaction(ip_addr, ks_name, cf_name):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_resurrection_while_file_streaming(manager: ManagerClient):
     '''
     When tablets are migrated with file-based streaming, we can have a situation where a tombstone is garbage

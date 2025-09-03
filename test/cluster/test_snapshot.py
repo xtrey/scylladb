@@ -18,6 +18,7 @@ pytestmark = pytest.mark.prepare_3_racks_cluster
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_snapshot(manager, random_tables):
     """
         Cluster A, B, C

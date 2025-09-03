@@ -21,6 +21,7 @@ import os
 logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_validate_truncate_with_concurrent_writes(manager: ManagerClient):
 
     # This test validates that all the data before a truncate started has been deleted,

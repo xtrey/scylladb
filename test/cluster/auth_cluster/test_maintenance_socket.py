@@ -16,6 +16,7 @@ from test.cluster.auth_cluster import extra_scylla_config_options as auth_config
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
 async def test_maintenance_socket(manager: ManagerClient):
     """
     Test that when connecting to the maintenance socket, the user has superuser permissions,

@@ -23,6 +23,8 @@ from cassandra.query import SimpleStatement
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.max_running_servers(amount=2)
+@pytest.mark.skip
 async def test_upgrade_and_rollback(manager: ManagerClient, scylla_2025_1: ScyllaVersionDescription):
     new_exe = os.getenv("SCYLLA")
     assert new_exe

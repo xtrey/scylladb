@@ -528,6 +528,7 @@ async def new_test_keyspace(manager: ManagerClient, opts, host=None):
         async with new_test_keyspace(ManagerClient, '...') as keyspace:
     """
     keyspace = await create_new_test_keyspace(manager.get_cql(), opts, host)
+    # logger.debug(f"Created test keyspace '{keyspace}' with options {opts} with manager {await manager.running_servers()=}")
     try:
         yield keyspace
     except:

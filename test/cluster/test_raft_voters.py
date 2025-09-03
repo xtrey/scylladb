@@ -32,6 +32,7 @@ async def get_number_of_voters(manager: ManagerClient, srv: ServerInfo):
 # (the DC1 must not have 2 voters otherwise losing it would result in the raft majority loss).
 @pytest.mark.parametrize('num_nodes', [1, 3])
 @pytest.mark.parametrize('stop_gracefully', [True, False])
+@pytest.mark.max_running_servers(amount=12)
 async def test_raft_voters_multidc_kill_dc(manager: ManagerClient, num_nodes: int, stop_gracefully: bool):
     """
     Test the basic functionality of limited voters in a multi-DC cluster.
@@ -104,6 +105,7 @@ async def test_raft_voters_multidc_kill_dc(manager: ManagerClient, num_nodes: in
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=8)
 async def test_raft_limited_voters_upgrade(manager: ManagerClient):
     """
     Test that the limited voters feature works correctly during the upgrade.
@@ -179,6 +181,7 @@ async def test_raft_limited_voters_upgrade(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=7)
 async def test_raft_limited_voters_retain_coordinator(manager: ManagerClient):
     """
     Test that the topology coordinator is retained as a voter when possible.

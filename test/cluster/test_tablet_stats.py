@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_load_stats_on_coordinator_failover(manager: ManagerClient):
     cfg = {
         'data_file_capacity': 7000000,
