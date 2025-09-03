@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=2)
 async def test_table_desc_read_barrier(manager: ManagerClient) -> None:
     """
     Regression test for #19213.

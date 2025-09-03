@@ -16,6 +16,7 @@ from test.cluster.auth_cluster import extra_scylla_config_options as auth_config
 Tests case when bigger auth operation is split into multiple raft commands.
 """
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_auth_raft_command_split(manager: ManagerClient) -> None:
     servers = await manager.servers_add(3, config=auth_config, auto_rack_dc="dc1")
     cql, hosts = await manager.get_ready_cql(servers)

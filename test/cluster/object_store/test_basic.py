@@ -44,6 +44,8 @@ def create_ks_and_cf(cql, s3_server):
 
 @pytest.mark.parametrize('mode', ['normal', 'encrypted'])
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_basic(manager: ManagerClient, s3_server, tmp_path, mode):
     '''verify ownership table is updated, and tables written to S3 can be read after scylla restarts'''
 
@@ -107,6 +109,8 @@ async def test_basic(manager: ManagerClient, s3_server, tmp_path, mode):
     assert not rows, 'Unexpected entries in registry'
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_garbage_collect(manager: ManagerClient, s3_server):
     '''verify ownership table is garbage-collected on boot'''
 
@@ -150,6 +154,8 @@ async def test_garbage_collect(manager: ManagerClient, s3_server):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_populate_from_quarantine(manager: ManagerClient, s3_server):
     '''verify sstables are populated from quarantine state'''
 
@@ -187,6 +193,8 @@ async def test_populate_from_quarantine(manager: ManagerClient, s3_server):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_misconfigured_storage(manager: ManagerClient, s3_server):
     '''creating keyspace with unknown endpoint is not allowed'''
     # scylladb/scylladb#15074
@@ -210,6 +218,8 @@ async def test_misconfigured_storage(manager: ManagerClient, s3_server):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_memtable_flush_retries(manager: ManagerClient, tmpdir, s3_server):
     '''verify that memtable flush doesn't crash in case storage access keys are incorrect'''
 
@@ -251,6 +261,8 @@ async def test_memtable_flush_retries(manager: ManagerClient, tmpdir, s3_server)
     assert have_res == dict(rows), f'Unexpected table content: {have_res}'
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_get_object_store_endpoints(manager: ManagerClient, s3_server):
     objconf = MinioServer.create_conf(s3_server.address, s3_server.port, s3_server.region)
     badconf = MinioServer.create_conf('a', 123, 'bad_region')

@@ -72,6 +72,7 @@ async def wait_for_view_build_status(cql, ks_name, view_name, status, node_count
 # is stored in view_build_status_v2 and all nodes see all the other
 # node's statuses.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_view_build_status_v2_table(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count)
@@ -92,6 +93,7 @@ async def test_view_build_status_v2_table(manager: ManagerClient):
 # from system.view_build_status_v2, so verify that reading from each of them provides
 # the same output.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_view_build_status_virtual_table(manager: ManagerClient):
     node_count = 3
     servers = await manager.servers_add(node_count)
@@ -169,6 +171,7 @@ async def test_view_build_status_virtual_table(manager: ManagerClient):
 # Create materialized views. Start new server and it should get a snapshot on bootstrap.
 # Stop 3 `old` servers and query the new server to validate if it has the same view build status.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_view_build_status_snapshot(manager: ManagerClient):
     servers = await manager.servers_add(3)
     cql, _ = await manager.get_ready_cql(servers)
@@ -206,6 +209,7 @@ async def test_view_build_status_snapshot(manager: ManagerClient):
 # Verify the migration copies the v1 data, and the new v2 table
 # is used after the migration.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_view_build_status_migration_to_v2(request, manager: ManagerClient):
     # First, force the first node to start in legacy mode
     cfg = {'force_gossip_topology_changes': True, 'tablets_mode_for_new_keyspaces': 'disabled'}
@@ -258,6 +262,7 @@ async def test_view_build_status_migration_to_v2(request, manager: ManagerClient
 # The migration process goes through an intermediate stage where it writes to
 # both the old and new table, so the write should not be lost.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_view_build_status_migration_to_v2_with_write_during_migration(request, manager: ManagerClient):
     # First, force the first node to start in legacy mode
     cfg = {'force_gossip_topology_changes': True, 'tablets_mode_for_new_keyspaces': 'disabled'}
@@ -316,6 +321,7 @@ async def test_view_build_status_migration_to_v2_with_write_during_migration(req
 # The migration should wait for the old operations to complete before continuing, otherwise
 # these writes may be lost.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_view_build_status_migration_to_v2_barrier(request, manager: ManagerClient):
     # First, force the first node to start in legacy mode
     cfg = {'force_gossip_topology_changes': True, 'tablets_mode_for_new_keyspaces': 'disabled'}
@@ -364,6 +370,7 @@ async def test_view_build_status_migration_to_v2_barrier(request, manager: Manag
 # Test that when removing a node from the cluster, we clean its rows from
 # the view build status table.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_view_build_status_cleanup_on_remove_node(manager: ManagerClient):
     node_count = 4
     servers = await manager.servers_add(node_count)
@@ -388,6 +395,7 @@ async def test_view_build_status_cleanup_on_remove_node(manager: ManagerClient):
 # Replace a node and verify that the view_build_status has rows for the new node and
 # no rows for the old node
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_view_build_status_with_replace_node(manager: ManagerClient):
     node_count = 4
     servers = await manager.servers_add(node_count)
@@ -434,6 +442,7 @@ async def test_view_build_status_with_replace_node(manager: ManagerClient):
 # Then migrate to v2 table and verify that only valid entries belonging to known nodes
 # and views are migrated to the new table.
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_view_build_status_migration_to_v2_with_cleanup(request, manager: ManagerClient):
     # First, force the first node to start in legacy mode
     cfg = {'force_gossip_topology_changes': True, 'tablets_mode_for_new_keyspaces': 'disabled'}
@@ -504,6 +513,7 @@ async def test_view_build_status_migration_to_v2_with_cleanup(request, manager: 
 # It wasn't happening in gossip topology -> raft topology upgrade.
 @pytest.mark.asyncio
 @skip_mode('release', 'error injection is not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_migration_on_existing_raft_topology(request, manager: ManagerClient):
     cfg = {
         "error_injections_at_startup": [
@@ -560,6 +570,7 @@ async def test_migration_on_existing_raft_topology(request, manager: ManagerClie
 # confirms successful execution in such cases.
 @skip_mode('release', 'error injections are not supported in release mode')
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_view_build_status_with_synchronize_wait(manager: ManagerClient):
     servers = []
     servers.append(await manager.server_add())

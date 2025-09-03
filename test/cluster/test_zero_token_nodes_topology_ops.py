@@ -17,6 +17,7 @@ from test.cluster.util import check_node_log_for_failed_mutations, start_writes
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('tablets_enabled', [True, False])
+@pytest.mark.max_running_servers(amount=5)
 async def test_zero_token_nodes_topology_ops(manager: ManagerClient, tablets_enabled: bool):
     """
     Test that:

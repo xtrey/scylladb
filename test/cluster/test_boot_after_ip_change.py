@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_boot_after_ip_change(manager: ManagerClient) -> None:
     """Bootstrap a new node after existing one changed its IP.
        Regression test for #14468. Does not apply to Raft-topology mode.

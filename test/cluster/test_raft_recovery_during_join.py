@@ -21,6 +21,7 @@ from test.cluster.util import check_system_topology_and_cdc_generations_v3_consi
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=6)
 async def test_raft_recovery_during_join(manager: ManagerClient):
     """
     Test that the Raft-based recovery procedure works correctly if majority has been lost in the write_both_read_new

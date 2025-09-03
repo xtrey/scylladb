@@ -16,6 +16,7 @@ from test.pylib.util import wait_for
 logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_long_join(manager: ManagerClient) -> None:
     """The test checks that join works even if expiring entries are dropped
        between placement of the join request and its processing"""
@@ -30,6 +31,7 @@ async def test_long_join(manager: ManagerClient) -> None:
     await asyncio.gather(task)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_long_join_drop_entries_on_bootstrapping(manager: ManagerClient) -> None:
     """The test checks that join works even if expiring entries are dropped
        on the joining node between placement of the join request and its processing"""

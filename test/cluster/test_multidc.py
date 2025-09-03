@@ -28,6 +28,7 @@ CONFIG = {"endpoint_snitch": "GossipingPropertyFileSnitch"}
 
 # Checks a cluster boot/operations in multi-dc environment with 5 nodes each in a separate DC
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_multidc(request: pytest.FixtureRequest, manager: ManagerClient) -> None:
     logger.info("Creating a new cluster")
     for i in range(5):
@@ -51,6 +52,7 @@ cluster_config = [
 # Simple put-get test for 2 DC with a different amount of nodes and different replication factors
 @pytest.mark.asyncio
 @pytest.mark.parametrize("nodes_list, rf", cluster_config)
+@pytest.mark.max_running_servers(amount=4)
 async def test_putget_2dc_with_rf(
         request: pytest.FixtureRequest, manager: ManagerClient, nodes_list: list[int], rf: int
 ) -> None:
@@ -113,6 +115,7 @@ async def test_putget_2dc_with_rf(
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_query_dc_with_rf_0_does_not_crash_db(request: pytest.FixtureRequest, manager: ManagerClient):
     """Test querying dc with CL=LOCAL_QUORUM when RF=0 for this dc, does not crash the node and returns None
     Covers https://github.com/scylladb/scylla/issues/8354"""
@@ -150,6 +153,7 @@ async def test_query_dc_with_rf_0_does_not_crash_db(request: pytest.FixtureReque
         f"Expected no results from {select_query.query_string}, but got {second_node_result}"
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: ManagerClient):
     """
     This test verifies that creating and altering a keyspace keeps it RF-rack-valid.
@@ -299,6 +303,7 @@ async def test_create_and_alter_keyspace_with_altering_rf_and_racks(manager: Man
     await alter_ok(ks3, [1, 1])
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=7)
 async def test_arbiter_dc_rf_rack_valid_keyspaces(manager: ManagerClient):
     """
     This test verifies that Scylla rejects RF-rack-invalid keyspaces
@@ -375,6 +380,7 @@ async def test_arbiter_dc_rf_rack_valid_keyspaces(manager: ManagerClient):
         for task in [*valid_keyspaces, *invalid_keyspaces]:
             _ = tg.create_task(task)
 
+@pytest.mark.max_running_servers(amount=5)
 async def test_startup_with_keyspaces_violating_rf_rack_valid_keyspaces(manager: ManagerClient):
     """
     This test verifies that starting a Scylla node fails when there's an RF-rack-invalid keyspace.
@@ -454,6 +460,7 @@ async def test_startup_with_keyspaces_violating_rf_rack_valid_keyspaces(manager:
     _ = await manager.server_start(s1.server_id)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_startup_with_keyspaces_violating_rf_rack_valid_keyspaces_but_not_enforced(manager: ManagerClient):
     """
     When the configuration option `rf_rack_valid_keyspaces` is enabled and there is an RF-rack-invalid keyspace,
@@ -497,6 +504,7 @@ async def test_startup_with_keyspaces_violating_rf_rack_valid_keyspaces_but_not_
     await log.wait_for(expected_pattern)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_restart_with_prefer_local(request: pytest.FixtureRequest, manager: ManagerClient) -> None:
     logger.info("Creating a new cluster")
     for i in range(3):
@@ -510,6 +518,7 @@ async def test_restart_with_prefer_local(request: pytest.FixtureRequest, manager
     await manager.server_start(s_info.server_id)
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_warn_create_and_alter_rf_rack_invalid_ks(manager: ManagerClient):
     """
     When the configuration option `rf_rack_valid_keyspaces` is enabled, the user is not

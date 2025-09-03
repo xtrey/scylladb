@@ -14,6 +14,7 @@ pytestmark = pytest.mark.prepare_3_racks_cluster
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_no_cleanup_when_unnecessary(request, manager: ManagerClient):
     """The test runs two bootstraps and checks that there is no cleanup in between.
        Then it runs a decommission and checks that cleanup runs automatically and then

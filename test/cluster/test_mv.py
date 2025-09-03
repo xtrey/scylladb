@@ -22,6 +22,7 @@ pytestmark = pytest.mark.prepare_3_racks_cluster
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_mv_tombstone_gc_setting(manager):
     """
     Test that the tombstone_gc parameter can be set on a materialized view,
@@ -50,6 +51,7 @@ async def test_mv_tombstone_gc_setting(manager):
                 assert "'mode': 'repair'" in s
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_mv_tombstone_gc_not_inherited(manager):
     """
     Test that the tombstone_gc parameter set on a base table is NOT inherited

@@ -69,6 +69,7 @@ async def validate_status_operation(result: str, live_eps: list, down_eps: list,
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_zero_token_node_normal(manager: ManagerClient):
     zero_token_nodes = await manager.servers_add(servers_num=2, config={'join_ring': False})
 
@@ -115,6 +116,7 @@ async def test_zero_token_node_normal(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=4)
 async def test_zero_token_node_down_leaving(manager: ManagerClient):
     servers = await manager.running_servers()
     [await manager.api.enable_injection(s.ip_addr, 'delay_node_removal', one_shot=True) for s in servers]
@@ -160,6 +162,7 @@ async def test_zero_token_node_down_leaving(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=4)
 async def test_zero_token_node_down_normal(manager: ManagerClient):
     servers = await manager.running_servers()
 
@@ -197,6 +200,7 @@ async def test_zero_token_node_down_normal(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=4)
 async def test_regular_node_joining(manager: ManagerClient):
     servers = await manager.running_servers()
     [await manager.api.enable_injection(s.ip_addr, 'delay_node_bootstrap', one_shot=True) for s in servers]

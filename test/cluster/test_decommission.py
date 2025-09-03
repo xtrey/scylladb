@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_decommissioned_node_cant_rejoin(request, manager: ManagerClient):
     # This a regression test for #17282.
 

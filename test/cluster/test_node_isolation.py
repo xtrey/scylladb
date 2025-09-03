@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.mark.asyncio
 @pytest.mark.nightly
+@pytest.mark.max_running_servers(amount=3)
 async def test_banned_node_cannot_communicate(manager: ManagerClient) -> None:
     """Test that a node banned from the cluster is not able to perform inserts
        that require communicating with other nodes."""

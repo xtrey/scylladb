@@ -12,6 +12,7 @@ pytestmark = pytest.mark.prepare_3_racks_cluster
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_replacing_alive_node_fails(manager: ManagerClient) -> None:
     """Try replacing an alive node and check that it fails"""
     servers = await manager.running_servers()

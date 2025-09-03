@@ -45,6 +45,7 @@ async def inject_error_one_shot_on(manager, error_name, servers):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=3)
 async def test_lwt(manager: ManagerClient):
     logger.info("Bootstrapping cluster")
     cmdline = [
@@ -108,6 +109,7 @@ async def test_lwt(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_lwt_during_migration(manager: ManagerClient):
     # Scenario:
     # 1. A cluster with three nodes, a table with one tablet and RF=2
@@ -209,6 +211,7 @@ async def test_lwt_during_migration(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=4)
 async def test_lwt_state_is_preserved_on_tablet_migration(manager: ManagerClient):
     # Scenario:
     # 1. Cells c1 and c2 of some partition are not set.
@@ -301,6 +304,8 @@ async def test_lwt_state_is_preserved_on_tablet_migration(manager: ManagerClient
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_no_lwt_with_tablets_feature(manager: ManagerClient):
     config = {
         'error_injections_at_startup': [
@@ -332,6 +337,7 @@ async def test_no_lwt_with_tablets_feature(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_lwt_state_is_preserved_on_tablet_rebuild(manager: ManagerClient):
     # Scenario:
     # 1. A cluster with 3 nodes, rf=3.
@@ -417,6 +423,8 @@ async def test_lwt_state_is_preserved_on_tablet_rebuild(manager: ManagerClient):
 
 @pytest.mark.asyncio
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_lwt_concurrent_base_table_recreation(manager: ManagerClient):
     # The test checks that the node doesn't crash when the base table is recreated
     # during LWT execution. A no_such_column_family exception is thrown, and the LWT
@@ -464,6 +472,7 @@ async def test_lwt_concurrent_base_table_recreation(manager: ManagerClient):
 @pytest.mark.asyncio
 @skip_mode('debug', 'aarch64/debug is unpredictably slow', platform_key='aarch64')
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_lwt_timeout_while_creating_paxos_state_table(manager: ManagerClient, build_mode):
     timeout = 10000 if build_mode == 'debug' else 1000
     config = {
@@ -499,6 +508,8 @@ async def test_lwt_timeout_while_creating_paxos_state_table(manager: ManagerClie
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_lwt_for_tablets_is_not_supported_without_raft(manager: ManagerClient):
     # This test checks that LWT for tablets requires raft-based schema management.
 
@@ -535,6 +546,8 @@ async def test_lwt_for_tablets_is_not_supported_without_raft(manager: ManagerCli
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=1)
+
 async def test_paxos_state_table_permissions(manager: ManagerClient):
     # This test checks permission handling for paxos state tables:
     #   * Only a superuser is allowed to access a paxos state table
@@ -629,6 +642,7 @@ async def test_paxos_state_table_permissions(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=2)
 async def test_lwt_coordinator_shard(manager: ManagerClient):
     # The test checks that an LWT coordinator runs on a replica shard, and not on a 'default' (zero) shard.
     # Scenario:
@@ -684,7 +698,8 @@ async def test_lwt_coordinator_shard(manager: ManagerClient):
 @pytest.mark.asyncio
 @skip_mode('debug', 'dev is enought: the test checks non-critical functionality')
 @skip_mode('release', 'error injections are not supported in release mode')
-async def test_error_message_for_timeout_due_to_write_uncertainty(manager: ManagerClient):
+@pytest.mark.max_running_servers(amount=3)
+async def test_error_message_for_timeout_due_to_uncertainty(manager: ManagerClient):
     # LWT can sometimes return WriteTimeout when it is uncertain whether the transaction
     # was applied. In this case, the user should retry the transaction.
     #
@@ -745,6 +760,7 @@ async def test_error_message_for_timeout_due_to_write_uncertainty(manager: Manag
 @pytest.mark.asyncio
 @skip_mode('debug', 'dev is enought')
 @skip_mode('release', 'error injections are not supported in release mode')
+@pytest.mark.max_running_servers(amount=3)
 async def test_no_uncertainty_for_reads(manager: ManagerClient):
     # This test verifies that LWT reads do not produce 'uncertainty' timeouts.
     #

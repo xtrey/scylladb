@@ -10,6 +10,7 @@ from test.pylib.scylla_cluster import ReplaceConfig
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("join_ring", [True, False])
+@pytest.mark.max_running_servers(amount=6)
 async def test_replace_with_encryption(manager: ManagerClient, join_ring):
     """Test that a node can be replaced if inter-dc encryption is enabled.
        The test creates 6 node cluster with two DCs and replaces one node in

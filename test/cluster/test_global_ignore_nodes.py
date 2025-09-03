@@ -14,6 +14,7 @@ pytestmark = pytest.mark.prepare_3_racks_cluster
 
 
 @pytest.mark.asyncio
+@pytest.mark.max_running_servers(amount=5)
 async def test_global_ignored_nodes_list(manager: ManagerClient, random_tables) -> None:
     """This test creates a 5 node cluster with two nodes down (A and B). It removes A while
        specifying B in ignored nodes list. Then is downs one more node and replaces it while
