@@ -93,8 +93,16 @@ public:
     future<> create_cdc_desc(db_clock::time_point, const cdc::topology_description&, context);
     future<bool> cdc_desc_exists(db_clock::time_point, context);
 
+    // Reads and builds generation map - a map from generation timestamps to vector of all stream ids for that generation.
+    // Generations with timestamp >= `not_older_than` are returned, plus the one just before it (the straddling generation).
+    // Returns empty map if there are no generations with timestamp >= `not_older_than`.
+    // NOTE: there's a sibling `read_cdc_for_tablets_versioned_streams`, that reads the same data for tables backed by tablets. The data returned is the same.
+    // NOTE: currently used only by alternator
     future<std::map<db_clock::time_point, cdc::streams_version>> cdc_get_versioned_streams(db_clock::time_point not_older_than, context);
 
+    // Read current generation timestamp for the given table. Throws runtime_error (see `cql3::untyped_result_set::one()`) if table not found.
+    // NOTE: there's a sibling `read_cdc_for_tablets_current_generation_timestamp` in `system_keyspace`, that does the same for tables backed up by tablets.
+    // NOTE: currently used only by alternator
     future<db_clock::time_point> cdc_current_generation_timestamp(context);
 
     future<qos::service_levels_info> get_service_levels(qos::query_context ctx) const;

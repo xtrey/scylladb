@@ -14,6 +14,7 @@
 #include <ranges>
 
 #include <seastar/core/coroutine.hh>
+#include <seastar/coroutine/maybe_yield.hh>
 #include <seastar/coroutine/parallel_for_each.hh>
 #include <seastar/core/loop.hh>
 #include <seastar/core/on_internal_error.hh>
@@ -2055,6 +2056,67 @@ future<std::unordered_set<dht::token>> system_keyspace::get_local_tokens() {
         }
         return std::move(tokens);
     });
+}
+
+// Tablet-based counterpart of system_distributed_keyspace::cdc_current_generation_timestamp.
+// Unlike the vnode version which reads from a replicated system_distributed table (and thus
+// requires QUORUM), this reads from a virtual table backed by local Raft-managed tablet
+// metadata, so consistency_level::ONE is the only meaningful level.
+future<db_clock::time_point> system_keyspace::read_cdc_for_tablets_current_generation_timestamp(std::string_view ks_name, std::string_view table_name) {
+    // note: we only care about the newest ("current") timestamp, hence limit 1.
+    // this depends on table's native clustering order being DESC on timestamp, which is the case for CDC_TIMESTAMPS.
+    static const sstring query = format("SELECT timestamp FROM {}.{} WHERE keyspace_name = ? and table_name = ? limit 1", NAME, CDC_TIMESTAMPS);
+    auto timestamp_cql = co_await _qp.execute_internal(
+            query,
+            db::consistency_level::ONE,
+            { ks_name, table_name },
+            cql3::query_processor::cache_internal::no);
+
+    co_return timestamp_cql->one().get_as<db_clock::time_point>("timestamp");
+}
+
+// Tablet-based counterpart of system_distributed_keyspace::cdc_get_versioned_streams.
+// Unlike the vnode version which reads from a replicated system_distributed table (and thus
+// requires QUORUM), this reads from a virtual table backed by local Raft-managed tablet
+// metadata, so consistency_level::ONE is the only meaningful level.
+future<std::map<db_clock::time_point, cdc::streams_version>> system_keyspace::read_cdc_for_tablets_versioned_streams(std::string_view ks_name, std::string_view table_name, db_clock::time_point not_older_than) {
+    // We read all streams and filter in memory, because we need to include
+    // the generation that straddles the `not_older_than` boundary (i.e. the
+    // one just before it), and the virtual table does not support the
+    // required range query directly.
+    static const sstring stream_id_query = format("SELECT stream_id, stream_state, timestamp FROM {}.{} WHERE keyspace_name = ? and table_name = ?", NAME, CDC_STREAMS);
+
+    std::map<db_clock::time_point, utils::chunked_vector<cdc::stream_id>> temp_result;
+
+    co_await _qp.query_internal(stream_id_query,
+                db::consistency_level::ONE,
+                data_value_list{ ks_name, table_name },
+                1000, // page size
+                [&] (const cql3::untyped_result_set_row& row) -> future<stop_iteration> {
+        auto stream_state = cdc::read_stream_state(row.get_as<int8_t>("stream_state"));
+        if (stream_state != cdc::stream_state::current) {
+            co_return stop_iteration::no;
+        }
+        auto ts = row.get_as<db_clock::time_point>("timestamp");
+
+        temp_result[ts].push_back(cdc::stream_id{ row.get_as<bytes>("stream_id") });
+        co_await coroutine::maybe_yield();
+        co_return stop_iteration::no;
+    });
+
+    std::map<db_clock::time_point, cdc::streams_version> result;
+    // Include the generation that straddles the boundary, matching the vnode
+    // counterpart (cdc_get_versioned_streams) which does the same adjustment.
+    auto it = temp_result.lower_bound(not_older_than);
+    if (it != temp_result.begin()) {
+        --it;
+    }
+    for (; it != temp_result.end(); ++it) {
+        auto& ts = it->first;
+        auto& streams = it->second;
+        result.insert_or_assign(ts, cdc::streams_version{ std::move(streams), ts });
+    }
+    co_return std::move(result);
 }
 
 future<> system_keyspace::read_cdc_streams_state(std::optional<table_id> table,
