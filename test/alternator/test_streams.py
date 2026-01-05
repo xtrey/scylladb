@@ -16,12 +16,29 @@ from botocore.exceptions import ClientError
 
 from test.alternator.util import is_aws, scylla_config_temporary, unique_table_name, create_test_table, new_test_table, random_string, full_scan, freeze, list_tables, get_region, manual_request
 
-# All tests in this file are expected to fail with tablets due to #23838.
-# To ensure that Alternator Streams is still being tested, instead of
-# xfailing these tests, we temporarily coerce the tests below to avoid
-# using default tablets setting, even if it's available. We do this by
-# using the following tags when creating each table below:
-TAGS = [{'Key': 'system:initial_tablets', 'Value': 'none'}]
+TAGS = []
+# The following fixture is to ensure that tests in this module will be tested with both vnodes and tablets.
+# This fixture runs automatically for every test in this module.
+# To avoid relying on semantics of a similar fixture used in TTL tests, we define it locally here instead of reusing
+# that fixture, and we do not import or reuse fixtures across modules.
+# It sets the TAGS variable in the module’s global namespace to the current parameter value before each test.
+# All tests will be run with both values. On AWS the parameterization is meaningless, so we skip the second variant.
+@pytest.fixture(params=[
+    [{'Key': 'system:initial_tablets', 'Value': 'none'}],
+    [{'Key': 'system:initial_tablets', 'Value': '0'}],
+], ids=["using vnodes", "using tablets"], autouse=True)
+def tags_param(request, dynamodb):
+    if is_aws(dynamodb) and request.param[0].get('Value') != 'none':
+        pytest.skip('vnodes/tablets parameterization not applicable on AWS')
+    # Set TAGS in the global namespace of this module
+    global TAGS
+    TAGS = request.param
+
+def running_using_vnodes():
+    for tag in TAGS:
+        if tag['Key'] == 'system:initial_tablets':
+            v = tag['Value']
+            return not v or not v.isdigit()
 
 stream_types = [ 'OLD_IMAGE', 'NEW_IMAGE', 'KEYS_ONLY', 'NEW_AND_OLD_IMAGES']
 
@@ -54,12 +71,14 @@ def disable_stream(dynamodbstreams, table):
 # So we have to create and delete a table per test. And not run this 
 # test to often against aws.  
 @contextmanager
-def create_stream_test_table(dynamodb, StreamViewType=None):
+def create_stream_test_table(dynamodb, StreamViewType=None, Tags=None):
+    if Tags is None:
+        Tags = TAGS
     spec = { 'StreamEnabled': False }
     if StreamViewType != None:
         spec = {'StreamEnabled': True, 'StreamViewType': StreamViewType}
     table = create_test_table(dynamodb, StreamSpecification=spec,
-        Tags=TAGS,
+        Tags=Tags,
         KeySchema=[ { 'AttributeName': 'p', 'KeyType': 'HASH' },
                     { 'AttributeName': 'c', 'KeyType': 'RANGE' }
         ],
@@ -415,7 +434,7 @@ def test_get_records(dynamodb, dynamodbstreams):
                 if 'NextShardIterator' in response:
                     next_iterators.append(response['NextShardIterator'])
 
-                records = response.get('Records')
+                records = response.get('Records', [])
                 # print("Query {} -> {}".format(iter, records))
                 if records:
                     for record in records:
