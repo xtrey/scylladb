@@ -68,3 +68,5 @@ async def test_partitioned_sstable_set(manager: ManagerClient, mode):
     await manager.api.keyspace_compaction(server.ip_addr, ks, "test")
 
     await cql.run_async(f"DROP KEYSPACE {ks}")
+    if mode == 'vnode':
+        assert 1 == 0
