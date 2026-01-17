@@ -30,7 +30,7 @@ from test.pylib.artifact_registry import ArtifactRegistry
 from test.pylib.host_registry import HostRegistry
 from test.pylib.ldap_server import start_ldap
 from test.pylib.minio_server import MinioServer
-from test.pylib.resource_gather import get_resource_gather, setup_cgroup
+from test.pylib.resource_gather import get_resource_gather, setup_cgroup, setup_worker_cgroup
 from test.pylib.s3_proxy import S3ProxyServer
 from test.pylib.s3_server_mock import MockS3Server
 from test.pylib.util import LogPrefixAdapter, get_xdist_worker_id
@@ -395,118 +395,7 @@ toxiproxy_id_gen = 0
 
 
 async def run_test(test: Test, options: argparse.Namespace, gentle_kill=False, env=dict()) -> bool:
-    """Run test program, return True if success else False"""
-
-    test.log_filename.parent.mkdir(parents=True, exist_ok=True)
-    with test.log_filename.open("wb") as log:
-        def report_error(error, failure_injection_desc = None):
-            msg = "=== TEST.PY SUMMARY START ===\n"
-            msg += "{}\n".format(error)
-            msg += "=== TEST.PY SUMMARY END ===\n"
-            if failure_injection_desc is not None:
-                msg += 'failure injection: {}'.format(failure_injection_desc)
-            log.write(msg.encode(encoding="UTF-8"))
-
-        process = None
-
-        logging.info("Starting test %s: %s %s", test.uname, test.path, " ".join(test.args))
-        UBSAN_OPTIONS = [
-            "halt_on_error=1",
-            "abort_on_error=1",
-            f"suppressions={TOP_SRC_DIR / 'ubsan-suppressions.supp'}",
-            os.getenv("UBSAN_OPTIONS"),
-        ]
-        ASAN_OPTIONS = [
-            "disable_coredump=0",
-            "abort_on_error=1",
-            "detect_stack_use_after_return=1",
-            os.getenv("ASAN_OPTIONS"),
-        ]
-        try:
-            resource_gather = get_resource_gather(is_switched_on=options.gather_metrics, test=test)
-            resource_gather.make_cgroup()
-            log.write("=== TEST.PY STARTING TEST {} ===\n".format(test.uname).encode(encoding="UTF-8"))
-            log.write("export UBSAN_OPTIONS='{}'\n".format(
-                ":".join(filter(None, UBSAN_OPTIONS))).encode(encoding="UTF-8"))
-            log.write("export ASAN_OPTIONS='{}'\n".format(
-                ":".join(filter(None, ASAN_OPTIONS))).encode(encoding="UTF-8"))
-            log.write("{} {}\n".format(test.path, " ".join(test.args)).encode(encoding="UTF-8"))
-            log.write("=== TEST.PY TEST {} OUTPUT ===\n".format(test.uname).encode(encoding="UTF-8"))
-            log.flush()
-            test.time_start = time.time()
-            test.time_end = 0
-
-            path = test.path
-            args = test.core_args + test.args
-            if options.cpus:
-                path = 'taskset'
-                args = ['-c', options.cpus, test.path, *args]
-
-            test_running_event = asyncio.Event()
-            test_resource_watcher = resource_gather.cgroup_monitor(test_event=test_running_event)
-
-            test_env = dict(
-                os.environ,
-                UBSAN_OPTIONS=":".join(filter(None, UBSAN_OPTIONS)),
-                ASAN_OPTIONS=":".join(filter(None, ASAN_OPTIONS)),
-
-                # TMPDIR env variable is used by any seastar/scylla test for directory to store test temporary data.
-                TMPDIR=str(test.suite.log_dir),
-
-                SCYLLA_TEST_ENV="yes",
-                SCYLLA_TEST_RUNNER="test.py",
-                **env,
-            )
-            process = await asyncio.create_subprocess_exec(
-                path, *args,
-                stderr=log,
-                stdout=log,
-                env=test_env,
-                preexec_fn=resource_gather.put_process_to_cgroup,
-            )
-            stdout, _ = await asyncio.wait_for(process.communicate(), options.timeout)
-            test_running_event.set()
-            test.time_end = time.time()
-
-            metrics = resource_gather.get_test_metrics()
-            try:
-                async with asyncio.timeout(2):
-                    await test_resource_watcher
-            except TimeoutError:
-                log.write(f'Metrics for {test.name} can be inaccurate, job reached timeout'.encode(encoding='UTF-8'))
-            finally:
-                resource_gather.remove_cgroup()
-
-            if process.returncode not in test.valid_exit_codes:
-                report_error('Test exited with code {code}\n'.format(code=process.returncode))
-                resource_gather.write_metrics_to_db(metrics)
-                return False
-            try:
-                test.check_log(not options.save_log_on_success)
-            except Exception as e:
-                print("")
-                print(test.name + ": " + palette.crit("failed to parse XML output: {}".format(e)))
-                resource_gather.write_metrics_to_db(metrics)
-                return False
-            resource_gather.write_metrics_to_db(metrics, True)
-            return True
-        except (asyncio.TimeoutError, asyncio.CancelledError) as e:
-            test.is_cancelled = True
-            if process is not None:
-                if gentle_kill:
-                    process.terminate()
-                else:
-                    process.kill()
-                stdout, _ = await process.communicate()
-            if isinstance(e, asyncio.TimeoutError):
-                report_error("Test timed out")
-            elif isinstance(e, asyncio.CancelledError):
-                print(test.shortname, end=" ")
-                report_error("Test was cancelled: the parent process is exiting")
-        except Exception as e:
-            report_error("Failed to run the test:\n{e}".format(e=e))
-    return False
-
+    pass
 
 def prepare_dir(dirname: pathlib.Path, pattern: str, save_log_on_success: bool) -> None:
     # Ensure the dir exists.

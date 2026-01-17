@@ -29,7 +29,8 @@ create_table = [
         id INTEGER PRIMARY KEY,
         host_id VARCHAR(5) NOT NULL,
         architecture VARCHAR(15) NOT NULL,
-        directory VARCHAR(255),
+        path TEXT NOT NULL,
+        file VARCHAR(255) NOT NULL,
         mode VARCHAR(15) NOT NULL,
         run_id INTEGER,
         test_name VARCHAR(255) NOT NULL
@@ -49,6 +50,8 @@ create_table = [
         time_start DATETIME,
         time_end DATETIME,
         success BOOLEAN,
+        status VARCHAR(15),
+        worker_id VARCHAR(15),
         FOREIGN KEY(test_id) REFERENCES {TESTS_TABLE}(id)
     );
     ''',
@@ -177,6 +180,12 @@ class SQLiteWriter:
         """
         for model in data_list:
             self.write_row(model, table_name)
+
+    def close(self) -> None:
+        """Close the underlying SQLite connection and release the file descriptor."""
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
 
     def write_row_if_not_exist(self, model, table_name: str) -> int:
         """

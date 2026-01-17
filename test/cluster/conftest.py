@@ -19,7 +19,7 @@ from multiprocessing import Event
 from pathlib import Path
 from typing import TYPE_CHECKING
 from test import TOP_SRC_DIR, path_to
-from test.pylib.runner import testpy_test_fixture_scope
+from test.pylib.runner import testpy_test_fixture_scope, PHASE_REPORT_KEY
 from test.pylib.random_tables import RandomTables
 from test.pylib.util import unique_name
 from test.pylib.manager_client import ManagerClient
@@ -83,26 +83,6 @@ def pytest_addoption(parser):
     parser.addoption('--artifacts_dir_url', action='store', type=str, default=None, dest='artifacts_dir_url',
                      help='Provide the URL to artifacts directory to generate the link to failed tests directory '
                           'with logs')
-
-
-# This is a constant used in `pytest_runtest_makereport` below to store the full report for the test case
-# in a stash which can then be accessed from fixtures to print the stacktrace for the failed test
-PHASE_REPORT_KEY = pytest.StashKey[dict[str, pytest.CollectReport]]()
-
-
-@pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    """This is a post-test hook executed by the pytest library.
-    Use it to access the test result and store a flag indicating failure
-    so we can later retrieve it in our fixtures like `manager`.
-
-    `item.stash` is the same stash as `request.node.stash` (in the `request`
-    fixture provided by pytest).
-    """
-    outcome = yield
-    report = outcome.get_result()
-
-    item.stash[PHASE_REPORT_KEY] = report
 
 
 conn_logger = logging.getLogger("conn_messages")
@@ -255,10 +235,11 @@ async def manager(request: pytest.FixtureRequest,
     manager_client = manager_internal()  # set up client object in fixture with scope function
     await manager_client.before_test(test_case_name, test_log)
     yield manager_client
-    # `request.node.stash` contains a report stored in `pytest_runtest_makereport` from where we can retrieve
-    # test failure.
-    report = request.node.stash[PHASE_REPORT_KEY]
-    failed = report.when == "call" and report.failed
+    # `request.node.stash` contains reports stored per phase in `pytest_runtest_makereport`
+    # from where we can retrieve test failure.
+    reports = request.node.stash[PHASE_REPORT_KEY]
+    call_report = reports.get("call")
+    failed = call_report is not None and call_report.failed
 
     # Check if the test has the check_nodes_for_errors marker
     found_errors = await manager_client.check_all_errors(check_all_errors=(request.node.get_closest_marker("check_nodes_for_errors") is not None))
@@ -278,7 +259,7 @@ async def manager(request: pytest.FixtureRequest,
             {'pytest.log': test_log, 'test_py.log': test_py_log_test}
         )
         with open(failed_test_dir_path / "stacktrace.txt", "w") as f:
-            f.write(report.longreprtext)
+            f.write(call_report.longreprtext)
         if request.config.getoption('artifacts_dir_url') is not None:
             # get the relative path to the tmpdir for the failed directory
             dir_path_relative = f"{failed_test_dir_path.as_posix()[failed_test_dir_path.as_posix().find('testlog'):]}"
@@ -357,8 +338,9 @@ async def random_tables(request, manager):
     # The cluster will be marked as dirty if the test failed, but that happens
     # at the end of `manager` fixture which we depend on (so these steps will be
     # executed after us) - so at this point, we need to check for failure ourselves too.
-    report = request.node.stash[PHASE_REPORT_KEY]
-    failed = report.when == "call" and report.failed
+    reports = request.node.stash[PHASE_REPORT_KEY]
+    call_report = reports.get("call")
+    failed = call_report is not None and call_report.failed
     if not failed and not await manager.is_dirty():
         tables.drop_all()
 
