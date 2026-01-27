@@ -381,6 +381,10 @@ public:
         return _nodes.at(node)._du.capacity;
     }
 
+    bool has_node(host_id node) const {
+        return _nodes.contains(node);
+    }
+
     shard_id get_shard_count(host_id node) const {
         if (!_nodes.contains(node)) {
             return 0;
