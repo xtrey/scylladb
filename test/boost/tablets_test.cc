@@ -191,6 +191,162 @@ void mutate_tablets(cql_test_env& e, seastar::noncopyable_function<future<>(tabl
     mutate_tablets(e, guard, std::move(mutator));
 }
 
+SEASTAR_TEST_CASE(test_tablet_id_map_different_density_test) {
+    // Exercise different density of buckets by scaling token space, out of which we pick only first few tokens.
+    for (int num_tokens : {7, 8, 11, 16}) {
+        testlog.info("L{}: {} tokens", __LINE__, num_tokens);
+        auto tokens = dht::get_uniform_tokens(num_tokens);
+
+        auto map = tablet_id_map(3);
+        map.push_back(tokens[1], tablet_id(0));
+        map.push_back(tokens[3], tablet_id(1));
+        map.push_back(dht::last_token(), tablet_id(2));
+
+        BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::minimum_token()), tablet_id(0));
+        BOOST_REQUIRE_EQUAL(map.get_tablet_id(tokens[0]), tablet_id(0));
+        BOOST_REQUIRE_EQUAL(map.get_tablet_id(tokens[1]), tablet_id(0));
+        BOOST_REQUIRE_EQUAL(map.get_tablet_id(tokens[2]), tablet_id(1));
+        BOOST_REQUIRE_EQUAL(map.get_tablet_id(tokens[3]), tablet_id(1));
+        BOOST_REQUIRE_EQUAL(map.get_tablet_id(tokens[4]), tablet_id(2));
+        BOOST_REQUIRE_EQUAL(map.get_tablet_id(tokens[5]), tablet_id(2));
+        BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::maximum_token()), tablet_id(2));
+    }
+
+    for (int num_tokens : {3, 4, 7, 11}) {
+        testlog.info("L{}: {} tokens", __LINE__, num_tokens);
+        auto tokens = dht::get_uniform_tokens(num_tokens);
+
+        // Verify tokens concentrated in the front
+        {
+            auto map = tablet_id_map(3);
+            auto last0 = tokens[0];
+            auto last1 = tokens[1];
+            auto last2 = dht::last_token();
+            map.push_back(last0, tablet_id(0));
+            map.push_back(last1, tablet_id(1));
+            map.push_back(last2, tablet_id(2));
+
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::minimum_token()), tablet_id(0));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::token::midpoint(dht::first_token(), last0)), tablet_id(0));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(last0), tablet_id(0));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::token::midpoint(last0, last1)), tablet_id(1));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(last1), tablet_id(1));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::token::midpoint(last1, last2)), tablet_id(2));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::maximum_token()), tablet_id(2));
+        }
+
+        // Verify tokens concentrated in the back
+        {
+            auto map = tablet_id_map(3);
+            auto last0 = tokens[tokens.size() - 3];
+            auto last1 = tokens[tokens.size() - 2];
+            auto last2 = tokens[tokens.size() - 1];
+            map.push_back(last0, tablet_id(0));
+            map.push_back(last1, tablet_id(1));
+            map.push_back(last2, tablet_id(2));
+
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::minimum_token()), tablet_id(0));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::token::midpoint(dht::first_token(), last0)), tablet_id(0));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(last0), tablet_id(0));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::token::midpoint(last0, last1)), tablet_id(1));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(last1), tablet_id(1));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::token::midpoint(last1, last2)), tablet_id(2));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::maximum_token()), tablet_id(2));
+        }
+    }
+
+    return make_ready_future<>();
+}
+
+SEASTAR_TEST_CASE(test_tablet_id_map_building) {
+    auto uniform_tokens = dht::get_uniform_tokens(8);
+
+    auto map = tablet_id_map(7);
+    auto tablet_0_last = dht::token(uniform_tokens[0]).next().next();
+    auto tablet_1_last = dht::token(uniform_tokens[2]).next();
+    auto tablet_2_last = tablet_1_last.next(); // tablet 2 owns only 1 token.
+    auto tablet_3_last = tablet_2_last.next().next();
+    auto tablet_4_last = dht::token(uniform_tokens[3]);
+    auto tablet_5_last = dht::token::midpoint(dht::token(uniform_tokens[3]), dht::token(uniform_tokens[4]));
+    auto tablet_6_last = dht::last_token();
+
+    map.push_back(dht::raw_token(tablet_0_last), tablet_id(0));
+    map.push_back(dht::raw_token(tablet_1_last), tablet_id(1));
+    map.push_back(dht::raw_token(tablet_2_last), tablet_id(2));
+    map.push_back(dht::raw_token(tablet_3_last), tablet_id(3));
+    map.push_back(dht::raw_token(tablet_4_last), tablet_id(4));
+    map.push_back(dht::raw_token(tablet_5_last), tablet_id(5));
+    map.push_back(dht::raw_token(tablet_6_last), tablet_id(6));
+
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(uniform_tokens[0]), tablet_id(0));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(uniform_tokens[1]), tablet_id(1));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(uniform_tokens[2]), tablet_id(1));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(uniform_tokens[3]), tablet_id(4));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(uniform_tokens[4]), tablet_id(6));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(uniform_tokens[5]), tablet_id(6));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(uniform_tokens[6]), tablet_id(6));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(uniform_tokens[7]), tablet_id(6));
+
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_0_last), tablet_id(0));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_1_last), tablet_id(1));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_2_last), tablet_id(2));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_3_last), tablet_id(3));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_4_last), tablet_id(4));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_5_last), tablet_id(5));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_6_last), tablet_id(6));
+
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_0_last.next()), tablet_id(1));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_1_last.next()), tablet_id(2));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_2_last.next()), tablet_id(3));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_3_last.next()), tablet_id(4));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_4_last.next()), tablet_id(5));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(tablet_5_last.next()), tablet_id(6));
+
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::minimum_token()), tablet_id(0));
+    BOOST_REQUIRE_EQUAL(map.get_tablet_id(dht::maximum_token()), tablet_id(6));
+
+    return make_ready_future<>();
+}
+
+static
+utils::chunked_vector<dht::raw_token> get_random_tokens(size_t n) {
+    utils::chunked_vector<dht::raw_token> last_tokens;
+    for (size_t i = 0; i < n; ++i) {
+        last_tokens.push_back(dht::raw_token(dht::token::get_random_token()));
+    }
+    std::sort(last_tokens.begin(), last_tokens.end());
+    return last_tokens;
+}
+
+SEASTAR_THREAD_TEST_CASE(test_tablet_id_map_cloning) {
+    for (int n_tokens : {1, 2, 7, 13, 16}) {
+        auto last_tokens = get_random_tokens(n_tokens);
+        last_tokens.back() = dht::raw_token(dht::last_token());
+        auto map = tablet_id_map(last_tokens);
+        auto map_cloned = map.clone_gently().get();
+
+        int t_idx = 0;
+        for (auto&& t: last_tokens) {
+            testlog.trace("last token {} of tablet {} bucket {}", t, t_idx, dht::compaction_group_of(map.log2_count(), t));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(t), tablet_id(t_idx));
+            BOOST_REQUIRE_EQUAL(map.get_tablet_id(t), map_cloned.get_tablet_id(t));
+
+            if (t < last_tokens.back()) {
+                auto next_t = dht::token(t).next();
+                BOOST_REQUIRE_EQUAL(map.get_tablet_id(next_t), map_cloned.get_tablet_id(next_t));
+                BOOST_REQUIRE_EQUAL(map.get_tablet_id(next_t), tablet_id(t_idx + 1));
+            }
+
+            if (t > dht::first_token()) {
+                auto prev_t = dht::token(dht::raw_token(t.value - 1));
+                BOOST_REQUIRE_EQUAL(map.get_tablet_id(prev_t), map_cloned.get_tablet_id(prev_t));
+            }
+
+            ++t_idx;
+        }
+    }
+}
+
 SEASTAR_TEST_CASE(test_tablet_metadata_persistence) {
     return do_with_cql_env_thread([] (cql_test_env& e) {
         auto h1 = host_id(utils::UUID_gen::get_time_UUID());
@@ -3904,7 +4060,7 @@ SEASTAR_THREAD_TEST_CASE(test_load_balancing_with_random_load) {
             keyspaces.push_back(add_keyspace(e, {{topo.dc(), rf}}, initial_tablets));
             auto table = add_table(e, keyspaces.back()).get();
             mutate_tablets(e, [&] (tablet_metadata& tmeta) -> future<> {
-                tablet_map tmap(initial_tablets);
+                tablet_map tmap = tmeta.get_tablet_map(table).clone();
                 for (auto tid : tmap.tablet_ids()) {
                     // Choose replicas randomly while loading racks evenly.
                     std::vector<host_id> replica_hosts = allocate_replicas_in_racks(racks, rf, hosts_by_rack);
@@ -5012,7 +5168,7 @@ static void do_test_load_balancing_merge_colocation(cql_test_env& e, const int n
         auto guard = e.get_raft_group0_client().start_operation(as).get();
         stm.mutate_token_metadata([&](token_metadata& tm) -> future<> {
             tablet_metadata& tmeta = tm.tablets();
-            tablet_map tmap(initial_tablets);
+            tablet_map tmap = tmeta.get_tablet_map(table1).clone();
             locator::resize_decision decision;
             // leaves growing mode, allowing for merge decision.
             decision.sequence_number = decision.next_sequence_number();
