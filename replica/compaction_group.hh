@@ -505,7 +505,6 @@ public:
     virtual compaction_group& compaction_group_for_sstable(const sstables::shared_sstable& sst) const = 0;
     virtual compaction_group& compaction_group_for_logstor_segment(logstor::log_segment_id seg_id, dht::token first_token, dht::token last_token) const = 0;
 
-    virtual size_t log2_storage_groups() const = 0;
     virtual storage_group& storage_group_for_token(dht::token) const = 0;
     virtual utils::chunked_vector<storage_group_ptr> storage_groups_for_token_range(dht::token_range tr) const = 0;
 
