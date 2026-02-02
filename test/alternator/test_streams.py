@@ -291,7 +291,6 @@ def test_describe_stream_with_nonexistent_last_shard(dynamodb, dynamodbstreams):
 # Test requires `alternator_streams_increased_compatibility` set to be true, otherwise will fail due to how Streams work without the flag.
 # Test requires write_isolation set to always, otherwise upper layer will split batch write into separate cdc operations, sidestepping the issue.
 # Reproduces SCYLLADB-1528.
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_spurious_modify_mixing_noop_with_real_changes_in_batch_write_item(test_table_ss_new_and_old_images_write_isolation_always, dynamodb, dynamodbstreams):
     null = None
     def do_updates(table, p, c):
@@ -314,7 +313,6 @@ def test_streams_spurious_modify_mixing_noop_with_real_changes_in_batch_write_it
 # only delete column from non-existing item used to incorrectly emit a MODIFY event
 # test requires `alternator_streams_increased_compatibility` set to be true, otherwise will fail
 # Reproduces SCYLLADB-1528
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_noop_update_expr_on_missing_item(test_table_ss_new_and_old_images, dynamodb, dynamodbstreams):
     null = None
     def do_updates(table, p, c):
@@ -346,7 +344,6 @@ def test_streams_noop_update_expr_on_missing_item(test_table_ss_new_and_old_imag
         do_test(test_table_ss_new_and_old_images, dynamodb, dynamodbstreams, do_updates, 'NEW_AND_OLD_IMAGES')
         
 # the same as test_streams_noop_update_expr_on_missing_item but for a table without clustering key
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_noop_update_expr_on_missing_item_on_no_clustering_key_table(test_table_s_no_ck_new_and_old_images, dynamodb, dynamodbstreams):
     null = None
     def do_updates(table, p, c):
@@ -1812,42 +1809,34 @@ def do_updates_1_no_ck(table, p, _):
 
     return events
 
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_1_keys_only(test_table_ss_keys_only, dynamodb, dynamodbstreams):
     with scylla_config_temporary(dynamodb, 'alternator_streams_increased_compatibility', 'true', nop=is_aws(dynamodb)):
         do_test(test_table_ss_keys_only, dynamodb, dynamodbstreams, do_updates_1, 'KEYS_ONLY')
 
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_1_new_image(test_table_ss_new_image, dynamodb, dynamodbstreams):
     with scylla_config_temporary(dynamodb, 'alternator_streams_increased_compatibility', 'true', nop=is_aws(dynamodb)):
         do_test(test_table_ss_new_image, dynamodb, dynamodbstreams, do_updates_1, 'NEW_IMAGE')
 
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_1_old_image(test_table_ss_old_image, dynamodb, dynamodbstreams):
     with scylla_config_temporary(dynamodb, 'alternator_streams_increased_compatibility', 'true', nop=is_aws(dynamodb)):
         do_test(test_table_ss_old_image, dynamodb, dynamodbstreams, do_updates_1, 'OLD_IMAGE')
 
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_1_new_and_old_images(test_table_ss_new_and_old_images, dynamodb, dynamodbstreams):
     with scylla_config_temporary(dynamodb, 'alternator_streams_increased_compatibility', 'true', nop=is_aws(dynamodb)):
         do_test(test_table_ss_new_and_old_images, dynamodb, dynamodbstreams, do_updates_1, 'NEW_AND_OLD_IMAGES')
 
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_1_no_ck_keys_only(test_table_s_no_ck_keys_only, dynamodb, dynamodbstreams):
     with scylla_config_temporary(dynamodb, 'alternator_streams_increased_compatibility', 'true', nop=is_aws(dynamodb)):
         do_test(test_table_s_no_ck_keys_only, dynamodb, dynamodbstreams, do_updates_1_no_ck, 'KEYS_ONLY')
 
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_1_no_ck_new_image(test_table_s_no_ck_new_image, dynamodb, dynamodbstreams):
     with scylla_config_temporary(dynamodb, 'alternator_streams_increased_compatibility', 'true', nop=is_aws(dynamodb)):
         do_test(test_table_s_no_ck_new_image, dynamodb, dynamodbstreams, do_updates_1_no_ck, 'NEW_IMAGE')
 
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_1_no_ck_old_image(test_table_s_no_ck_old_image, dynamodb, dynamodbstreams):
     with scylla_config_temporary(dynamodb, 'alternator_streams_increased_compatibility', 'true', nop=is_aws(dynamodb)):
         do_test(test_table_s_no_ck_old_image, dynamodb, dynamodbstreams, do_updates_1_no_ck, 'OLD_IMAGE')
 
-@pytest.mark.xfail(reason="Temporary - fix coming in next commit")
 def test_streams_1_no_ck_new_and_old_images(test_table_s_no_ck_new_and_old_images, dynamodb, dynamodbstreams):
     with scylla_config_temporary(dynamodb, 'alternator_streams_increased_compatibility', 'true', nop=is_aws(dynamodb)):
         do_test(test_table_s_no_ck_new_and_old_images, dynamodb, dynamodbstreams, do_updates_1_no_ck, 'NEW_AND_OLD_IMAGES')
