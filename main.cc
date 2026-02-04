@@ -1194,6 +1194,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             debug::gossip_scheduling_group = dbcfg.gossip_scheduling_group;
             dbcfg.commitlog_scheduling_group = create_scheduling_group("commitlog", "clog", 1000).get();
             dbcfg.schema_commitlog_scheduling_group = create_scheduling_group("schema_commitlog", "sclg", 1000).get();
+            dbcfg.backup_scheduling_group = create_scheduling_group("backup", "bckp", 200, maintenance_supergroup).get(),
             dbcfg.available_memory = memory::stats().total_memory();
 
             // Make sure to initialize the scheduling group keys at a point where we are sure
@@ -2164,12 +2165,13 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
 
             checkpoint(stop_signal, "starting REST API");
             db::snapshot_ctl::config snap_cfg = {
-                .backup_sched_group = dbcfg.streaming_scheduling_group,
+                .backup_sched_group = dbcfg.backup_scheduling_group,
             };
             snapshot_ctl.start(std::ref(db), std::ref(proxy), std::ref(task_manager), std::ref(sstm), snap_cfg).get();
             auto stop_snapshot_ctl = defer_verbose_shutdown("snapshots", [&snapshot_ctl] {
                 snapshot_ctl.stop().get();
             });
+            auto backup_throughput_update = io_throughput_updater("backup", dbcfg.backup_scheduling_group, cfg->backup_io_throughput_mb_per_sec);
 
             api::set_server_snapshot(ctx, snapshot_ctl).get();
             auto stop_api_snapshots = defer_verbose_shutdown("snapshots API", [&ctx] {
