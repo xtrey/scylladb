@@ -10,6 +10,7 @@
 #include "replica/logstor/logstor.hh"
 #include "replica/logstor/types.hh"
 #include <absl/container/flat_hash_map.h>
+#include <chrono>
 #include <linux/if_link.h>
 #include <seastar/core/file.hh>
 #include <seastar/core/seastar.hh>
@@ -484,6 +485,7 @@ public:
         bool compaction_enabled;
         size_t max_segments_per_compaction;
         seastar::scheduling_group compaction_sg;
+        utils::updateable_value<float> compaction_static_shares;
         seastar::scheduling_group separator_sg;
     };
 
@@ -515,6 +517,14 @@ private:
         uint64_t separator_segments_freed{0};
     } _stats;
 
+    struct controller {
+        float _compaction_overhead{1.0}; // running average ratio
+
+        void update(size_t segment_write_count, size_t new_segments);
+    };
+    controller _controller;
+    timer<lowres_clock> _adjust_shares_timer;
+
 public:
     compaction_manager(segment_manager_impl& sm, log_index& index, compaction_config cfg)
         : _sm(sm)
@@ -524,6 +534,7 @@ public:
             return start_compaction();
         })
         , _next_group_for_compaction(_compaction_groups.end())
+        , _adjust_shares_timer(default_scheduling_group(), [this] { adjust_shares(); })
     {}
 
     future<> start();
@@ -590,9 +601,21 @@ private:
     void remove_segment(segment_descriptor& desc);
 
     separator::buffer& get_separator_buffer(separator& sep, const log_record_writer& writer);
+
+    void adjust_shares() {
+        if (auto static_shares = _cfg.compaction_static_shares.get(); static_shares != 0) {
+            _cfg.compaction_sg.set_shares(static_shares);
+        } else {
+            auto shares = std::max<float>(1000 * _controller._compaction_overhead, 1000);
+            _cfg.compaction_sg.set_shares(shares);
+        }
+    }
 };
 
 future<> compaction_manager::start() {
+    if (_cfg.compaction_sg != default_scheduling_group()) {
+        _adjust_shares_timer.arm_periodic(std::chrono::milliseconds(50));
+    }
     co_return;
 }
 
@@ -898,7 +921,8 @@ segment_manager_impl::segment_manager_impl(segment_manager_config config, log_in
     , _compaction_mgr(*this, index, compaction_manager::compaction_config{
             .compaction_enabled = config.compaction_enabled,
             .max_segments_per_compaction = config.max_segments_per_compaction,
-            .compaction_sg = config.compaction_sg
+            .compaction_sg = config.compaction_sg,
+            .compaction_static_shares = config.compaction_static_shares
         })
     , _cfg(config)
     , _segments_per_file(config.file_size / config.segment_size)
@@ -1616,6 +1640,13 @@ future<> compaction_manager::compact_segments(group_id gid, std::vector<log_segm
     _stats.compaction_segments_freed += new_segments;
     _stats.compaction_records_rewritten += records_rewritten;
     _stats.compaction_records_skipped += records_skipped;
+
+    _controller.update(cb.flush_count, new_segments);
+}
+
+void compaction_manager::controller::update(size_t segment_write_count, size_t new_segments) {
+    float new_overhead = static_cast<float>(segment_write_count) / std::max<size_t>(1, new_segments);
+    _compaction_overhead = 0.8 * _compaction_overhead + 0.2 * new_overhead;
 }
 
 void compaction_manager::remove_segment(segment_descriptor& desc) {

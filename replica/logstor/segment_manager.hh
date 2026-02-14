@@ -18,6 +18,7 @@
 #include "bytes_fwd.hh"
 #include "replica/logstor/write_buffer.hh"
 #include "types.hh"
+#include "utils/updateable_value.hh"
 
 namespace replica::logstor {
 
@@ -33,6 +34,7 @@ struct segment_manager_config {
     bool compaction_enabled = true;
     size_t max_segments_per_compaction = 8;
     seastar::scheduling_group compaction_sg;
+    utils::updateable_value<float> compaction_static_shares;
     seastar::scheduling_group separator_sg;
 };
 
