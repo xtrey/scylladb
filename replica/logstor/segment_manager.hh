@@ -36,6 +36,7 @@ struct segment_manager_config {
     seastar::scheduling_group compaction_sg;
     utils::updateable_value<float> compaction_static_shares;
     seastar::scheduling_group separator_sg;
+    uint32_t separator_delay_limit_ms;
 };
 
 class segment_manager_impl;
