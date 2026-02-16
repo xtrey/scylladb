@@ -249,6 +249,7 @@ public:
     named_value<uint32_t> logstor_disk_size_in_mb;
     named_value<uint32_t> logstor_file_size_in_mb;
     named_value<uint32_t> logstor_separator_delay_limit_ms;
+    named_value<uint32_t> logstor_separator_max_memory_in_mb;
     named_value<uint32_t> file_cache_size_in_mb;
     named_value<uint32_t> memtable_flush_queue_size;
     named_value<uint32_t> memtable_flush_writers;
