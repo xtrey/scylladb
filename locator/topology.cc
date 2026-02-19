@@ -490,6 +490,10 @@ const endpoint_dc_rack& topology::get_location_slow(host_id id) const {
     throw std::runtime_error(format("Requested location for node {} not in topology. backtrace {}", id, lazy_backtrace()));
 }
 
+utils::UUID topology::get_rack_uuid() const {
+    return utils::UUID_gen::get_name_UUID(format("{}:{}", get_location().dc, get_location().rack));
+}
+
 void topology::sort_by_proximity(locator::host_id address, host_id_vector_replica_set& addresses) const {
     if (can_sort_by_proximity()) {
         do_sort_by_proximity(address, addresses);

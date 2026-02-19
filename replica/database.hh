@@ -700,6 +700,10 @@ public:
     future<> maybe_split_compaction_group_of(locator::tablet_id);
 
     dht::token_range get_token_range_after_split(const dht::token&) const noexcept;
+
+    // Returns a counter_id for use in local counter updates.
+    counter_id get_counter_id(const mutation&) const;
+
 private:
     // If SSTable doesn't need split, the same input SSTable is returned as output.
     // If SSTable needs split, then output SSTables are returned and the input SSTable is deleted.

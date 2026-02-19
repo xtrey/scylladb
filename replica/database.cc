@@ -2044,10 +2044,12 @@ future<mutation> database::read_and_transform_counter_mutation_to_shards(mutatio
         co_await seastar::sleep(std::chrono::milliseconds(100));
     }
 
+    counter_id my_counter_id = cf.get_counter_id(m);
+
     // ...now, that we got existing state of all affected counter
     // cells we can look for our shard in each of them, increment
     // its clock and apply the delta.
-    transform_counter_updates_to_shards(m, mopt ? &*mopt : nullptr, cf.failed_counter_applies_to_memtable(), get_token_metadata().get_my_id());
+    transform_counter_updates_to_shards(m, mopt ? &*mopt : nullptr, cf.failed_counter_applies_to_memtable(), my_counter_id);
 
     co_return std::move(m);
 }
