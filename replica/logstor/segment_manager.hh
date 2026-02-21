@@ -83,6 +83,8 @@ public:
     // to their group_id.
     future<> do_barrier();
 
+    future<> truncate_table(table_id);
+
     friend class segment_manager_impl;
 
 };
