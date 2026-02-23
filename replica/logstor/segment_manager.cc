@@ -513,12 +513,13 @@ struct separator {
             return buf->write_with_holder(std::move(writer));
         }
     };
-    absl::flat_hash_map<group_id, std::deque<buffer>> _group_buffers;
+    absl::flat_hash_map<group_id, buffer> _group_buffers;
     seastar::circular_buffer<log_segment_id> _segments;
     seastar::gate _async_gate;
     utils::phased_barrier::operation _barrier_op;
     size_t _buffer_count{0};
     bool _switch_requested{false};
+    std::vector<future<>> flush_ops;
 
     separator(size_t max_segments) {
         _segments.reserve(max_segments);
@@ -607,6 +608,8 @@ private:
     controller _controller;
     timer<lowres_clock> _adjust_shares_timer;
 
+    seastar::semaphore _separator_flush_sem{0};
+
 public:
     compaction_manager(segment_manager_impl& sm, log_index& index, compaction_config cfg)
         : _sm(sm)
@@ -621,6 +624,10 @@ public:
 
     future<> start();
     future<> stop();
+
+    void enable_separator_flush(size_t max_concurrency) {
+        _separator_flush_sem.signal(max_concurrency);
+    }
 
     void enable_auto_compaction() {
         _cfg.compaction_enabled = true;
@@ -709,6 +716,7 @@ private:
     future<std::pair<compaction_group_it, std::vector<log_segment_id>>> remove_compaction_group(compaction_group_it);
 
     separator::buffer& get_separator_buffer(separator& sep, const log_record_writer& writer);
+    future<> flush_separator_buffer(separator::buffer);
 
     void adjust_shares() {
         if (auto static_shares = _cfg.compaction_static_shares.get(); static_shares != 0) {
@@ -731,6 +739,7 @@ future<> compaction_manager::stop() {
     if (_async_gate.is_closed()) {
         co_return;
     }
+    _separator_flush_sem.broken();
     co_await _async_gate.close();
 
     co_await _compaction_action.join();
@@ -869,6 +878,7 @@ class segment_manager_impl {
     seastar::circular_buffer<log_segment_id> _free_segments;
 
     static constexpr size_t separator_debt_target = 2;
+    static constexpr size_t separator_flush_max_concurrency = 4;
 
     sep_ptr _active_separator;
     size_t _separator_flush_threshold;
@@ -1146,6 +1156,8 @@ future<> segment_manager_impl::start() {
     co_await _compaction_mgr.start();
 
     co_await switch_active_segment();
+
+    _compaction_mgr.enable_separator_flush(separator_flush_max_concurrency);
 
     logstor_logger.info("Segment manager started with base directory {}", _cfg.base_dir.string());
 }
@@ -1903,24 +1915,36 @@ future<std::vector<log_segment_id>> compaction_manager::free_compaction_groups(t
 separator::buffer& compaction_manager::get_separator_buffer(separator& sep, const log_record_writer& writer) {
     auto gid = writer.record().group;
 
-    auto it = sep._group_buffers.find(gid);
-    if (it == sep._group_buffers.end()) {
-        it = sep._group_buffers.emplace(gid, std::deque<separator::buffer>{}).first;
-    }
-
-    auto& group_bufs = it->second;
-    if (group_bufs.empty() || !group_bufs.back().buf->can_fit(writer)) {
+    auto get_new_buffer = [&] {
         // TODO really ensure we have enough buffers
         if (_sm._available_separator_buffers.empty()) {
             throw std::runtime_error("No available separator buffers");
         }
         write_buffer* wb = _sm._available_separator_buffers.back();
         _sm._available_separator_buffers.pop_back();
-        group_bufs.emplace_back(std::move(wb), gid, _sm._separator_debt);
         sep._buffer_count++;
+
+        return separator::buffer(wb, gid, _sm._separator_debt);
+    };
+
+    auto it = sep._group_buffers.find(gid);
+    if (it == sep._group_buffers.end()) {
+        it = sep._group_buffers.emplace(gid, get_new_buffer()).first;
     }
 
-    auto& buf = group_bufs.back();
+    if (!it->second.buf->can_fit(writer)) {
+        auto old_buf = std::exchange(it->second, get_new_buffer());
+
+        sep.flush_ops.push_back(futurize_invoke(
+            [this, buf = std::move(old_buf)] mutable {
+                return with_gate(_async_gate, [this, buf = std::move(buf)] mutable {
+                    return flush_separator_buffer(std::move(buf));
+                });
+            }
+        ));
+    }
+
+    auto& buf = it->second;
     if (!buf.buf->can_fit(writer)) {
         throw std::runtime_error(fmt::format("Record size {} exceeds compaction buffer size {}", writer.size(), buf.buf->get_max_write_size()));
     }
@@ -1974,22 +1998,17 @@ future<> compaction_manager::flush_separator(separator& sep) {
     logstor_logger.debug("Flushing separator with {} segments and {} buffers from {} groups",
             sep._segments.size(), sep._buffer_count, sep.group_count());
 
-    for (auto&& [gid, bufs] : sep._group_buffers) {
-        logstor_logger.trace("Flushing separator buffers for group {} with {} buffers from {} segments", gid, bufs.size(), sep._segments.size());
-        while (!bufs.empty()) {
-            if (auto& buf = bufs.front(); buf.buf->has_data()) {
-                co_await _sm.write_full_segment(*buf.buf, buf.gid, write_source::separator);
-                co_await when_all_succeed(buf.pending_updates.begin(), buf.pending_updates.end());
-                _stats.separator_buffer_flushed++;
-            }
-            co_await bufs.front().buf->close();
-            auto wb = std::move(bufs.front().buf);
-            bufs.pop_front();
-
-            wb->reset();
-            _sm._available_separator_buffers.push_back(std::move(wb));
-        }
+    for (auto&& [gid, buf] : sep._group_buffers) {
+        sep.flush_ops.push_back(futurize_invoke([this, buf = std::move(buf)] mutable {
+            return with_gate(_async_gate, [this, buf = std::move(buf)] mutable {
+                return flush_separator_buffer(std::move(buf));
+            });
+        }));
     }
+
+    co_await when_all_succeed(sep.flush_ops.begin(), sep.flush_ops.end());
+
+    logstor_logger.trace("Separator flush completed, freeing {} segments", sep._segments.size());
 
     // wait for read operations that use the old locations
     co_await _index.await_pending_reads();
@@ -2002,17 +2021,30 @@ future<> compaction_manager::flush_separator(separator& sep) {
     }
 }
 
+future<> compaction_manager::flush_separator_buffer(separator::buffer buf) {
+    auto sem_units = co_await get_units(_separator_flush_sem, 1);
+
+    logstor_logger.trace("Flushing separator buffer for group {} with {} bytes", buf.gid, buf.buf->offset_in_buffer());
+    if (buf.buf->has_data()) {
+        co_await _sm.write_full_segment(*buf.buf, buf.gid, write_source::separator);
+        co_await when_all_succeed(buf.pending_updates.begin(), buf.pending_updates.end());
+        _stats.separator_buffer_flushed++;
+    }
+    co_await buf.buf->close();
+
+    auto wb = std::move(buf.buf);
+    wb->reset();
+    _sm._available_separator_buffers.push_back(std::move(wb));
+}
+
 future<> compaction_manager::abort_separator(separator& sep) {
-    for (auto&& [gid, bufs] : sep._group_buffers) {
-        while (!bufs.empty()) {
-            auto& buf = bufs.front();
-            co_await buf.buf->abort_writes(std::make_exception_ptr(abort_requested_exception()));
-            for (auto&& f : buf.pending_updates) {
-                try {
-                    co_await std::move(f);
-                } catch (...) {}
+    for (auto&& [gid, buf] : sep._group_buffers) {
+        co_await buf.buf->abort_writes(std::make_exception_ptr(abort_requested_exception()));
+        for (auto&& f : buf.pending_updates) {
+            try {
+                co_await std::move(f);
+            } catch (...) {
             }
-            bufs.pop_front();
         }
     }
 }
