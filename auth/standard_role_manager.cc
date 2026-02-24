@@ -429,15 +429,15 @@ future<bool> standard_role_manager::can_login(std::string_view role_name) {
 }
 
 future<std::optional<sstring>> standard_role_manager::get_attribute(std::string_view role_name, std::string_view attribute_name, ::service::query_state& qs) {
-    const sstring query = seastar::format("SELECT name, value FROM {}.{} WHERE role = ? AND name = ?",
-            db::system_keyspace::NAME,
-            ROLE_ATTRIBUTES_CF);
-    const auto result_set = co_await _qp.execute_internal(query, db::consistency_level::ONE, qs, {sstring(role_name), sstring(attribute_name)}, cql3::query_processor::cache_internal::yes);
-    if (!result_set->empty()) {
-        const cql3::untyped_result_set_row &row = result_set->one();
-        co_return std::optional<sstring>(row.get_as<sstring>("value"));
+    auto role = _cache.get(role_name);
+    if (!role) {
+        co_return std::nullopt;
     }
-    co_return std::optional<sstring>{};
+    auto it = role->attributes.find(attribute_name);
+    if (it != role->attributes.end()) {
+        co_return it->second;
+    }
+    co_return std::nullopt;
 }
 
 future<role_manager::attribute_vals> standard_role_manager::query_attribute_for_all (std::string_view attribute_name, ::service::query_state& qs) {
