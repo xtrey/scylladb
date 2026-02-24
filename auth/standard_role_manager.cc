@@ -44,13 +44,12 @@ namespace auth {
 static logging::logger log("standard_role_manager");
 
 future<std::optional<standard_role_manager::record>> standard_role_manager::find_record(std::string_view role_name) {
-    auto name = sstring(role_name);
-    auto role = _cache.get(name);
+    auto role = _cache.get(role_name);
     if (!role) {
         return make_ready_future<std::optional<record>>(std::nullopt);
     }
     return make_ready_future<std::optional<record>>(std::make_optional(record{
-        .name = std::move(name),
+        .name = sstring(role_name),
         .is_superuser = role->is_superuser,
         .can_login = role->can_login,
         .member_of = role->member_of
