@@ -440,20 +440,15 @@ future<std::optional<sstring>> standard_role_manager::get_attribute(std::string_
     co_return std::nullopt;
 }
 
-future<role_manager::attribute_vals> standard_role_manager::query_attribute_for_all (std::string_view attribute_name, ::service::query_state& qs) {
-    return query_all(qs).then([this, attribute_name, &qs] (role_set roles) {
-        return do_with(attribute_vals{}, [this, attribute_name, roles = std::move(roles), &qs] (attribute_vals &role_to_att_val) {
-            return parallel_for_each(roles.begin(), roles.end(), [this, &role_to_att_val, attribute_name, &qs] (sstring role) {
-                return get_attribute(role, attribute_name, qs).then([&role_to_att_val, role] (std::optional<sstring> att_val) {
-                    if (att_val) {
-                        role_to_att_val.emplace(std::move(role), std::move(*att_val));
-                    }
-                });
-            }).then([&role_to_att_val] () {
-                return make_ready_future<attribute_vals>(std::move(role_to_att_val));
-            });
-        });
+future<role_manager::attribute_vals> standard_role_manager::query_attribute_for_all(std::string_view attribute_name, ::service::query_state& qs) {
+    attribute_vals result;
+    _cache.for_each_role([&result, attribute_name] (const cache::role_name_t& name, const cache::role_record& record) {
+        auto it = record.attributes.find(attribute_name);
+        if (it != record.attributes.end()) {
+            result.emplace(name, it->second);
+        }
     });
+    co_return result;
 }
 
 future<> standard_role_manager::set_attribute(std::string_view role_name, std::string_view attribute_name, std::string_view attribute_value, ::service::group0_batch& mc) {
