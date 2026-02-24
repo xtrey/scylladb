@@ -15,6 +15,7 @@ from cassandra.protocol import InvalidRequest
 from cassandra.query import SimpleStatement, BoundStatement
 from test.pylib.tablets import get_all_tablet_replicas, get_tablet_replicas
 
+import asyncio
 import pytest
 import logging
 import time
@@ -759,3 +760,109 @@ async def test_forward_cql_exception_passthrough(manager: ManagerClient):
 
             await manager.api.message_injection(leader_host.address, "wait_before_handling_forwarded_request")
             await manager.api.message_injection(non_leader_replica_host.address, "wait_before_handling_forwarded_request")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_timed_out_queries(manager: ManagerClient):
+    """
+    A simple test verifying that we don't get stuck for an indefinite amount
+    of time while reading from or writing to a strongly consistent table.
+    As soon as the deadline for a query ends, the operation should be canceled\
+    and a time-out exception should be returned.
+
+    This test focuses on a Raft operation being the potential reason for
+    getting stuck. It should be aborted when we reach the deadline.
+    """
+
+    s1 = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+
+    async def try_query_with_timeout(exception_type, stmt: str, error_injection_name: str, timeout_sec: float):
+        await manager.api.enable_injection(s1.ip_addr, error_injection_name, one_shot=True)
+
+        mark = await log.mark()
+        request_timeout_ms = 100
+
+        stmt_fut = cql.run_async(f"{stmt} USING TIMEOUT {request_timeout_ms}ms")
+        await log.wait_for(error_injection_name, from_mark=mark)
+
+        sleep_length = timeout_sec + (request_timeout_ms / 1000)
+        await asyncio.sleep(sleep_length)
+
+        await manager.api.message_injection(s1.ip_addr, error_injection_name)
+
+        try:
+            await stmt_fut
+            return False
+        except Exception as e:
+            if isinstance(e, exception_type):
+                assert f"Query timed out for {table}" in str(e)
+                return True
+            pytest.fail(f"Unexpected exception: {e}")
+
+    async def try_query(exception_type, stmt: str, error_injection_name: str):
+        # We cannot predict if the relevant timer will be triggered in time.
+        # Even in not-really-extreme situations, it can take more time
+        # than we expect. To avoid flakiness, we're going to attempt to
+        # observe a timeout with an ever increasing margin of error.
+        #
+        # Most of the time, this will succeed during the first try,
+        # so it shouldn't have a relevant impact on the length of the test.
+        timeout_sec = 0.1
+        while True:
+            result = await try_query_with_timeout(exception_type, stmt, error_injection_name, timeout_sec)
+            if result:
+                break
+            if timeout_sec > 60:
+                pytest.fail("Reached the maximum number of attempts")
+            timeout_sec *= 2
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'global'") as ks:
+        async with new_test_table(manager, ks, "pk int PRIMARY KEY, v int") as table:
+            await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+
+
+            async def try_read(error_injection_name: str):
+                await try_query(ReadTimeout, f"SELECT * FROM {table} WHERE pk = 0", error_injection_name)
+
+            async def try_write(error_injection_name: str):
+                await try_query(WriteTimeout, f"INSERT INTO {table} (pk, v) VALUES (7, 23)", error_injection_name)
+
+            # Case 1: Reads.
+            read_error_injecitons = [
+                "sc_coordinator_wait_before_acquire_server",
+                "sc_coordinator_wait_before_query_read_barrier"
+            ]
+            for error_injection_name in read_error_injecitons:
+                await try_read(error_injection_name)
+
+            # Sanity check: Nothing broke and we can still read from the table.
+            res = await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+            assert res[0].v == 13
+
+            # Case 2: Writes.
+            write_error_injections = [
+                "sc_coordinator_wait_before_acquire_server",
+                "sc_coordinator_wait_before_begin_mutate",
+                "sc_coordinator_wait_before_add_entry"
+            ]
+            for error_injection_name in write_error_injections:
+                await try_write(error_injection_name)
+
+            # Sanity check: Nothing broke and we can still write to the table.
+            await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (17, 7)")
+
+    # Case 3: Waiting for the leader during a write.
+
+    # To trigger the timeout we want, we need to make sure that
+    # groups_manager::begin_mutate will want to return need_wait_for_leader,
+    # and that it will never succeed. This will do the job.
+    await manager.api.enable_injection(s1.ip_addr, "sc_leader_info_updater_wait_before_setting_leader_info", one_shot=True)
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'global'") as ks:
+        async with new_test_table(manager, ks, "pk int PRIMARY KEY, v int") as table:
+            with pytest.raises(WriteTimeout, match=f"Query timed out for {table}"):
+                await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (11, 13) USING TIMEOUT 100ms")
