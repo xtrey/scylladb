@@ -403,28 +403,11 @@ future<role_to_directly_granted_map> standard_role_manager::query_all_directly_g
 }
 
 future<role_set> standard_role_manager::query_all(::service::query_state& qs) {
-    const sstring query = seastar::format("SELECT {} FROM {}.{}",
-            meta::roles_table::role_col_name,
-            db::system_keyspace::NAME,
-            meta::roles_table::name);
-
-    // To avoid many copies of a view.
-    static const auto role_col_name_string = sstring(meta::roles_table::role_col_name);
-
-    const auto results = co_await _qp.execute_internal(
-            query,
-            db::consistency_level::LOCAL_ONE,
-            qs,
-            cql3::query_processor::cache_internal::yes);
-
     role_set roles;
-    std::transform(
-            results->begin(),
-            results->end(),
-            std::inserter(roles, roles.begin()),
-            [] (const cql3::untyped_result_set_row& row) {
-                return row.get_as<sstring>(role_col_name_string);}
-    );
+    roles.reserve(_cache.roles_count());
+    _cache.for_each_role([&roles] (const cache::role_name_t& name, const cache::role_record&) {
+        roles.insert(name);
+    });
     co_return roles;
 }
 
