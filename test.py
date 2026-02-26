@@ -281,11 +281,30 @@ def parse_cmd_line() -> argparse.Namespace:
                 ['taskset', '-c', args.cpus, 'python3', '-c',
                  'import os; print(len(os.sched_getaffinity(0)))']))
 
-        cpus_per_test_job = 1
+        # Calculate optimal number of jobs based on CPU and memory constraints
         sysmem = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
-        testmem = 6e9 if os.sysconf('SC_PAGE_SIZE') > 4096 else 2e9
-        default_num_jobs_mem = ((sysmem - 4e9) // testmem)
-        args.jobs = min(default_num_jobs_mem, nr_cpus // cpus_per_test_job)
+
+        # Adaptive memory per test: accounts for both test memory + system overhead
+        # For systems with abundant memory, use more aggressive allocation
+        # For memory-constrained systems, be more conservative
+        high_mem = sysmem > 100e9
+        reserved_mem = 8e9 if high_mem else 5e9
+        base_test_mem = 5e9 if high_mem else 2e9
+
+        # Calculate max jobs from memory constraint
+        available_mem = max(0, sysmem - reserved_mem)
+        default_num_jobs_mem = int(available_mem // base_test_mem)
+
+        # Also consider CPU constraint
+        cpus_per_test_job = 1.5
+        default_num_jobs_cpu = nr_cpus // cpus_per_test_job
+
+        # Use the more conservative of the two constraints
+        args.jobs = min(default_num_jobs_mem, default_num_jobs_cpu)
+
+        # Ensure at least 1 job, but cap at reasonable maximums
+        # to avoid overwhelming the system
+        args.jobs = max(1, min(args.jobs, nr_cpus))
 
     if not args.modes:
         try:
@@ -348,12 +367,24 @@ def run_pytest(options: argparse.Namespace) -> tuple[int, list[SimpleNamespace]]
         *[f'--mode={mode}' for mode in options.modes],
     ]
     if options.list_tests:
+        print(f'{options.jobs=}')
         args.extend(['--collect-only', '--quiet', '--no-header'])
     else:
         threads = int(options.jobs)
         # debug mode is very CPU and memory hungry, so we need to lower the number of threads to be able to finish tests
         if 'debug' in options.modes:
-            threads = int(threads * 0.5)
+            # Adaptive debug mode reduction based on core count:
+            # - Minimum hardware (16 cores), so we can be more aggressive
+            # - Large systems (32+ cores) can sustain higher parallelism in debug mode
+            # - Medium systems (16-31 cores) need moderate reduction
+            nr_cpus = multiprocessing.cpu_count()
+            if nr_cpus >= 32:
+                debug_factor = 0.7
+            elif nr_cpus >= 16:
+                debug_factor = 0.5
+            else:
+                debug_factor = 0.3
+            threads = max(1, int(threads * debug_factor))
         args.extend([
             "--log-level=DEBUG",  # Capture logs
             f'--junit-xml={junit_output_file}',
