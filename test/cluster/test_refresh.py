@@ -94,7 +94,7 @@ async def test_refresh_deletes_uploaded_sstables(manager: ManagerClient):
 
     topology = topo(rf = 1, nodes = 2, racks = 1, dcs = 1)
 
-    servers, host_ids = await create_cluster(topology, True, manager, logger)
+    servers, host_ids = await create_cluster(topology, manager, logger)
 
     cql = manager.get_cql()
 

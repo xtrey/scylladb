@@ -456,7 +456,8 @@ class topo:
         self.racks = racks
         self.dcs = dcs
 
-async def create_cluster(topology, rf_rack_valid_keyspaces, manager, logger, object_storage=None):
+async def create_cluster(topology, manager, logger, object_storage=None):
+    rf_rack_valid_keyspaces = (topology.rf <= topology.racks)
     logger.info(f'Start cluster with {topology.nodes} nodes in {topology.dcs} DCs, {topology.racks} racks, rf_rack_valid_keyspaces: {rf_rack_valid_keyspaces}')
 
     cfg = {'task_ttl_in_seconds': 300, 'rf_rack_valid_keyspaces': rf_rack_valid_keyspaces}
@@ -709,7 +710,7 @@ async def do_test_streaming_scopes(build_mode: str, manager: ManagerClient, topo
 
     topology, rf_rack_valid_keyspaces = topology_rf_validity
 
-    servers, host_ids = await create_cluster(topology, rf_rack_valid_keyspaces, manager, logger, sstables_storage.object_storage)
+    servers, host_ids = await create_cluster(topology, manager, logger, sstables_storage.object_storage)
 
     await manager.disable_tablet_balancing()
     cql = manager.get_cql()
@@ -878,7 +879,7 @@ async def test_restore_primary_replica_same_domain(manager: ManagerClient, objec
     ks = 'ks'
     cf = 'cf'
 
-    servers, host_ids = await create_cluster(topology, False, manager, logger, object_storage)
+    servers, host_ids = await create_cluster(topology, manager, logger, object_storage)
 
     await manager.disable_tablet_balancing()
     cql = manager.get_cql()
@@ -940,7 +941,7 @@ async def test_restore_primary_replica_different_domain(manager: ManagerClient, 
     ks = 'ks'
     cf = 'cf'
 
-    servers, host_ids = await create_cluster(topology, True if domain == 'rack' else False, manager, logger, object_storage)
+    servers, host_ids = await create_cluster(topology, manager, logger, object_storage)
 
     await manager.disable_tablet_balancing()
     cql = manager.get_cql()
