@@ -680,19 +680,19 @@ class SSTablesOnObjectStorage:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("topology_rf_validity", [
-        (topo(rf = 1, nodes = 3, racks = 1, dcs = 1), True),
-        (topo(rf = 3, nodes = 5, racks = 1, dcs = 1), False),
-        (topo(rf = 1, nodes = 4, racks = 2, dcs = 1), True),
-        (topo(rf = 3, nodes = 6, racks = 2, dcs = 1), False),
-        (topo(rf = 2, nodes = 8, racks = 4, dcs = 2), True)
+@pytest.mark.parametrize("topology", [
+        topo(rf = 1, nodes = 3, racks = 1, dcs = 1),
+        topo(rf = 3, nodes = 5, racks = 1, dcs = 1),
+        topo(rf = 1, nodes = 4, racks = 2, dcs = 1),
+        topo(rf = 3, nodes = 6, racks = 2, dcs = 1),
+        topo(rf = 2, nodes = 8, racks = 4, dcs = 2)
     ])
-async def test_restore_with_streaming_scopes(build_mode: str, manager: ManagerClient, object_storage, topology_rf_validity):
+async def test_restore_with_streaming_scopes(build_mode: str, manager: ManagerClient, object_storage, topology):
     '''Check that restoring of a cluster with stream scopes works'''
-    await do_test_streaming_scopes(build_mode, manager, topology_rf_validity, SSTablesOnObjectStorage(object_storage))
+    await do_test_streaming_scopes(build_mode, manager, topology, SSTablesOnObjectStorage(object_storage))
 
 
-async def do_test_streaming_scopes(build_mode: str, manager: ManagerClient, topology_rf_validity, sstables_storage):
+async def do_test_streaming_scopes(build_mode: str, manager: ManagerClient, topology, sstables_storage):
     '''
     This test creates a cluster specified by the topology parameter above,
     configurable number of nodes, tacks, datacenters, and replication factor.
@@ -707,8 +707,6 @@ async def do_test_streaming_scopes(build_mode: str, manager: ManagerClient, topo
     2) Check that the streaming communication between nodes is as expected according to the scope parameter of the test.
     This stage parses the logs and checks that the data was streamed to nodes within the configured scope.
     '''
-
-    topology, rf_rack_valid_keyspaces = topology_rf_validity
 
     servers, host_ids = await create_cluster(topology, manager, logger, sstables_storage.object_storage)
 
