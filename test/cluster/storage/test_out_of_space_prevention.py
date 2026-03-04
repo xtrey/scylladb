@@ -43,6 +43,17 @@ class random_content_file:
         os.unlink(self.filename)
 
 
+async def validate_data_existence(cql, successful_hosts: list[Host], failed_hosts: list[Host], cf: str, pk: int) -> None:
+    """Validate data existence on specific hosts using MUTATION_FRAGMENTS to ensure truly local reads."""
+    stmt = SimpleStatement(f"SELECT * from MUTATION_FRAGMENTS({cf}) where pk = {pk};", consistency_level=ConsistencyLevel.ONE)
+    for host in successful_hosts:
+        res = await cql.run_async(stmt, host=host)
+        assert res, f"Data not found on {host}"
+    for host in failed_hosts:
+        res = await cql.run_async(stmt, host=host)
+        assert not res, f"Data found on {host} but it shouldn't be there"
+
+
 CRITICAL_DISK_UTILIZATION_LEVEL = 0.5
 # Target disk fill ratio used in tests to push the node above the critical
 # utilization level.
@@ -60,15 +71,6 @@ global_cmdline = ["--disk-space-monitor-normal-polling-interval-in-seconds", "1"
 
 @pytest.mark.asyncio
 async def test_user_writes_rejection(manager: ManagerClient, volumes_factory: Callable) -> None:
-    async def validate_data_existence(cql, successful_hosts: list[Host], failed_hosts: list[Host], cf: str, pk: int) -> None:
-        stmt = SimpleStatement(f"SELECT * from MUTATION_FRAGMENTS({cf}) where pk = {pk};", consistency_level=ConsistencyLevel.ONE)
-        for host in successful_hosts:
-            res = await cql.run_async(stmt, host=host)
-            assert res, f"Data not found on {host}"
-        for host in failed_hosts:
-            res = await cql.run_async(stmt, host=host)
-            assert not res, f"Data found on {host} but it shouldn't be there"
-
     async with space_limited_servers(manager, volumes_factory, ["20M"]*3, cmdline=global_cmdline) as servers:
         cql, hosts = await manager.get_ready_cql(servers)
 
