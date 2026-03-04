@@ -954,9 +954,20 @@ size_t storage_group::to_idx(locator::tablet_range_side side) const {
     return size_t(side);
 }
 
-compaction_group_ptr& storage_group::select_compaction_group(locator::tablet_range_side side) noexcept {
+compaction_group_ptr& storage_group::select_compaction_group(dht::token token, const locator::tablet_map& tmap) noexcept {
     if (splitting_mode()) {
-        return _split_ready_groups[to_idx(side)];
+        return _split_ready_groups[to_idx(tmap.get_tablet_range_side(token))];
+    }
+    return _main_cg;
+}
+
+compaction_group_ptr& storage_group::select_compaction_group(dht::token first, dht::token last, const locator::tablet_map& tmap) noexcept {
+    if (splitting_mode()) {
+        auto first_side = tmap.get_tablet_range_side(first);
+        auto last_side = tmap.get_tablet_range_side(last);
+        if (first_side == last_side) {
+            return _split_ready_groups[to_idx(first_side)];
+        }
     }
     return _main_cg;
 }

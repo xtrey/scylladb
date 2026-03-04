@@ -312,7 +312,14 @@ public:
 
     const compaction_group_ptr& main_compaction_group() const noexcept;
     const std::vector<compaction_group_ptr>& split_ready_compaction_groups() const;
-    compaction_group_ptr& select_compaction_group(locator::tablet_range_side) noexcept;
+    // Selects the compaction group for the given token. Computes the range side
+    // from the token only when in splitting mode. This avoids the cost of computing
+    // range side on the hot path when it's not needed.
+    compaction_group_ptr& select_compaction_group(dht::token, const locator::tablet_map&) noexcept;
+    // Selects the compaction group for an sstable spanning a token range.
+    // If the first and last tokens fall on different sides of the split point,
+    // the sstable belongs to the main compaction group.
+    compaction_group_ptr& select_compaction_group(dht::token first, dht::token last, const locator::tablet_map&) noexcept;
 
     uint64_t live_disk_space_used() const;
 
