@@ -650,7 +650,6 @@ async def test_sstables_incrementally_released_during_streaming(manager: Manager
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="Currently load-and-stream doesn't is not handled by the out of space prevention mechanism")
 @pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
 async def test_load_and_stream_rejected_on_critical_disk(manager: ManagerClient, volumes_factory: Callable) -> None:
     """
@@ -743,7 +742,12 @@ async def test_load_and_stream_rejected_on_critical_disk(manager: ManagerClient,
                 # Pausing earlier (e.g. before writer creation) would not work because there are no files on disk
                 # to fill up, while pausing later (e.g. after consuming fragments) would be too late to reliably
                 # reach critical disk utilization level.
-                await manager.api.enable_injection(servers[0].ip_addr, "write_components_writer_created", one_shot=True)
+                # Scope the injection to the test's keyspace/table so unrelated sstable
+                # writes (e.g. system tables) don't trip the pause. The injection is not
+                # one-shot because unrelated writes would otherwise consume it first;
+                # it is disabled after the test table's writer has been released.
+                await manager.api.enable_injection(servers[0].ip_addr, "write_components_writer_created",
+                                                   one_shot=False, parameters={"ks_name": ks, "cf_name": table})
 
                 logger.info("Execute load-and-stream (nodetool refresh --load-and-stream) on the target node")
                 load_and_stream_task = asyncio.create_task(
@@ -762,9 +766,12 @@ async def test_load_and_stream_rejected_on_critical_disk(manager: ManagerClient,
                 filler_size = int(disk_info.total * DISK_FILL_TARGET_RATIO) - disk_info.used
                 with random_content_file(workdir_target, filler_size):
                     mark, _ = await log.wait_for("Reached the critical disk utilization level", from_mark=mark)
+                    for _ in range(2):
+                        mark, _ = await log.wait_for("database - Set critical disk utilization mode: true", from_mark=mark)
 
                     logger.info("Release the paused writer — fragments will be consumed and rejected")
                     await manager.api.message_injection(servers[0].ip_addr, "write_components_writer_created")
+                    await manager.api.disable_injection(servers[0].ip_addr, "write_components_writer_created")
 
                     with pytest.raises(Exception, match="Failed to load new sstables"):
                         await load_and_stream_task
