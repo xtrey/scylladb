@@ -611,6 +611,10 @@ public:
     /// Returns tablet_id of a tablet which owns a given token.
     tablet_id get_tablet_id(token) const;
 
+    // Returns the side of the tablet's range that a given token belongs to.
+    // Less expensive than get_tablet_id_and_range_side() when tablet_id is already known.
+    tablet_range_side get_tablet_range_side(token) const;
+
     // Returns tablet_id and also the side of the tablet's range that a given token belongs to.
     std::pair<tablet_id, tablet_range_side> get_tablet_id_and_range_side(token) const;
 

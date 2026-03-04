@@ -531,6 +531,11 @@ tablet_id tablet_map::get_tablet_id(token t) const {
     return tablet_id(dht::compaction_group_of(_log2_tablets, t));
 }
 
+tablet_range_side tablet_map::get_tablet_range_side(token t) const {
+    auto id_after_split = dht::compaction_group_of(_log2_tablets + 1, t);
+    return tablet_range_side(id_after_split & 0x1);
+}
+
 std::pair<tablet_id, tablet_range_side> tablet_map::get_tablet_id_and_range_side(token t) const {
     auto id_after_split = dht::compaction_group_of(_log2_tablets + 1, t);
     auto current_id = id_after_split >> 1;
