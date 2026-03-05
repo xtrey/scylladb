@@ -4649,6 +4649,7 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
     auto& stats = handler_ptr->stats();
     auto& handler = *handler_ptr;
     auto& global_stats = handler._proxy->_global_stats;
+    auto schema = handler_ptr->get_schema();
 
     if (handler.get_targets().size() == 0) {
         // Usually we remove the response handler when receiving responses from all targets.
@@ -4744,7 +4745,7 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
         }
 
         // Waited on indirectly.
-        (void)f.handle_exception([response_id, forward_size, coordinator, handler_ptr, p = shared_from_this(), &stats] (std::exception_ptr eptr) {
+        (void)f.handle_exception([response_id, forward_size, coordinator, handler_ptr, p = shared_from_this(), &stats, schema] (std::exception_ptr eptr) {
             ++stats.writes_errors.get_ep_stat(handler_ptr->_effective_replication_map_ptr->get_topology(), coordinator);
             error err = error::FAILURE;
             std::optional<sstring> msg;
@@ -4758,8 +4759,8 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
                 // ignore, disconnect will be logged by gossiper
             } else if (const auto* e = try_catch_nested<seastar::gate_closed_exception>(eptr)) {
                 // may happen during shutdown, log and ignore it
-                slogger.warn("gate_closed_exception during mutation write to {}: {}",
-                    coordinator, e->what());
+                slogger.warn("gate_closed_exception during mutation write to {}.{} on {}: {}",
+                    schema->ks_name(), schema->cf_name(), coordinator, e->what());
             } else if (try_catch<timed_out_error>(eptr)) {
                 // from lmutate(). Ignore so that logs are not flooded
                 // database total_writes_timedout counter was incremented.
@@ -4770,7 +4771,8 @@ void storage_proxy::send_to_live_endpoints(storage_proxy::response_id_type respo
             } else if (auto* e = try_catch<replica::critical_disk_utilization_exception>(eptr)) {
                 msg = e->what();
             } else {
-                slogger.error("exception during mutation write to {}: {}", coordinator, eptr);
+                slogger.error("exception during mutation write to {}.{} on {}: {}",
+                    schema->ks_name(), schema->cf_name(), coordinator, eptr);
             }
             p->got_failure_response(response_id, coordinator, forward_size + 1, std::nullopt, err, std::move(msg));
         });
