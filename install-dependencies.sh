@@ -46,6 +46,7 @@ debian_base_packages=(
     python3-pytest-timeout
     python3-pytest-sugar
     python3-pexpect
+    fio
     libsnappy-dev
     libjsoncpp-dev
     rapidjson-dev
