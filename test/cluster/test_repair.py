@@ -312,7 +312,7 @@ async def test_repair_timtestamp_difference(manager):
         other_nodes = [n for n in nodes if n != node]
 
         for other_node in other_nodes:
-            await manager.api.enable_injection(other_node.ip_addr, "database_apply", False, {})
+            await manager.api.enable_injection(other_node.ip_addr, "database_apply", False, parameters={"ks_name": "ks", "cf_name": "tbl", "what": "throw"})
 
         query = f"UPDATE ks.tbl USING TIMESTAMP {timestamp} SET v = '{v}' WHERE pk = {pk} AND ck = {ck}"
         manager.get_cql().execute(SimpleStatement(query, consistency_level=ConsistencyLevel.ONE))
