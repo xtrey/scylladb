@@ -469,18 +469,6 @@ def test_get_records_nonexistent_iterator(dynamodbstreams):
 # not allowed (see test_streams_change_type), and while removing and re-adding
 # a stream is possible, it is very slow. So we create four different fixtures
 # with the four different StreamViewType settings for these four fixtures.
-#
-# It turns out that DynamoDB makes reusing the same table in different tests
-# very difficult, because when we request a "LATEST" iterator we sometimes
-# miss the immediately following write (this issue doesn't happen in
-# ALternator, just in DynamoDB - presumably LATEST adds some time slack?)
-# So all the fixtures we create below have scope="function", meaning that a
-# separate table is created for each of the tests using these fixtures. This
-# slows the tests down a bit, but not by much (about 0.05 seconds per test).
-# It is still worthwhile to use a fixture rather than to create a table
-# explicitly - it is convenient, safe (the table gets deleted automatically)
-# and if in the future we can work around the DynamoDB problem, we can return
-# these fixtures to module scope.
 
 @contextmanager
 def create_table_ss(dynamodb, dynamodbstreams, type):
@@ -524,43 +512,43 @@ def create_table_s_no_ck(dynamodb, dynamodbstreams, type):
     yield table, arn
     table.delete()
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_sss_new_and_old_images_lsi(dynamodb, dynamodbstreams):
     yield from create_table_sss_lsi(dynamodb, dynamodbstreams, 'NEW_AND_OLD_IMAGES')
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_keys_only(dynamodb, dynamodbstreams):
     with create_table_ss(dynamodb, dynamodbstreams, 'KEYS_ONLY') as stream:
         yield stream
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_new_image(dynamodb, dynamodbstreams):
     with create_table_ss(dynamodb, dynamodbstreams, 'NEW_IMAGE') as stream:
         yield stream
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_old_image(dynamodb, dynamodbstreams):
     with create_table_ss(dynamodb, dynamodbstreams, 'OLD_IMAGE') as stream:
         yield stream
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_new_and_old_images(dynamodb, dynamodbstreams):
     with create_table_ss(dynamodb, dynamodbstreams, 'NEW_AND_OLD_IMAGES') as stream:
         yield stream
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_s_no_ck_keys_only(dynamodb, dynamodbstreams):
     yield from create_table_s_no_ck(dynamodb, dynamodbstreams, 'KEYS_ONLY')
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_s_no_ck_new_image(dynamodb, dynamodbstreams):
     yield from create_table_s_no_ck(dynamodb, dynamodbstreams, 'NEW_IMAGE')
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_s_no_ck_old_image(dynamodb, dynamodbstreams):
     yield from create_table_s_no_ck(dynamodb, dynamodbstreams, 'OLD_IMAGE')
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_s_no_ck_new_and_old_images(dynamodb, dynamodbstreams):
     yield from create_table_s_no_ck(dynamodb, dynamodbstreams, 'NEW_AND_OLD_IMAGES')
 
@@ -626,13 +614,30 @@ def list_shards(dynamodbstreams, arn):
 
 # Utility function for getting shard iterators starting at "LATEST" for
 # all the shards of the given stream arn.
+# On DynamoDB (but not Alternator), LATEST has a time slack: it may point to
+# a position slightly before the true end of the stream, so writes from a
+# previous test that reused the same table can appear to be "in the future"
+# relative to the returned iterators and therefore show up unexpectedly in
+# the current test's reads.  To work around this we drain any already-pending
+# records from the iterators before returning them, so the caller is
+# guaranteed to see only events written *after* this call returns.
 def latest_iterators(dynamodbstreams, arn):
     iterators = []
     for shard_id in list_shards(dynamodbstreams, arn):
         iterators.append(dynamodbstreams.get_shard_iterator(StreamArn=arn,
             ShardId=shard_id, ShardIteratorType='LATEST')['ShardIterator'])
     assert len(set(iterators)) == len(iterators)
-    return iterators
+    # Drain any records that are already visible at the LATEST position.
+    # We keep fetching until no more records are returned, which means that
+    # the stream is caught up. This drain loop is not necessary on Alternator,
+    # and needlessly slows the test down.
+    if not dynamodbstreams._endpoint.host.endswith('.amazonaws.com'):
+        return iterators
+    while True:
+        events = []
+        iterators = fetch_more(dynamodbstreams, iterators, events)
+        if events == []:
+            return iterators
 
 # Similar to latest_iterators(), just also returns the shard id which produced
 # each iterator.
@@ -641,7 +646,16 @@ def shards_and_latest_iterators(dynamodbstreams, arn):
     for shard_id in list_shards(dynamodbstreams, arn):
         shards_and_iterators.append((shard_id, dynamodbstreams.get_shard_iterator(StreamArn=arn,
             ShardId=shard_id, ShardIteratorType='LATEST')['ShardIterator']))
-    return shards_and_iterators
+    # Drain pre-existing records from the iterators, for the same reason as
+    # explained in latest_iterators() above.
+    if not dynamodbstreams._endpoint.host.endswith('.amazonaws.com'):
+        return shards_and_iterators
+    while True:
+        events = []
+        new_iters = fetch_more(dynamodbstreams, [it for _, it in shards_and_iterators], events)
+        shards_and_iterators = list(zip([sh for sh, _ in shards_and_iterators], new_iters))
+        if events == []:
+            return shards_and_iterators
 
 # Utility function for fetching more content from the stream (given its
 # array of iterators) into an "output" array. Call repeatedly to get more
@@ -958,7 +972,7 @@ def test_streams_updateitem_old_image_empty_item(test_table_ss_old_image, dynamo
 # columns they are only included in the preimage if they change.
 # Currently fails in Alternator because the item's key is missing in
 # OldImage (#6935) and the LSI key is also missing (#7030).
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_old_image_and_lsi(dynamodb, dynamodbstreams):
     table = create_test_table(dynamodb,
         Tags=TAGS,
