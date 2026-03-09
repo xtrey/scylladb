@@ -806,9 +806,11 @@ def fetch_and_compare_events(dynamodb, dynamodbstreams, iterators, expected_even
 # function "updatefunc" which is supposed to do some updates to the table
 # and also return an expected_events list. do_test() then fetches the streams
 # data and compares it to the expected_events using compare_events().
-def do_test(test_table_ss_stream, dynamodb, dynamodbstreams, updatefunc, mode, p = random_string(), c = random_string()):
+def do_test(test_table_ss_stream, dynamodb, dynamodbstreams, updatefunc, mode):
     table, arn = test_table_ss_stream
     iterators = latest_iterators(dynamodbstreams, arn)
+    p = random_string()
+    c = random_string()
     expected_events = updatefunc(table, p, c)
     fetch_and_compare_events(dynamodb, dynamodbstreams, iterators, expected_events, mode)
 
