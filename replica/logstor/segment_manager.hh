@@ -22,6 +22,9 @@
 
 namespace replica::logstor {
 
+class compaction_manager;
+class segment_set;
+
 static constexpr size_t default_segment_size = 128 * 1024;
 static constexpr size_t default_file_size = 32 * 1024 * 1024;
 
@@ -41,16 +44,30 @@ struct segment_manager_config {
 };
 
 struct table_segment_histogram_bucket {
-    size_t bucket;
     size_t count;
-    size_t min_data_size;
     size_t max_data_size;
+
+    table_segment_histogram_bucket& operator+=(table_segment_histogram_bucket& other) {
+        count += other.count;
+        max_data_size = std::max(max_data_size, other.max_data_size);
+        return *this;
+    }
 };
 
 struct table_segment_stats {
     size_t compaction_group_count{0};
     size_t segment_count{0};
     std::vector<table_segment_histogram_bucket> histogram;
+
+    table_segment_stats& operator+=(table_segment_stats& other) {
+        compaction_group_count += other.compaction_group_count;
+        segment_count += other.segment_count;
+        histogram.resize(std::max(histogram.size(), other.histogram.size()));
+        for (size_t i = 0; i < other.histogram.size(); i++) {
+            histogram[i] += other.histogram[i];
+        }
+        return *this;
+    }
 };
 
 class segment_manager_impl;
@@ -82,25 +99,19 @@ public:
     future<> for_each_record(const std::vector<log_segment_id>& segments,
                             std::function<future<>(log_location, log_record)> callback);
 
-    void enable_auto_compaction();
-    void enable_auto_compaction(table_id);
+    compaction_manager& get_compaction_manager() noexcept;
+    const compaction_manager& get_compaction_manager() const noexcept;
 
-    future<> disable_auto_compaction();
-    future<> disable_auto_compaction(table_id);
-
-    future<> trigger_compaction(bool major = false);
+    void set_trigger_compaction_hook(std::function<void()> fn);
+    void set_trigger_separator_flush_hook(std::function<void()> fn);
 
     size_t get_segment_size() const noexcept;
 
-    // After the barrier, all previous writes will be written in a non-mixed segment according
-    // to their group_id.
-    future<> do_barrier();
-
-    future<> truncate_table(table_id);
-
-    future<table_segment_stats> get_table_segment_stats(table_id) const;
+    future<> discard_segments(segment_set&);
 
     size_t get_memory_usage() const;
+
+    future<> await_pending_writes();
 
     friend class segment_manager_impl;
 

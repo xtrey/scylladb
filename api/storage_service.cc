@@ -848,10 +848,10 @@ rest_logstor_compaction(http_context& ctx, std::unique_ptr<http::request> req) {
 
 static
 future<json::json_return_type>
-rest_logstor_barrier(http_context& ctx, std::unique_ptr<http::request> req) {
-        apilog.info("logstor_barrier");
+rest_logstor_flush(http_context& ctx, std::unique_ptr<http::request> req) {
+        apilog.info("logstor_flush");
         auto& db = ctx.db;
-        co_await replica::database::trigger_logstor_barrier_on_all_shards(db);
+        co_await replica::database::flush_logstor_separator_on_all_shards(db);
         co_return json_void();
 }
 
@@ -1595,36 +1595,16 @@ rest_logstor_info(http_context& ctx, std::unique_ptr<http::request> req) {
         auto tid = validate_table(ctx.db.local(), keyspace, table);
 
         auto& cf = ctx.db.local().find_column_family(tid);
-        if (!cf.uses_kv_storage()) {
+        if (!cf.uses_logstor()) {
             throw bad_param_exception(fmt::format("Table {}.{} does not use logstor", keyspace, table));
         }
 
         return do_with(replica::logstor::table_segment_stats{}, [keyspace = std::move(keyspace), table = std::move(table), tid, &ctx] (replica::logstor::table_segment_stats& merged_stats) {
             return ctx.db.map_reduce([&merged_stats](replica::logstor::table_segment_stats&& shard_stats) {
-                merged_stats.compaction_group_count += shard_stats.compaction_group_count;
-                merged_stats.segment_count += shard_stats.segment_count;
-
-                for (auto& bucket : shard_stats.histogram) {
-                    auto bucket_it = std::find_if(merged_stats.histogram.begin(), merged_stats.histogram.end(), [&bucket] (const replica::logstor::table_segment_histogram_bucket& existing) {
-                        return existing.bucket == bucket.bucket;
-                    });
-
-                    if (bucket_it == merged_stats.histogram.end()) {
-                        merged_stats.histogram.push_back(std::move(bucket));
-                        continue;
-                    }
-
-                    bucket_it->count += bucket.count;
-                    bucket_it->min_data_size = std::min(bucket_it->min_data_size, bucket.min_data_size);
-                    bucket_it->max_data_size = std::max(bucket_it->max_data_size, bucket.max_data_size);
-                }
+                merged_stats += shard_stats;
             }, [tid](const replica::database& db) {
                 return db.get_logstor_table_segment_stats(tid);
             }).then([&merged_stats, keyspace = std::move(keyspace), table = std::move(table)] {
-                std::ranges::sort(merged_stats.histogram, [] (const replica::logstor::table_segment_histogram_bucket& left, const replica::logstor::table_segment_histogram_bucket& right) {
-                    return left.bucket < right.bucket;
-                });
-
                 ss::table_logstor_info result;
                 result.keyspace = keyspace;
                 result.table = table;
@@ -1633,9 +1613,7 @@ rest_logstor_info(http_context& ctx, std::unique_ptr<http::request> req) {
 
                 for (const auto& bucket : merged_stats.histogram) {
                     ss::logstor_hist_bucket hist;
-                    hist.bucket = bucket.bucket;
                     hist.count = bucket.count;
-                    hist.min_data_size = bucket.min_data_size;
                     hist.max_data_size = bucket.max_data_size;
                     result.data_size_histogram.push(std::move(hist));
                 }
@@ -1893,7 +1871,7 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
     ss::force_keyspace_flush.set(r, rest_bind(rest_force_keyspace_flush, ctx));
     ss::decommission.set(r, rest_bind(rest_decommission, ss, ssc));
     ss::logstor_compaction.set(r, rest_bind(rest_logstor_compaction, ctx));
-    ss::logstor_barrier.set(r, rest_bind(rest_logstor_barrier, ctx));
+    ss::logstor_flush.set(r, rest_bind(rest_logstor_flush, ctx));
     ss::move.set(r, rest_bind(rest_move, ss));
     ss::remove_node.set(r, rest_bind(rest_remove_node, ss));
     ss::exclude_node.set(r, rest_bind(rest_exclude_node, ss));
@@ -1974,7 +1952,7 @@ void unset_storage_service(http_context& ctx, routes& r) {
     ss::force_flush.unset(r);
     ss::force_keyspace_flush.unset(r);
     ss::logstor_compaction.unset(r);
-    ss::logstor_barrier.unset(r);
+    ss::logstor_flush.unset(r);
     ss::decommission.unset(r);
     ss::move.unset(r);
     ss::remove_node.unset(r);

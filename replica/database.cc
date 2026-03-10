@@ -933,6 +933,14 @@ database::init_logstor() {
     _logstor = std::make_unique<logstor::logstor>(std::move(cfg));
     co_await _logstor->start();
 
+    _logstor->set_trigger_compaction_hook([this] {
+        trigger_logstor_compaction(false);
+    });
+
+    _logstor->set_trigger_separator_flush_hook([this] {
+        (void)flush_logstor_separator();
+    });
+
     _dirty_memory_threshold_controller.arm_periodic(std::chrono::seconds(5));
 
     dblog.info("logstor initialized");
@@ -2868,31 +2876,28 @@ future<> database::trigger_logstor_compaction_on_all_shards(sharded<database>& s
     });
 }
 
-future<> database::trigger_logstor_compaction(bool major) {
-    if (_logstor) {
-        return _logstor->trigger_compaction(major);
-    }
-    return make_ready_future<>();
-}
-
-future<> database::trigger_logstor_barrier_on_all_shards(sharded<database>& sharded_db) {
-    return sharded_db.invoke_on_all([] (replica::database& db) {
-        return db.trigger_logstor_barrier();
+void database::trigger_logstor_compaction(bool major) {
+    _tables_metadata.for_each_table([&] (table_id id, const lw_shared_ptr<table> tp) {
+        if (tp->uses_logstor()) {
+            tp->trigger_logstor_compaction();
+        }
     });
 }
 
-future<> database::trigger_logstor_barrier() {
-    if (_logstor) {
-        return _logstor->do_barrier();
-    }
-    return make_ready_future<>();
+future<> database::flush_logstor_separator_on_all_shards(sharded<database>& sharded_db) {
+    return sharded_db.invoke_on_all([] (replica::database& db) {
+        return db.flush_logstor_separator();
+    });
+}
+
+future<> database::flush_logstor_separator() {
+    return _tables_metadata.parallel_for_each_table([] (table_id, lw_shared_ptr<table> table) {
+        return table->flush_separator();
+    });
 }
 
 future<logstor::table_segment_stats> database::get_logstor_table_segment_stats(table_id table) const {
-    if (!_logstor) {
-        return make_ready_future<logstor::table_segment_stats>(logstor::table_segment_stats{});
-    }
-    return _logstor->get_table_segment_stats(table);
+    return find_column_family(table).get_logstor_segment_stats();
 }
 
 future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, table_id uuid, sstring tag, db::snapshot_options opts) {
@@ -3015,6 +3020,7 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, s
         co_await coroutine::parallel_for_each(views, [&] (lw_shared_ptr<replica::table> v) -> future<> {
             co_await flush_or_clear(*v);
         });
+        co_await cf.flush_separator();
         // Since writes could be appended to active memtable between getting low_mark above
         // and flush, the low_mark has to be adjusted to account for those writes, where
         // memtable was flushed with a higher replay position than the one obtained above.
@@ -3056,9 +3062,7 @@ future<> database::truncate(db::system_keyspace& sys_ks, column_family& cf, std:
     dblog.debug("Discarding sstable data for truncated CF + indexes");
     // TODO: notify truncation
 
-    if (cf.uses_kv_storage()) {
-        co_await cf.discard_kv_storage();
-    }
+    co_await cf.discard_logstor_segments();
 
     db::replay_position rp = co_await cf.discard_sstables(truncated_at);
     // TODO: indexes.

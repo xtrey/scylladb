@@ -12,6 +12,7 @@
 #include <optional>
 #include <seastar/core/scheduling.hh>
 #include "readers/mutation_reader.hh"
+#include "replica/compaction_group.hh"
 #include "types.hh"
 #include "index.hh"
 #include "segment_manager.hh"
@@ -20,6 +21,9 @@
 #include "dht/decorated_key.hh"
 
 namespace replica {
+
+class compaction_group;
+
 namespace logstor {
 
 extern seastar::logger logstor_logger;
@@ -48,25 +52,17 @@ public:
     static void init_crypto();
     static void free_crypto();
 
-    void enable_auto_compaction();
-    void enable_auto_compaction(table_id);
-
-    future<> disable_auto_compaction();
-    future<> disable_auto_compaction(table_id);
-
-    future<> trigger_compaction(bool major = false);
-
-    future<> do_barrier();
-
-    future<> truncate_table(table_id);
-
-    future<table_segment_stats> get_table_segment_stats(table_id) const;
-
     size_t get_memory_usage() const;
+
+    segment_manager& get_segment_manager() noexcept;
+    const segment_manager& get_segment_manager() const noexcept;
+
+    compaction_manager& get_compaction_manager() noexcept;
+    const compaction_manager& get_compaction_manager() const noexcept;
 
     static index_key calculate_key(const schema&, const dht::decorated_key&);
 
-    future<> write(const mutation&, group_id);
+    future<> write(compaction_group&, const mutation&, seastar::gate::holder cg_holder);
 
     future<std::optional<log_record>> read(index_key);
 
@@ -79,6 +75,8 @@ public:
                                        const query::partition_slice& slice,
                                        tracing::trace_state_ptr trace_state = nullptr);
 
+    void set_trigger_compaction_hook(std::function<void()> fn);
+    void set_trigger_separator_flush_hook(std::function<void()> fn);
 };
 
 } // namespace logstor
