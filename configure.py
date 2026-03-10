@@ -2218,6 +2218,12 @@ def configure_seastar(build_dir, mode, mode_config, compiler_cache=None):
     if mode_config['build_seastar_shared_libs']:
         seastar_cmake_args += ['-DBUILD_SHARED_LIBS=ON']
 
+    # The coverage mode uses cmake_build_type='Debug', which by default enables sanitizers
+    # in Seastar. Since coverage mode doesn't link against sanitizer runtime libraries,
+    # we must explicitly disable them to avoid linker errors for __asan_* / __ubsan_* symbols.
+    if '-DSANITIZE' not in mode_config['cxxflags']:
+        seastar_cmake_args += ['-DSeastar_SANITIZE=OFF']
+
     cmake_args = seastar_cmake_args[:]
     seastar_cmd = ['cmake', '-G', 'Ninja', real_relpath(args.seastar_path, seastar_build_dir)] + cmake_args
     cmake_dir = seastar_build_dir
