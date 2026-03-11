@@ -975,8 +975,8 @@ async def test_restore_primary_replica_different_domain(manager: ManagerClient, 
     logger.info(f'Validate streaming directions')
     for i, s in enumerate(servers):
         log = await manager.server_open_log(s.server_id)
-        res = await log.grep(r'INFO.*sstables_loader - load_and_stream:.*target_node=([0-9a-z-]+),.*num_bytes_sent=([0-9]+)')
-        streamed_to = set([ r[1].group(1) for r in res ])
+        res = await log.grep(r'INFO.*sstables_loader - load_and_stream: ops_uuid=([0-9a-z-]+).*target_node=([0-9a-z-]+),.*num_bytes_sent=([0-9]+)')
+        streamed_to = set([ r[1].group(2) for r in res ])
         logger.info(f'{s.ip_addr} {host_ids[s.server_id]} streamed to {streamed_to}')
         assert len(streamed_to) == 2
 
