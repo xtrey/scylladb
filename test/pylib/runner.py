@@ -265,8 +265,8 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
     if not is_xdist_worker: # If this is not an xdist worker there is no separate xdist main process and no pytest_main.log file
         if session.testsfailed == 0 and not session.config.getoption("--save-log-on-success"):
-            # Use missing_ok=True because logging.basicConfig only creates the file
-            # on first use, so it may never have been written if nothing was logged.
+            # Use missing_ok=True because the log file is only created on first write,
+            # so it may never have been written if nothing was logged.
             pathlib.Path(_pytest_config.stash[PYTEST_LOG_FILE]).unlink(missing_ok=True)
 
     # Check if this is an xdist worker - workers should not clean up (only the main process should)
@@ -294,11 +294,6 @@ def pytest_configure(config: pytest.Config) -> None:
     # If this is an xdist worker, set up logging to a separate file for this worker. Otherwise, set up logging for the main process.
     if worker_id is not None:
         _pytest_config.stash[PYTEST_LOG_FILE] = f"{pytest_log_dir}/pytest_{worker_id}_{HOST_ID}.log"
-        logging.basicConfig(
-            format=config.getini("log_file_format"),
-            filename=_pytest_config.stash[PYTEST_LOG_FILE],
-            level=config.getini("log_file_level"),
-        )
     else:
         # For the main process, we want to clean up old logs before the run, so we create the log directory and remove any existing log files.
         pytest_log_dir.mkdir(parents=True, exist_ok=True)
@@ -307,11 +302,20 @@ def pytest_configure(config: pytest.Config) -> None:
                 file.unlink()
 
         _pytest_config.stash[PYTEST_LOG_FILE] = f"{pytest_log_dir}/pytest_main_{HOST_ID}.log"
-        logging.basicConfig(
-            format=config.getini("log_file_format"),
-            filename=_pytest_config.stash[PYTEST_LOG_FILE],
-            level=config.getini("log_file_level"),
-        )
+
+    # Explicitly configure the root logger to write exclusively to a file.
+    # logging.basicConfig() is a no-op when the root logger already has handlers
+    # (e.g. added by pytest or any early import), which would leave a StreamHandler
+    # in place and cause all log records — including noisy third-party DEBUG messages
+    # like urllib3.connectionpool or asyncio — to appear on the terminal.
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        handler.close()
+    file_handler = logging.FileHandler(_pytest_config.stash[PYTEST_LOG_FILE])
+    file_handler.setFormatter(logging.Formatter(config.getini("log_file_format")))
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(config.getini("log_file_level"))
 
     if config.getoption("--exe-url") and config.getoption("--exe-path"):
         raise RuntimeError("Can't use --exe-url and exe-path simultaneously.")
