@@ -1610,7 +1610,16 @@ future<> apply_resize_plan(token_metadata& tm, const migration_plan& plan) {
 static
 future<group0_guard> save_token_metadata(cql_test_env& e, group0_guard guard) {
     auto& stm = e.local_db().get_shared_token_metadata();
-    co_await save_tablet_metadata(e.local_db(), stm.get()->tablets(), guard.write_timestamp());
+    auto tm = stm.get();
+
+    e.get_topology_state_machine().local()._topology.version = tm->get_version();
+
+    co_await save_tablet_metadata(e.local_db(), tm->tablets(), guard.write_timestamp());
+    utils::chunked_vector<frozen_mutation> muts;
+    muts.push_back(freeze(topology_mutation_builder(guard.write_timestamp())
+                                  .set_version(tm->get_version())
+                                  .build().to_mutation(db::system_keyspace::topology())));
+    co_await e.local_db().apply(muts, db::no_timeout);
     co_await e.get_storage_service().local().update_tablet_metadata({});
 
     // Need a new guard to make sure later changes use later timestamp.
@@ -1640,6 +1649,7 @@ future<> handle_resize_finalize(cql_test_env& e, group0_guard& guard, const migr
         co_await stm.mutate_token_metadata([table_id, &new_tmap, &changed] (token_metadata& tm) {
             changed = true;
             tm.tablets().set_tablet_map(table_id, std::move(new_tmap));
+            tm.set_version(tm.get_version() + 1);
             return make_ready_future<>();
         });
     }
@@ -1655,6 +1665,11 @@ future<> handle_resize_finalize(cql_test_env& e, group0_guard& guard, const migr
                 load_stats->stats = *reconciled_stats;
             }
         }
+
+        testlog.debug("Calling local_topology_barrier()");
+        old_tm = nullptr;
+        co_await e.get_storage_service().local().local_topology_barrier();
+        testlog.debug("Finished local_topology_barrier()");
     }
 }
 

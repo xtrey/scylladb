@@ -764,6 +764,11 @@ public:
     }
 };
 
+struct background_merge_guard {
+    compaction::compaction_reenabler compaction_guard;
+    locator::effective_replication_map_ptr erm_guard;
+};
+
 class tablet_storage_group_manager final : public storage_group_manager {
     replica::table& _t;
     locator::host_id _my_host_id;
@@ -784,7 +789,7 @@ class tablet_storage_group_manager final : public storage_group_manager {
     utils::phased_barrier _merge_fiber_barrier;
     std::optional<utils::phased_barrier::operation> _pending_merge_fiber_work;
     // Holds compaction reenabler which disables compaction temporarily during tablet merge
-    std::vector<compaction::compaction_reenabler> _compaction_reenablers_for_merging;
+    std::vector<background_merge_guard> _compaction_reenablers_for_merging;
 private:
     const schema_ptr& schema() const {
         return _t.schema();
@@ -3136,7 +3141,7 @@ void tablet_storage_group_manager::handle_tablet_merge_completion(locator::effec
         auto new_cg = make_lw_shared<compaction_group>(_t, new_tid, new_range, make_repair_sstable_classifier_func());
         for (auto& view : new_cg->all_views()) {
             auto cre = _t.get_compaction_manager().stop_and_disable_compaction_no_wait(*view, "tablet merging");
-            _compaction_reenablers_for_merging.push_back(std::move(cre));
+            _compaction_reenablers_for_merging.push_back(background_merge_guard{std::move(cre), old_erm});
         }
         auto new_sg = make_lw_shared<storage_group>(std::move(new_cg));
 
