@@ -717,3 +717,4 @@ extern template struct utils::config_file::named_value<std::vector<enum_option<d
 extern template struct utils::config_file::named_value<std::vector<db::error_injection_at_startup>>;
 extern template struct utils::config_file::named_value<std::vector<std::unordered_map<sstring, sstring>>>;
 extern template struct utils::config_file::named_value<std::unordered_map<sstring, seastar::log_level>>;
+extern template struct utils::config_file::named_value<std::vector<db::object_storage_endpoint_param>>;

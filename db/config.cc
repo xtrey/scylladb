@@ -1990,6 +1990,7 @@ template struct utils::config_file::named_value<std::vector<enum_option<db::cons
 template struct utils::config_file::named_value<std::vector<db::error_injection_at_startup>>;
 template struct utils::config_file::named_value<std::vector<std::unordered_map<sstring, sstring>>>;
 template struct utils::config_file::named_value<std::unordered_map<sstring, seastar::log_level>>;
+template struct utils::config_file::named_value<std::vector<db::object_storage_endpoint_param>>;
 
 namespace utils {
 

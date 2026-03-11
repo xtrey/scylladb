@@ -175,3 +175,5 @@ public:
         };
     }
 } cfg;
+
+template struct utils::config_file::named_value<encryption::encryption_config::string_string_map>;
