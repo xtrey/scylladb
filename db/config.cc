@@ -274,6 +274,34 @@ const config_type& config_type_for<std::vector<enum_option<db::consistency_level
 }
 
 template <>
+const config_type& config_type_for<enum_option<db::experimental_features_t>>() {
+    static config_type ct(
+        "experimental feature", printable_to_json<enum_option<db::experimental_features_t>>);
+    return ct;
+}
+
+template <>
+const config_type& config_type_for<enum_option<db::replication_strategy_restriction_t>>() {
+    static config_type ct(
+        "replication strategy", printable_to_json<enum_option<db::replication_strategy_restriction_t>>);
+    return ct;
+}
+
+template <>
+const config_type& config_type_for<enum_option<db::consistency_level_restriction_t>>() {
+    static config_type ct(
+        "consistency level", printable_to_json<enum_option<db::consistency_level_restriction_t>>);
+    return ct;
+}
+
+template <>
+const config_type& config_type_for<db::error_injection_at_startup>() {
+    static config_type ct(
+        "error injection", printable_to_json<db::error_injection_at_startup>);
+    return ct;
+}
+
+template <>
 const config_type& config_type_for<enum_option<db::tri_mode_restriction_t>>() {
     static config_type ct(
         "restriction mode", printable_to_json<enum_option<db::tri_mode_restriction_t>>);
@@ -1922,6 +1950,46 @@ std::unordered_map<sstring, db::tablets_mode_t::mode> db::tablets_mode_t::map() 
 }
 
 template struct utils::config_file::named_value<seastar::log_level>;
+
+// Explicit instantiation definitions for all named_value<T> specializations
+// declared extern in config_file.hh and config.hh.  This file is the only
+// translation unit that includes config_file_impl.hh (which contains the
+// full template bodies), so all the heavy boost / yaml-cpp machinery is
+// compiled exactly once here instead of in every TU that includes config.hh.
+
+// Primitive / standard types (extern-declared in utils/config_file.hh):
+template struct utils::config_file::named_value<bool>;
+template struct utils::config_file::named_value<uint16_t>;
+template struct utils::config_file::named_value<uint32_t>;
+template struct utils::config_file::named_value<uint64_t>;
+template struct utils::config_file::named_value<int32_t>;
+template struct utils::config_file::named_value<int64_t>;
+template struct utils::config_file::named_value<float>;
+template struct utils::config_file::named_value<double>;
+template struct utils::config_file::named_value<sstring>;
+template struct utils::config_file::named_value<std::string>;
+template struct utils::config_file::named_value<utils::config_file::string_map>;
+template struct utils::config_file::named_value<utils::config_file::string_list>;
+
+// db-specific types (extern-declared in db/config.hh):
+template struct utils::config_file::named_value<db::tri_mode_restriction>;
+template struct utils::config_file::named_value<db::seed_provider_type>;
+template struct utils::config_file::named_value<db::hints::host_filter>;
+template struct utils::config_file::named_value<utils::UUID>;
+template struct utils::config_file::named_value<db::error_injection_at_startup>;
+template struct utils::config_file::named_value<compression_parameters>;
+template struct utils::config_file::named_value<enum_option<db::experimental_features_t>>;
+template struct utils::config_file::named_value<enum_option<db::replication_strategy_restriction_t>>;
+template struct utils::config_file::named_value<enum_option<db::consistency_level_restriction_t>>;
+template struct utils::config_file::named_value<enum_option<db::tablets_mode_t>>;
+template struct utils::config_file::named_value<enum_option<netw::dict_training_loop::when>>;
+template struct utils::config_file::named_value<netw::advanced_rpc_compressor::tracker::algo_config>;
+template struct utils::config_file::named_value<std::vector<enum_option<db::experimental_features_t>>>;
+template struct utils::config_file::named_value<std::vector<enum_option<db::replication_strategy_restriction_t>>>;
+template struct utils::config_file::named_value<std::vector<enum_option<db::consistency_level_restriction_t>>>;
+template struct utils::config_file::named_value<std::vector<db::error_injection_at_startup>>;
+template struct utils::config_file::named_value<std::vector<std::unordered_map<sstring, sstring>>>;
+template struct utils::config_file::named_value<std::unordered_map<sstring, seastar::log_level>>;
 
 namespace utils {
 

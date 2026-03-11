@@ -336,5 +336,24 @@ const config_file::named_value<T>& operator||(const config_file::named_value<T>&
 
 extern template struct config_file::named_value<seastar::log_level>;
 
+// Explicit instantiation declarations for the most common named_value<T>
+// specializations. The definitions are in db/config.cc (which is the only
+// TU that includes config_file_impl.hh and therefore has the full template
+// bodies). This avoids re-compiling the heavy boost::program_options /
+// boost::lexical_cast / yaml-cpp machinery in every TU that includes
+// config.hh.
+extern template struct config_file::named_value<bool>;
+extern template struct config_file::named_value<uint16_t>;
+extern template struct config_file::named_value<uint32_t>;
+extern template struct config_file::named_value<uint64_t>;
+extern template struct config_file::named_value<int32_t>;
+extern template struct config_file::named_value<int64_t>;
+extern template struct config_file::named_value<float>;
+extern template struct config_file::named_value<double>;
+extern template struct config_file::named_value<sstring>;
+extern template struct config_file::named_value<std::string>;
+extern template struct config_file::named_value<config_file::string_map>;
+extern template struct config_file::named_value<config_file::string_list>;
+
 }
 
