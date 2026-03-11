@@ -894,10 +894,12 @@ async def test_restore_primary_replica(manager: ManagerClient, object_storage, d
         scope = domain
         expected_replicas = 2
     else:
-        racks = 2 if domain == 'rack' else 1
-        rf = 2 if domain == 'rack' else 1
-        topology = topo(rf = rf, nodes = 2, racks = racks, dcs = dcs)
-        scope = "dc" if domain == 'rack' else "all"
+        if domain == 'rack':
+            topology = topo(rf = 2, nodes = 2, racks = 2, dcs = dcs)
+            scope = "dc"
+        else:
+            topology = topo(rf = 1, nodes = 2, racks = 1, dcs = dcs)
+            scope = "all"
         expected_replicas = 1
 
     ks = 'ks'
