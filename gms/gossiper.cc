@@ -59,7 +59,6 @@ using clk = gossiper::clk;
 static logging::logger logger("gossip");
 
 constexpr std::chrono::milliseconds gossiper::INTERVAL;
-constexpr std::chrono::hours gossiper::A_VERY_LONG_TIME;
 constexpr generation_type::value_type gossiper::MAX_GENERATION_DIFFERENCE;
 
 const sstring& gossiper::get_cluster_name() const noexcept {
@@ -1248,7 +1247,6 @@ future<> gossiper::evict_from_membership(locator::host_id hid, permit_id pid) {
         }
         g._endpoint_state_map.erase(hid);
     });
-    _expire_time_endpoint_map.erase(hid);
     logger.debug("evicting {} from gossip", hid);
 }
 
@@ -1321,21 +1319,6 @@ future<> gossiper::replicate(endpoint_state es, permit_id pid) {
     }
 }
 
-future<> gossiper::advertise_token_removed(locator::host_id host_id, permit_id pid) {
-    auto permit = co_await lock_endpoint(host_id, pid);
-    pid = permit.id();
-    auto eps = get_endpoint_state(host_id);
-    eps.update_timestamp(); // make sure we don't evict it too soon
-    eps.get_heart_beat_state().force_newer_generation_unsafe();
-    auto expire_time = compute_expire_time();
-    eps.add_application_state(application_state::STATUS, versioned_value::removed_nonlocal(host_id, expire_time.time_since_epoch().count()));
-    logger.info("Completing removal of {}", host_id);
-    add_expire_time_for_endpoint(host_id, expire_time);
-    co_await replicate(std::move(eps), pid);
-    // ensure at least one gossip round occurs before returning
-    co_await sleep_abortable(INTERVAL * 2, _abort_source);
-}
-
 future<> gossiper::assassinate_endpoint(sstring address) {
     throw std::runtime_error("Assassinating endpoint is not supported in topology over raft mode");
 }
@@ -1381,17 +1364,6 @@ future<> gossiper::do_gossip_to_unreachable_member(gossip_digest_syn message) {
         }
     }
     return make_ready_future<>();
-}
-
-clk::time_point gossiper::get_expire_time_for_endpoint(locator::host_id id) const noexcept {
-    /* default expire_time is A_VERY_LONG_TIME */
-    auto it = _expire_time_endpoint_map.find(id);
-    if (it == _expire_time_endpoint_map.end()) {
-        return compute_expire_time();
-    } else {
-        auto stored_time = it->second;
-        return stored_time;
-    }
 }
 
 endpoint_state_ptr gossiper::get_endpoint_state_ptr(locator::host_id ep) const noexcept {
@@ -1649,7 +1621,6 @@ future<> gossiper::real_mark_alive(locator::host_id host_id) {
         auto [it_, inserted] = data.live.insert(addr);
         was_live = !inserted;
     });
-    _expire_time_endpoint_map.erase(host_id);
     if (was_live) {
         co_return;
     }
@@ -2239,19 +2210,6 @@ future<> gossiper::stop() {
 
 bool gossiper::is_enabled() const {
     return _enabled && !_abort_source.abort_requested();
-}
-
-void gossiper::add_expire_time_for_endpoint(locator::host_id endpoint, clk::time_point expire_time) {
-    auto now_ = now();
-    auto diff = std::chrono::duration_cast<std::chrono::seconds>(expire_time - now_).count();
-    logger.info("Node {} will be removed from gossip at [{:%Y-%m-%d %T %z}]: (expire = {}, now = {}, diff = {} seconds)",
-            endpoint, fmt::gmtime(clk::to_time_t(expire_time)), expire_time.time_since_epoch().count(),
-            now_.time_since_epoch().count(), diff);
-    _expire_time_endpoint_map[endpoint] = expire_time;
-}
-
-clk::time_point gossiper::compute_expire_time() {
-    return now() + A_VERY_LONG_TIME;
 }
 
 bool gossiper::is_alive(locator::host_id id) const {

@@ -209,7 +209,6 @@ public:
         versioned_value::STATUS_UNKNOWN,
     };
     static constexpr std::chrono::milliseconds INTERVAL{1000};
-    static constexpr std::chrono::hours A_VERY_LONG_TIME{24 * 3};
 
     // Maximum difference between remote generation value and generation
     // value this node would get if this node were restarted that we are
@@ -241,7 +240,6 @@ private:
     /* initial seeds for joining the cluster */
     std::set<inet_address> _seeds;
 
-    std::map<locator::host_id, clk::time_point> _expire_time_endpoint_map;
 
     bool _in_shadow_round = false;
 
@@ -341,13 +339,6 @@ private:
     utils::chunked_vector<gossip_digest> make_random_gossip_digest() const;
 
 public:
-    /**
-     * Handles switching the endpoint's state from REMOVING_TOKEN to REMOVED_TOKEN
-     *
-     * @param endpoint
-     * @param host_id
-     */
-    future<> advertise_token_removed(locator::host_id host_id, permit_id);
 
     /**
      * Do not call this method unless you know what you are doing.
@@ -383,7 +374,6 @@ private:
     future<> do_gossip_to_unreachable_member(gossip_digest_syn message);
 
 public:
-    clk::time_point get_expire_time_for_endpoint(locator::host_id endpoint) const noexcept;
 
     // Gets a shared pointer to the endpoint_state, if exists.
     // Otherwise, returns a null ptr.
@@ -588,10 +578,6 @@ public:
 public:
     bool is_enabled() const;
 
-public:
-    void add_expire_time_for_endpoint(locator::host_id endpoint, clk::time_point expire_time);
-
-    static clk::time_point compute_expire_time();
 public:
     bool is_seed(const inet_address& endpoint) const;
     bool is_shutdown(const locator::host_id& endpoint) const;

@@ -127,9 +127,6 @@ public:
         return versioned_value(make_full_token_string(tokens));
     }
 
-    static versioned_value removed_nonlocal(const locator::host_id& host_id, int64_t expire_time) {
-        return versioned_value(sstring(REMOVED_TOKEN) + sstring(DELIMITER) + host_id.to_sstring() + sstring(DELIMITER) + to_sstring(expire_time));
-    }
 
     static versioned_value shutdown(bool value) {
         return versioned_value(sstring(SHUTDOWN) + sstring(DELIMITER) + (value ? "true" : "false"));
