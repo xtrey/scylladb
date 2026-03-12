@@ -265,7 +265,10 @@ future<shared_ptr<cql_transport::messages::result_message>> batch_statement::do_
     if (guardrail_state == query_processor::write_consistency_guardrail_state::FAIL) {
         return make_exception_future<shared_ptr<cql_transport::messages::result_message>>(
                 exceptions::invalid_request_exception(
-                        format("Consistency level {} is not allowed for write operations", cl)));
+                        format("Write consistency level {} is forbidden by the current configuration "
+                               "setting of write_consistency_levels_disallowed. Please use a different "
+                               "consistency level, or remove {} from write_consistency_levels_disallowed "
+                               "set in the configuration.", cl, cl)));
     }
 
     for (size_t i = 0; i < _statements.size(); ++i) {
@@ -277,7 +280,8 @@ future<shared_ptr<cql_transport::messages::result_message>> batch_statement::do_
         _stats.statements_in_cas_batches += _statements.size();
         return execute_with_conditions(qp, options, query_state).then([guardrail_state, cl] (auto result) {
             if (guardrail_state == query_processor::write_consistency_guardrail_state::WARN) {
-                result->add_warning(format("Write with consistency level {} is warned by guardrail configuration", cl));
+                result->add_warning(format("Using write consistency level {} listed on the "
+                                           "write_consistency_levels_warned is not recommended.", cl));
             }
             return result;
         });
@@ -297,7 +301,8 @@ future<shared_ptr<cql_transport::messages::result_message>> batch_statement::do_
         }
         auto result = make_shared<cql_transport::messages::result_message::void_message>();
         if (guardrail_state == query_processor::write_consistency_guardrail_state::WARN) {
-            result->add_warning(format("Write with consistency level {} is warned by guardrail configuration", cl));
+            result->add_warning(format("Using write consistency level {} listed on the "
+                                       "write_consistency_levels_warned is not recommended.", cl));
         }
         return make_ready_future<shared_ptr<cql_transport::messages::result_message>>(std::move(result));
     });
