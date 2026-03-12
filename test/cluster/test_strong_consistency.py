@@ -4,11 +4,13 @@
 # SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
 #
 
+from typing import Tuple
+
 from test.pylib.manager_client import ManagerClient
-from test.pylib.util import gather_safely, wait_for
+from test.pylib.util import gather_safely, wait_for, Host
 from test.cluster.util import new_test_keyspace, new_test_table, reconnect_driver
 from test.pylib.internal_types import HostID, ServerInfo
-from cassandra import ReadTimeout, WriteTimeout
+from cassandra import InvalidRequest, ReadTimeout, WriteTimeout
 from cassandra.cluster import ConsistencyLevel
 from cassandra.policies import FallthroughRetryPolicy
 from cassandra.protocol import InvalidRequest
@@ -940,3 +942,216 @@ async def test_queries_while_dropping_table(manager: ManagerClient):
         # no exception thrown, so the write will still look like a success.
         # And that's the desired behavior.
         await write_fut
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_queries_when_shutting_down(manager: ManagerClient):
+    """
+    A simple test verifying that pending reads and writes are canceled
+    when the node starts shutting down.
+
+    The potential cause of the hanging we're testing here comes from being
+    stuck at a Raft operation when reading from strongly consistent table.
+    """
+
+    smp = 2
+    config = DEFAULT_CONFIG | {"request_timeout_on_shutdown_in_seconds": 1}
+    cmdline = DEFAULT_CMDLINE + [
+        f"--smp={smp}",
+        "--logger-log-level", "cql_server=debug",
+        "--logger-log-level", "sc_coordinator=trace"
+    ]
+
+    servers = await manager.servers_add(3, config=config, cmdline=cmdline, auto_rack_dc="dc1")
+    cql, hosts = await manager.get_ready_cql(servers)
+
+    async def pick_leader_info(host_id: HostID) -> Tuple[Host, ServerInfo]:
+        for host, server in zip(hosts, servers):
+            srv_host_id = await manager.get_host_id(server.server_id)
+            if srv_host_id == host_id:
+                return (host, server)
+        raise RuntimeError(f"Can't find host for host_id {host_id}")
+
+    async def get_leader(keyspace: str, table: str) -> Tuple[Host, ServerInfo]:
+        logger.info("Select raft group id for the tablet")
+        group_id = await get_table_raft_group_id(manager, keyspace, table)
+
+        logger.info(f"Get current leader for the group {group_id}")
+        leader_host_id = await wait_for_leader(manager, servers[0], group_id)
+
+        logger.info(f"Leader of group {group_id} is {leader_host_id}")
+
+        leader_host, leader_info = await pick_leader_info(leader_host_id)
+        logger.info(f"Further information on leader of group {group_id}: server_id={leader_info.server_id}, ip={leader_info.ip_addr}")
+
+        return (leader_host, leader_info)
+
+    prevent_read_injection = "sc_coordinator_wait_before_query_read_barrier"
+    prevent_write_injection = "sc_coordinator_wait_before_add_entry"
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 1} AND consistency = 'global'") as ks:
+        async with new_test_table(manager, ks, "pk int PRIMARY KEY, v int") as table:
+            _, table_name = table.split(".")
+            leader_host, leader_info = await get_leader(ks, table_name)
+
+            log = await manager.server_open_log(leader_info.server_id)
+            mark = await log.mark()
+
+            await asyncio.gather(*[
+                asyncio.create_task(manager.api.enable_injection(leader_info.ip_addr, prevent_read_injection, one_shot=True)),
+                asyncio.create_task(manager.api.enable_injection(leader_info.ip_addr, prevent_write_injection, one_shot=True))
+            ])
+
+            read_fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0", host=leader_host)
+            write_fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)", host=leader_host)
+
+            await asyncio.gather(*[
+                asyncio.create_task(log.wait_for(prevent_read_injection, from_mark=mark)),
+                asyncio.create_task(log.wait_for(prevent_write_injection, from_mark=mark))
+            ])
+
+            mark = await log.mark()
+            stop_fut = asyncio.create_task(manager.server_stop_gracefully(leader_info.server_id))
+            
+            delta = 0.1
+            timeout = 60
+
+            # We don't know which shard coordiantes the request,
+            # so we need to wait for all of them
+            while delta < timeout:
+                matches = await log.grep(r"generic_server::shutdown completed", from_mark=mark)
+                if len(matches) >= smp:
+                    break
+                logger.debug(f"Grepped matches={matches}")
+                await asyncio.sleep(delta)
+                delta *= 2
+            if delta >= timeout:
+                pytest.fail("Exceeded timeout")
+
+            mark = await log.mark()
+
+            await asyncio.gather(*[
+                asyncio.create_task(manager.api.message_injection(leader_info.ip_addr, prevent_read_injection)),
+                asyncio.create_task(manager.api.message_injection(leader_info.ip_addr, prevent_write_injection))
+            ])
+
+            await asyncio.gather(*[
+                asyncio.create_task(log.wait_for(rf"mutate\(\): request timed out with error .*, table {table}", from_mark=mark)),
+                asyncio.create_task(log.wait_for(rf"query\(\): request timed out with error .*, table {table}", from_mark=mark))
+            ])
+
+            # We cannot predict what the result of the query is going to be.
+            # Technically, we could ensure either outcome, but it requires
+            # playing with more error injections. We don't really care about
+            # the result (the test just wants to make sure we stop the node
+            # fast enough), so let's just log it and call it a day.
+            try:
+                await read_fut
+                logger.debug("The read ended successfully")
+            except Exception as e:
+                logger.debug(f"The read ended in an exception: {e}")
+                pass
+            try:
+                await write_fut
+                logger.debug("The write ended successfully")
+            except Exception as e:
+                logger.debug(f"The write ended in an exception: {e}")
+                pass
+
+            await stop_fut
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_abort_forwarded_write_upon_shutdown(manager: ManagerClient):
+    """
+    Test verifying that forwarded writes to strongly consistent tables are
+    aborted upon the shutdown of the target replica.
+    """
+
+    smp = 2
+    config = DEFAULT_CONFIG | {"request_timeout_on_shutdown_in_seconds": 1}
+    cmdline = DEFAULT_CMDLINE + [
+        f"--smp={smp}",
+        "--logger-log-level", "cql_server=debug",
+        "--logger-log-level", "sc_coordinator=trace"
+    ]
+
+    servers = await manager.servers_add(3, config=config, cmdline=cmdline, auto_rack_dc="dc1")
+    cql, hosts = await manager.get_ready_cql(servers)
+
+    async def pick_leader_info(host_id: HostID) -> Tuple[Host, ServerInfo]:
+        for host, server in zip(hosts, servers):
+            srv_host_id = await manager.get_host_id(server.server_id)
+            if srv_host_id == host_id:
+                return (host, server)
+        raise RuntimeError(f"Can't find host for host_id {host_id}")
+
+    async def get_leader(keyspace: str, table: str) -> Tuple[Host, ServerInfo]:
+        logger.info("Select raft group id for the tablet")
+        group_id = await get_table_raft_group_id(manager, keyspace, table)
+
+        logger.info(f"Get current leader for the group {group_id}")
+        leader_host_id = await wait_for_leader(manager, servers[0], group_id)
+
+        logger.info(f"Leader of group {group_id} is {leader_host_id}")
+
+        leader_host, leader_info = await pick_leader_info(leader_host_id)
+        logger.info(f"Further information on leader of group {group_id}: server_id={leader_info.server_id}, ip={leader_info.ip_addr}")
+
+        return (leader_host, leader_info)
+
+    prevent_write_injection = "sc_coordinator_wait_before_add_entry"
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 1} AND consistency = 'global'") as ks:
+        async with new_test_table(manager, ks, "pk int PRIMARY KEY, v int") as table:
+            _, table_name = table.split(".")
+            leader_host, leader_info = await get_leader(ks, table_name)
+
+            nonleader_host, nonleader_info = next((host, server) for host, server in zip(hosts, servers) if host != leader_host)
+            logger.debug(f"Targetting host={nonleader_host}: server_id={nonleader_info.server_id}, ip={nonleader_info.ip_addr}")
+
+            log = await manager.server_open_log(leader_info.server_id)
+            mark = await log.mark()
+
+            await manager.api.enable_injection(leader_info.ip_addr, prevent_write_injection, one_shot=True)
+
+            # Send the mutation to a NON-leader.
+            write_fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)", host=nonleader_host)
+
+            await log.wait_for(prevent_write_injection, from_mark=mark)
+            mark = await log.mark()
+
+            stop_fut = asyncio.create_task(manager.server_stop_gracefully(leader_info.server_id))
+
+            delta = 0.1
+            timeout = 60
+
+            # We don't know which shard coordiantes the request,
+            # so we need to wait for all of them
+            while delta < timeout:
+                matches = await log.grep(r"generic_server::shutdown completed", from_mark=mark)
+                if len(matches) >= smp:
+                    break
+                logger.debug(f"Grepped matches={matches}")
+                await asyncio.sleep(delta)
+                delta *= 2
+            if delta >= timeout:
+                pytest.fail("Exceeded timeout")
+
+            mark = await log.mark()
+
+            await manager.api.message_injection(leader_info.ip_addr, prevent_write_injection)
+            await log.wait_for(rf"mutate\(\): request timed out with error .*, table {table}")
+
+            # It doesn't matter what the outcome is, but let's await the future
+            # (as we should) and log the result.
+            try:
+                await write_fut
+                logger.debug("The write ended successfully")
+            except Exception as e:
+                logger.debug(f"The write ended in an exception: {e}")
+                pass
+
+            await stop_fut

@@ -66,7 +66,7 @@ future<shared_ptr<result_message>> modification_statement::execute_without_check
                     raw_cql_statement, muts.size()));
             }
             return std::move(*muts.begin());
-        }, timeout);
+        }, timeout, qs.get_client_state().get_abort_source());
 
     using namespace service::strong_consistency;
     if (const auto* redirect = get_if<need_redirect>(&mutate_result)) {
