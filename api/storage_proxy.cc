@@ -123,12 +123,13 @@ static future<json::json_return_type>  sum_estimated_histogram(sharded<service::
     });
 }
 
-static future<json::json_return_type>  sum_estimated_histogram(sharded<service::storage_proxy>& proxy, utils::estimated_histogram service::storage_proxy_stats::stats::*f) {
+static future<json::json_return_type>  sum_estimated_histogram(sharded<service::storage_proxy>& proxy, service::storage_proxy_stats::cas_contention_histogram service::storage_proxy_stats::stats::*f) {
 
-    return two_dimensional_map_reduce(proxy, f, utils::estimated_histogram_merge,
-            utils::estimated_histogram()).then([](const utils::estimated_histogram& val) {
+    return two_dimensional_map_reduce(proxy, f, utils::estimated_histogram_with_max_merge<service::storage_proxy_stats::cas_contention_histogram::MAX>,
+            service::storage_proxy_stats::cas_contention_histogram()).then([](const service::storage_proxy_stats::cas_contention_histogram& val) {
         utils_json::estimated_histogram res;
-        res = val;
+        res.bucket_offsets = val.get_buckets_offsets();
+        res.buckets = val.get_buckets_counts();
         return make_ready_future<json::json_return_type>(res);
     });
 }

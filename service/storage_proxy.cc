@@ -3137,11 +3137,11 @@ void storage_proxy_stats::stats::register_stats() {
 
         sm::make_histogram("cas_read_contention", sm::description("how many contended reads were encountered"),
                        {storage_proxy_stats::current_scheduling_group_label(), basic_level, cas_label},
-                       [this]{ return cas_read_contention.get_histogram(1, 8);}).set_skip_when_empty(),
+                       [this]{ return to_metrics_histogram(cas_read_contention);}).set_skip_when_empty(),
 
         sm::make_histogram("cas_write_contention", sm::description("how many contended writes were encountered"),
                        {storage_proxy_stats::current_scheduling_group_label(), basic_level, cas_label},
-                       [this]{ return cas_write_contention.get_histogram(1, 8);}).set_skip_when_empty(),
+                       [this]{ return to_metrics_histogram(cas_write_contention);}).set_skip_when_empty(),
 
         sm::make_total_operations("cas_prune", cas_prune,
                        sm::description("how many times paxos prune was done after successful cas operation"),
