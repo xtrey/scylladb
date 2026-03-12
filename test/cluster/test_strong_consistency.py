@@ -866,3 +866,77 @@ async def test_timed_out_queries(manager: ManagerClient):
         async with new_test_table(manager, ks, "pk int PRIMARY KEY, v int") as table:
             with pytest.raises(WriteTimeout, match=f"Query timed out for {table}"):
                 await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (11, 13) USING TIMEOUT 100ms")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
+async def test_queries_while_dropping_table(manager: ManagerClient):
+    """
+    A simple test that verifies that ongoing reads and writes are not interrupted
+    by a tablet migration. We simulate the process by dropping a table.
+
+    We verify that:
+    - New reads and writes are rejected with a proper error.
+    - Ongoing reads and writes are not interrupted by a tablet migration
+      (which boils down to successful executions of Raft methods).
+    - Ongoing reads can still eventually observe that the table has
+      been dropped.
+    - Ongoing writes should also finish successfully if they've reached
+      the strongly consistent coordinator.
+    """
+
+    s1 = await manager.server_add(config=DEFAULT_CONFIG, cmdline=DEFAULT_CMDLINE)
+    cql, _ = await manager.get_ready_cql([s1])
+
+    log = await manager.server_open_log(s1.server_id)
+    mark = await log.mark()
+
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1} AND tablets = {'initial': 1} AND consistency = 'global'") as ks:
+        table_name = "my_table"
+        table = f"{ks}.{table_name}"
+
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+        await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 13)")
+
+        await gather_safely(*[
+            manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier", one_shot=True),
+            manager.api.enable_injection(s1.ip_addr, "sc_coordinator_wait_before_add_entry", one_shot=True)
+        ])
+
+        read_fut = cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+        write_fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (7, 17)")
+
+        await asyncio.gather(*[
+            asyncio.create_task(log.wait_for("sc_coordinator_wait_before_query_read_barrier", from_mark=mark)),
+            asyncio.create_task(log.wait_for("sc_coordinator_wait_before_add_entry", from_mark=mark))
+        ])
+
+        mark = await log.mark()
+
+        await cql.run_async(f"DROP TABLE {table}")
+
+        # Sanity check: The table was really dropped and we can no longer read or write to it.
+        with pytest.raises(InvalidRequest, match="unconfigured table"):
+            await cql.run_async(f"SELECT * FROM {table} WHERE pk = 0")
+        with pytest.raises(InvalidRequest, match="unconfigured table"):
+            await cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (13, 11)")
+
+        # Wait for the Raft group to be removed. This should happen almost immediately
+        # after dropping the table, but let's avoid any potential cause of flakiness.
+        await log.wait_for(r"schedule_raft_group_deletion\(\): group id \S+: starting", from_mark=mark)
+
+        await asyncio.gather(*[
+            asyncio.create_task(manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_query_read_barrier")),
+            asyncio.create_task(manager.api.message_injection(s1.ip_addr, "sc_coordinator_wait_before_add_entry"))
+        ])
+
+        # Make sure that the read noticed that the table had been dropped.
+        with pytest.raises(Exception, match="Can't find a column family"):
+            await read_fut
+        # The groups manager waits for all ongoing queries to finish before
+        # it aborts the Raft server. Thanks to this, the write will succeed.
+        # No matter if we get a `no_such_column_family` exception when later
+        # applying the mutation in the state machine or not, there will be
+        # no exception thrown, so the write will still look like a success.
+        # And that's the desired behavior.
+        await write_fut
