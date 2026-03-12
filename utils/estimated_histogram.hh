@@ -129,6 +129,7 @@ public:
     static constexpr size_t NUM_BUCKETS = NUM_EXP_RANGES * Precision + 1;
     static constexpr unsigned BASESHIFT = log2floor(SCALED_MIN);
     static constexpr uint64_t LOWER_BITS_MASK = Precision - 1;
+    static constexpr uint64_t MAX = Max;
 private:
     std::array<uint64_t, NUM_BUCKETS> _buckets;
     uint64_t _total_sum = 0;
@@ -338,6 +339,41 @@ public:
 
     uint64_t& operator[](size_t b) noexcept {
         return _buckets[b];
+    }
+
+    /**
+     * @brief returns the offsets of all the buckets in the histogram, excluding duplicate limits for integer values when Min < Precision
+     * This method is useful for getting the bucket offsets for display or testing purposes.
+     * but should be avoided in performance sensitive code since it iterates over all the buckets and calculates the offsets.
+     * @return  a vector of bucket offsets, in the same order as the buckets, excluding duplicate offsets for integer values when Min < Precision
+     */
+    std::vector<uint64_t> get_buckets_offsets() const {
+        std::vector<uint64_t> limits;
+        limits.reserve(NUM_BUCKETS);
+        for (size_t i = 0; i < NUM_BUCKETS; i++) {
+            if (i  > 0 && get_bucket_lower_limit(i) == get_bucket_lower_limit(i - 1)) {
+                continue;
+            }
+            limits.push_back(get_bucket_lower_limit(i));
+        }
+        return limits;
+    }
+    /**
+     * @brief returns the count of all the buckets in the histogram, with counts of buckets with duplicate limits for integer values when Min < Precision merged together
+     * This method is useful for getting the bucket counts for display or testing purposes, but should be avoided in performance sensitive code since it iterates over all the buckets and calculates the limits.
+     * @return a vector of bucket counts, in the same order as the limits returned by get_buckets_limits()
+     */
+    std::vector<uint64_t> get_buckets_counts() const {
+        std::vector<uint64_t> counts;
+        counts.reserve(NUM_BUCKETS);
+        for (size_t i = 0; i < NUM_BUCKETS; i++) {
+            if (i  > 0 && get_bucket_lower_limit(i) == get_bucket_lower_limit(i - 1)) {
+                counts.back() += get(i);
+            } else {
+                counts.push_back(get(i));
+            }
+        }
+        return counts;
     }
 };
 
