@@ -191,3 +191,86 @@ def test_config_replication_strategy_warn_list_roundtrips_quotes(cql):
     cql.execute("UPDATE system.config SET value = '[SimpleStrategy]' WHERE name = 'replication_strategy_warn_list'")
     # reproduces #
     cql.execute("UPDATE system.config SET value = '[\"SimpleStrategy\"]' WHERE name = 'replication_strategy_warn_list'")
+
+
+def test_rf_zero_always_allowed(cql, this_dc):
+    """Maximum RF guardrails fire correctly with high RF, but RF=0
+    (meaning 'do not replicate to this data center') must never trigger
+    any guardrail — even when both minimum and maximum thresholds are
+    active.  Also verifies metric increments and message formats for
+    maximum RF guardrails (docs/cql/guardrails.rst)."""
+    with ExitStack() as config_modifications:
+        config_modifications.enter_context(config_value_context(cql, 'minimum_replication_factor_warn_threshold', '3'))
+        config_modifications.enter_context(config_value_context(cql, 'minimum_replication_factor_fail_threshold', '2'))
+        config_modifications.enter_context(config_value_context(cql, 'maximum_replication_factor_warn_threshold', '5'))
+        config_modifications.enter_context(config_value_context(cql, 'maximum_replication_factor_fail_threshold', '7'))
+        config_modifications.enter_context(config_value_context(cql, 'replication_strategy_warn_list', ''))
+        dc = re.escape(this_dc)
+
+        # max RF warn: RF=6 > warn=5 but < fail=7
+        create_ks_and_assert_warnings_and_errors(cql, ks_opts('NetworkTopologyStrategy', 6, dc=this_dc, tablets=False),
+            metric_name='scylla_cql_maximum_replication_factor_warn_violations',
+            warnings=[MAXIMUM_RF_WARN_RE.format(dc=dc, rf=6, threshold=5)])
+
+        # max RF fail: RF=8 > fail=7
+        create_ks_and_assert_warnings_and_errors(cql, ks_opts('NetworkTopologyStrategy', 8, dc=this_dc, tablets=False),
+            metric_name='scylla_cql_maximum_replication_factor_fail_violations',
+            failures=[MAXIMUM_RF_FAIL_RE.format(dc=dc, rf=8, threshold=7)])
+
+        # RF=0 bypasses all guardrails.
+        create_ks_and_assert_warnings_and_errors(cql, ks_opts('NetworkTopologyStrategy', 0, dc=this_dc, tablets=True))
+
+
+def test_rf_threshold_minus_one_disables_check(cql, this_dc):
+    """Setting an RF threshold to -1 disables that guardrail entirely.
+    Verify that with all four thresholds set to -1, any RF value (low or
+    high) is accepted without warnings or errors."""
+    with ExitStack() as config_modifications:
+        config_modifications.enter_context(config_value_context(cql, 'minimum_replication_factor_warn_threshold', '-1'))
+        config_modifications.enter_context(config_value_context(cql, 'minimum_replication_factor_fail_threshold', '-1'))
+        config_modifications.enter_context(config_value_context(cql, 'maximum_replication_factor_warn_threshold', '-1'))
+        config_modifications.enter_context(config_value_context(cql, 'maximum_replication_factor_fail_threshold', '-1'))
+        config_modifications.enter_context(config_value_context(cql, 'replication_strategy_warn_list', ''))
+        # RF=1 — would normally trigger the default minimum_replication_factor_warn_threshold=3
+        create_ks_and_assert_warnings_and_errors(cql, ks_opts('NetworkTopologyStrategy', 1, dc=this_dc, tablets=True))
+        # RF=100 — would normally trigger maximum thresholds; disable tablets
+        # to avoid the rack count check.
+        create_ks_and_assert_warnings_and_errors(cql, ks_opts('NetworkTopologyStrategy', 100, dc=this_dc, tablets=False))
+
+
+def test_alter_keyspace_minimum_rf_warn(cql, this_dc):
+    with ExitStack() as config_modifications:
+        config_modifications.enter_context(config_value_context(cql, 'minimum_replication_factor_warn_threshold', '3'))
+        config_modifications.enter_context(config_value_context(cql, 'replication_strategy_warn_list', ''))
+        with new_test_keyspace(cql, ks_opts('NetworkTopologyStrategy', 3, dc=this_dc, tablets=False)) as ks:
+            response_future = cql.execute_async(f"ALTER KEYSPACE {ks}" + ks_opts('NetworkTopologyStrategy', 1, dc=this_dc))
+            response_future.result()
+            assert response_future.warnings is not None
+
+
+def test_alter_keyspace_minimum_rf_fail(cql, this_dc):
+    with ExitStack() as config_modifications:
+        config_modifications.enter_context(config_value_context(cql, 'minimum_replication_factor_fail_threshold', '3'))
+        config_modifications.enter_context(config_value_context(cql, 'replication_strategy_warn_list', ''))
+        with new_test_keyspace(cql, ks_opts('NetworkTopologyStrategy', 3, dc=this_dc, tablets=False)) as ks:
+            with pytest.raises(ConfigurationException):
+                cql.execute(f"ALTER KEYSPACE {ks}" + ks_opts('NetworkTopologyStrategy', 1, dc=this_dc))
+
+
+def test_alter_keyspace_maximum_rf_warn(cql, this_dc):
+    with ExitStack() as config_modifications:
+        config_modifications.enter_context(config_value_context(cql, 'maximum_replication_factor_warn_threshold', '2'))
+        config_modifications.enter_context(config_value_context(cql, 'replication_strategy_warn_list', ''))
+        with new_test_keyspace(cql, ks_opts('NetworkTopologyStrategy', 1, dc=this_dc, tablets=False)) as ks:
+            response_future = cql.execute_async(f"ALTER KEYSPACE {ks}" + ks_opts('NetworkTopologyStrategy', 3, dc=this_dc))
+            response_future.result()
+            assert response_future.warnings is not None
+
+
+def test_alter_keyspace_maximum_rf_fail(cql, this_dc):
+    with ExitStack() as config_modifications:
+        config_modifications.enter_context(config_value_context(cql, 'maximum_replication_factor_fail_threshold', '2'))
+        config_modifications.enter_context(config_value_context(cql, 'replication_strategy_warn_list', ''))
+        with new_test_keyspace(cql, ks_opts('NetworkTopologyStrategy', 1, dc=this_dc, tablets=False)) as ks:
+            with pytest.raises(ConfigurationException):
+                cql.execute(f"ALTER KEYSPACE {ks}" + ks_opts('NetworkTopologyStrategy', 3, dc=this_dc))

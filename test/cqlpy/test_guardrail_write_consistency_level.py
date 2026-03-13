@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
 
 import pytest
+import re
 from contextlib import ExitStack
 from cassandra import ConsistencyLevel, WriteFailure
 from cassandra.protocol import InvalidRequest
@@ -49,13 +50,18 @@ def check_warned(cql, query, cl=ConsistencyLevel.ONE, config_value=None):
         assert after_writes > before_writes
         assert after_warned > before_warned
         assert len(ret.response_future.warnings) > 0
+        cl_name = ConsistencyLevel.value_to_name[cl]
+        warning = "\n".join(ret.response_future.warnings)
+        assert re.search(f"{cl_name}.*write_consistency_levels_warned.*not recommended", warning)
 
 def check_disallowed(cql, query, cl=ConsistencyLevel.ONE, config_value=None):
-    with config_value_context(cql, "write_consistency_levels_disallowed", config_value or ConsistencyLevel.value_to_name[cl]):
+    cl_name = ConsistencyLevel.value_to_name[cl]
+    with config_value_context(cql, "write_consistency_levels_disallowed", config_value or cl_name):
         before_writes = get_metric(cql, WRITES_METRIC, cl)
         before_disallowed = get_metric(cql, DISALLOWED_METRIC)
 
-        with pytest.raises(InvalidRequest, match="(?i)not allowed"):
+        # Verify the error mentions the guardrail name and that the CL is forbidden.
+        with pytest.raises(InvalidRequest, match=f"{cl_name}.*forbidden.*write_consistency_levels_disallowed"):
             cql.execute(SimpleStatement(query, consistency_level=cl))
 
         after_writes = get_metric(cql, WRITES_METRIC, cl)
@@ -158,3 +164,4 @@ def test_write_cl_multiple_disallowed_levels(cql, test_table):
     check_disallowed(cql, query, cl=ConsistencyLevel.ALL, config_value=config)
     check_disallowed(cql, query, cl=ConsistencyLevel.ANY, config_value=config)
     check_no_warning(cql, query, cl=ConsistencyLevel.QUORUM, disallowed=config)
+
