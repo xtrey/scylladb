@@ -23,6 +23,10 @@ class row_tombstone;
 
 class collection_mutation;
 
+namespace ser {
+class collection_cell_view;
+}
+
 // An auxiliary struct used to (de)construct collection_mutations.
 // Unlike collection_mutation which is a serialized blob, this struct allows to inspect logical units of information
 // (tombstone and cells) inside the mutation easily.
@@ -129,6 +133,12 @@ public:
 collection_mutation merge(const abstract_type&, collection_mutation_view, collection_mutation_view);
 
 collection_mutation difference(const abstract_type&, collection_mutation_view, collection_mutation_view);
+
+// Transcode a collection from the IDL representation directly into the
+// collection_mutation serialization format, without using any intermediary representation.
+// Only the final collection-mutation blob is allocated, no intermediate allocations needed.
+// Safe to use in LSA, it won't produce garbage.
+collection_mutation read_from_collection_cell_view(const abstract_type&, const ser::collection_cell_view&);
 
 // Serializes the given collection of cells to a sequence of bytes ready to be sent over the CQL protocol.
 bytes_ostream serialize_for_cql(const abstract_type&, collection_mutation_view);

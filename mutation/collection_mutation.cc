@@ -7,12 +7,14 @@
  */
 
 #include "utils/assert.hh"
+#include "utils/on_internal_error.hh"
 #include "types/collection.hh"
 #include "types/user.hh"
 #include "types/concrete_types.hh"
 #include "mutation/mutation_partition.hh"
 #include "compaction/compaction_garbage_collector.hh"
 #include "combine.hh"
+#include "idl/mutation.dist.impl.hh"
 
 #include "collection_mutation.hh"
 
@@ -304,6 +306,65 @@ collection_mutation collection_mutation_description::serialize(const abstract_ty
 
 collection_mutation collection_mutation_view_description::serialize(const abstract_type& type) const {
     return serialize_collection_mutation<atomic_cell_adaptor>(type, tomb, std::ranges::subrange(cells.begin(), cells.end()));
+}
+
+namespace {
+
+struct serialized_cell_adaptor {
+    static size_t key_size(const ser::collection_element_view& v) {
+        return v.key().view().size_bytes();
+    }
+
+    static size_t value_size(const ser::collection_element_view& v) {
+        struct collection_cell_visitor {
+            size_t operator()(const ser::live_cell_view& lcv) const { return atomic_cell_type::live_serialized_size(lcv.value().view().size_bytes()); }
+            size_t operator()(const ser::expiring_cell_view& ecv) const { return atomic_cell_type::live_expiring_serialized_size(ecv.c().value().view().size_bytes()); }
+            size_t operator()(const ser::dead_cell_view& dcv) const { return atomic_cell_type::dead_serialized_size(); }
+            size_t operator()(const ser::counter_cell_view& ccv) const { utils::on_internal_error("Trying to deserialize counter cell from collection"); }
+            size_t operator()(const ser::unknown_variant_type&) const { utils::on_internal_error("Trying to deserialize cell in unknown state"); };
+        };
+        return boost::apply_visitor(collection_cell_visitor{}, v.value());
+    }
+
+    static void write_key(const ser::collection_element_view& v, managed_bytes_mutable_view& out) {
+        write_fragmented(out, v.key().view());
+    }
+
+    static void write_value(const ser::collection_element_view& v, managed_bytes_mutable_view& out) {
+        struct collection_cell_visitor {
+            managed_bytes_mutable_view& out;
+
+            void operator()(const ser::live_cell_view& lcv) const {
+                const auto v = lcv.value().view();
+                atomic_cell_type::write_live(out, lcv.created_at(), v);
+                out.remove_prefix(atomic_cell_type::live_serialized_size(v.size_bytes()));
+            }
+            void operator()(const ser::expiring_cell_view& ecv) const {
+                const auto v = ecv.c().value().view();
+                atomic_cell_type::write_live(out, ecv.c().created_at(), v, ecv.expiry(), ecv.ttl());
+                out.remove_prefix(atomic_cell_type::live_expiring_serialized_size(v.size_bytes()));
+            }
+            void operator()(const ser::dead_cell_view& dcv) const {
+                atomic_cell_type::write_dead(out, dcv.tomb().timestamp(), dcv.tomb().deletion_time());
+                out.remove_prefix(atomic_cell_type::dead_serialized_size());
+            }
+            void operator()(const ser::counter_cell_view& ccv) const {
+                utils::on_internal_error("Trying to deserialize counter cell from collection");
+            }
+            void operator()(const ser::unknown_variant_type&) const {
+                utils::on_internal_error("Trying to deserialize cell in unknown state");
+            }
+        };
+        boost::apply_visitor(collection_cell_visitor{out}, v.value());
+    }
+};
+
+}
+
+collection_mutation read_from_collection_cell_view(const abstract_type& type, const ser::collection_cell_view& collection) {
+    auto tomb = collection.tomb();
+    auto cells = collection.elements();
+    return serialize_collection_mutation<serialized_cell_adaptor>(type, tomb, std::ranges::subrange(cells.begin(), cells.end()));
 }
 
 template <typename C>
