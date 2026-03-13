@@ -224,13 +224,26 @@ compact_and_expire_result collection_mutation_description::compact_and_expire(co
     return res;
 }
 
-template <typename Iterator>
+/// A CollectionMutationAdaptor is a static interface that adapts a collection
+/// element (an iterator value type) to the serialization requirements of
+/// serialize_collection_mutation(). It provides static methods to measure the
+/// serialized sizes and to write the key and value of each element into a buffer.
+template <typename Adaptor, typename Element>
+concept CollectionMutationAdaptor = requires(const Element& e, managed_bytes_mutable_view& out) {
+    { Adaptor::key_size(e) } -> std::convertible_to<size_t>;
+    { Adaptor::value_size(e) } -> std::convertible_to<size_t>;
+    { Adaptor::write_key(e, out) };
+    { Adaptor::write_value(e, out) };
+};
+
+template <typename Adaptor, typename Iterator>
+    requires CollectionMutationAdaptor<Adaptor, std::iter_value_t<Iterator>>
 static collection_mutation serialize_collection_mutation(
         const abstract_type& type,
         const tombstone& tomb,
         std::ranges::subrange<Iterator> cells) {
     auto element_size = [] (size_t c, auto&& e) -> size_t {
-        return c + 8 + e.first.size() + e.second.serialize().size();
+        return c + 8 + Adaptor::key_size(e) + Adaptor::value_size(e);
     };
     auto size = std::ranges::fold_left(cells, (size_t)4, element_size);
     size += 1;
@@ -244,32 +257,53 @@ static collection_mutation serialize_collection_mutation(
         write<int64_t>(out, tomb.timestamp);
         write<int64_t>(out, tomb.deletion_time.time_since_epoch().count());
     }
-    auto writek = [&out] (bytes_view v) {
-        write<int32_t>(out, v.size());
-        write_fragmented(out, single_fragmented_view(v));
+    auto writek = [&out] (auto& kv) {
+        write<int32_t>(out, Adaptor::key_size(kv));
+        Adaptor::write_key(kv, out);
     };
-    auto writev = [&out] (managed_bytes_view v) {
-        write<int32_t>(out, v.size());
-        write_fragmented(out, v);
+    auto writev = [&out] (auto& kv) {
+        write<int32_t>(out, Adaptor::value_size(kv));
+        Adaptor::write_value(kv, out);
     };
     // FIXME: overflow?
     write<int32_t>(out, std::ranges::distance(cells));
     for (auto&& kv : cells) {
-        auto&& k = kv.first;
-        auto&& v = kv.second;
-        writek(k);
-
-        writev(v.serialize());
+        writek(kv);
+        writev(kv);
     }
     return collection_mutation(type, std::move(ret));
 }
 
+namespace {
+
+/// A key-value pair where the key is bytes-like and the value is an atomic_cell-like type
+/// with a serialize() method returning managed_bytes_view.
+template <typename T>
+concept AtomicCellKV = requires(const T& kv) {
+    { kv.first.size() } -> std::convertible_to<size_t>;
+    { kv.second.serialize() } -> std::convertible_to<managed_bytes_view>;
+};
+
+struct atomic_cell_adaptor {
+    static size_t key_size(const AtomicCellKV auto& v) { return v.first.size(); }
+    static size_t value_size(const AtomicCellKV auto& v) { return v.second.serialize().size(); }
+
+    static void write_key(const AtomicCellKV auto& v, managed_bytes_mutable_view& out) {
+        write_fragmented(out, single_fragmented_view(v.first));
+    }
+    static void write_value(const AtomicCellKV auto& v, managed_bytes_mutable_view& out) {
+        write_fragmented(out, v.second.serialize());
+    }
+};
+
+}
+
 collection_mutation collection_mutation_description::serialize(const abstract_type& type) const {
-    return serialize_collection_mutation(type, tomb, std::ranges::subrange(cells.begin(), cells.end()));
+    return serialize_collection_mutation<atomic_cell_adaptor>(type, tomb, std::ranges::subrange(cells.begin(), cells.end()));
 }
 
 collection_mutation collection_mutation_view_description::serialize(const abstract_type& type) const {
-    return serialize_collection_mutation(type, tomb, std::ranges::subrange(cells.begin(), cells.end()));
+    return serialize_collection_mutation<atomic_cell_adaptor>(type, tomb, std::ranges::subrange(cells.begin(), cells.end()));
 }
 
 template <typename C>
