@@ -198,8 +198,8 @@ void mutation_partition_view::do_accept(const column_mapping& cm, Visitor& visit
         void accept_atomic_cell(column_id id, atomic_cell ac) const {
            _visitor.accept_static_cell(id, std::move(ac));
         }
-        void accept_collection(column_id id, const collection_mutation& cm) const {
-           _visitor.accept_static_cell(id, cm);
+        void accept_collection(column_id id, collection_mutation cm) const {
+           _visitor.accept_static_cell(id, std::move(cm));
         }
     };
     read_and_visit_row(mpv.static_row(), cm, column_kind::static_column, static_row_cell_visitor{visitor});
@@ -218,8 +218,8 @@ void mutation_partition_view::do_accept(const column_mapping& cm, Visitor& visit
             void accept_atomic_cell(column_id id, atomic_cell ac) const {
                _visitor.accept_row_cell(id, std::move(ac));
             }
-            void accept_collection(column_id id, const collection_mutation& cm) const {
-               _visitor.accept_row_cell(id, cm);
+            void accept_collection(column_id id, collection_mutation cm) const {
+               _visitor.accept_row_cell(id, std::move(cm));
             }
         };
         read_and_visit_row(cr.cells(), cm, column_kind::regular_column, cell_visitor{visitor});
