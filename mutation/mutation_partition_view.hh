@@ -23,31 +23,31 @@ class converting_mutation_partition_applier;
 
 template<typename T>
 concept MutationViewVisitor = requires (T& visitor, tombstone t, atomic_cell ac,
-                                             collection_mutation_view cmv, range_tombstone rt,
+                                             collection_mutation cm, range_tombstone rt,
                                              position_in_partition_view pipv, row_tombstone row_tomb,
                                              row_marker rm) {
     visitor.accept_partition_tombstone(t);
     visitor.accept_static_cell(column_id(), std::move(ac));
-    visitor.accept_static_cell(column_id(), cmv);
+    visitor.accept_static_cell(column_id(), std::move(cm));
     visitor.accept_row_tombstone(rt);
     visitor.accept_row(pipv, row_tomb, rm,
             is_dummy::no, is_continuous::yes);
     visitor.accept_row_cell(column_id(), std::move(ac));
-    visitor.accept_row_cell(column_id(), cmv);
+    visitor.accept_row_cell(column_id(), std::move(cm));
 };
 
 template<typename T>
 concept AsyncMutationViewVisitor = requires (T& visitor, tombstone t, atomic_cell ac,
-                                             collection_mutation_view cmv, range_tombstone rt,
+                                             collection_mutation cm, range_tombstone rt,
                                              position_in_partition_view pipv, row_tombstone row_tomb,
                                              row_marker rm) {
     { visitor.accept_partition_tombstone(t) } -> std::same_as<void>;
     { visitor.accept_static_cell(column_id(), std::move(ac)) } -> std::same_as<void>;
-    { visitor.accept_static_cell(column_id(), cmv) } -> std::same_as<void>;
+    { visitor.accept_static_cell(column_id(), std::move(cm)) } -> std::same_as<void>;
     { visitor.accept_row_tombstone(rt) } -> std::same_as<future<>>;
     { visitor.accept_row(pipv, row_tomb, rm, is_dummy::no, is_continuous::yes) } -> std::same_as<future<>>;
     { visitor.accept_row_cell(column_id(), std::move(ac)) } -> std::same_as<void>;
-    { visitor.accept_row_cell(column_id(), cmv) } -> std::same_as<void>;
+    { visitor.accept_row_cell(column_id(), std::move(cm)) } -> std::same_as<void>;
     { visitor.accept_end_of_partition() } -> std::same_as<future<>>;
 };
 
@@ -56,11 +56,11 @@ public:
     virtual ~mutation_partition_view_virtual_visitor();
     virtual void accept_partition_tombstone(tombstone t) = 0;
     virtual void accept_static_cell(column_id, atomic_cell ac) = 0;
-    virtual void accept_static_cell(column_id, collection_mutation_view cmv) = 0;
+    virtual void accept_static_cell(column_id, collection_mutation cm) = 0;
     virtual stop_iteration accept_row_tombstone(range_tombstone rt) = 0;
     virtual stop_iteration accept_row(position_in_partition_view pipv, row_tombstone rt, row_marker rm, is_dummy, is_continuous) = 0;
     virtual void accept_row_cell(column_id, atomic_cell ac) = 0;
-    virtual void accept_row_cell(column_id, collection_mutation_view cmv) = 0;
+    virtual void accept_row_cell(column_id, collection_mutation cm) = 0;
 };
 
 // View on serialized mutation partition. See mutation_partition_serializer.

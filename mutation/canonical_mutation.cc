@@ -113,10 +113,10 @@ auto fmt::formatter<canonical_mutation>::format(const canonical_mutation& cm, fm
             auto&& entry = _cm.static_column_at(id);
             _os = fmt::format_to(_os, "static column {} {}", bytes_to_text(entry.name()), atomic_cell::printer(*entry.type(), ac));
         }
-        virtual void accept_static_cell(column_id id, collection_mutation_view cmv) override {
+        virtual void accept_static_cell(column_id id, collection_mutation cm) override {
             print_separator();
             auto&& entry = _cm.static_column_at(id);
-            _os = fmt::format_to(_os, "static column {} {}", bytes_to_text(entry.name()), collection_mutation_view::printer(*entry.type(), cmv));
+            _os = fmt::format_to(_os, "static column {} {}", bytes_to_text(entry.name()), collection_mutation_view::printer(*entry.type(), cm));
         }
         virtual stop_iteration accept_row_tombstone(range_tombstone rt) override {
             print_separator();
@@ -137,10 +137,10 @@ auto fmt::formatter<canonical_mutation>::format(const canonical_mutation& cm, fm
             auto&& entry = _cm.regular_column_at(id);
             _os = fmt::format_to(_os, "column {} {}", bytes_to_text(entry.name()), atomic_cell::printer(*entry.type(), ac));
         }
-        virtual void accept_row_cell(column_id id, collection_mutation_view cmv) override {
+        virtual void accept_row_cell(column_id id, collection_mutation cm) override {
             print_separator();
             auto&& entry = _cm.regular_column_at(id);
-            _os = fmt::format_to(_os, "column {} {}", bytes_to_text(entry.name()), collection_mutation_view::printer(*entry.type(), cmv));
+            _os = fmt::format_to(_os, "column {} {}", bytes_to_text(entry.name()), collection_mutation_view::printer(*entry.type(), cm));
         }
         out_t finalize() {
             if (_in_row) {
