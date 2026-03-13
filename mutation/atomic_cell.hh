@@ -48,8 +48,8 @@ static void set_field(atomic_cell_value& out, unsigned offset, T val) {
 }
 
 template <FragmentRange Buffer>
-static void set_value(managed_bytes& b, unsigned value_offset, const Buffer& value) {
-    auto v = managed_bytes_mutable_view(b).substr(value_offset, value.size_bytes());
+static void set_value(atomic_cell_value_mutable_view b, unsigned value_offset, const Buffer& value) {
+    auto v = b.substr(value_offset, value.size_bytes());
     for (auto frag : value) {
         write_fragmented(v, single_fragmented_view(frag));
     }
@@ -141,20 +141,36 @@ public:
         SCYLLA_ASSERT(is_live_and_has_ttl(cell));
         return gc_clock::duration(get_field<int32_t>(cell, ttl_offset));
     }
-    static managed_bytes make_dead(api::timestamp_type timestamp, gc_clock::time_point deletion_time) {
-        managed_bytes b(managed_bytes::initialized_later(), flags_size + timestamp_size + deletion_time_size);
+    static size_t dead_serialized_size() {
+        return flags_size + timestamp_size + deletion_time_size;
+    }
+    static size_t live_serialized_size(size_t value_size) {
+        return flags_size + timestamp_size + value_size;
+    }
+    static size_t live_expiring_serialized_size(size_t value_size) {
+        return flags_size + timestamp_size + expiry_size + ttl_size + value_size;
+    }
+    static void write_dead(atomic_cell_value_mutable_view b, api::timestamp_type timestamp, gc_clock::time_point deletion_time) {
         b[0] = 0;
         set_field(b, timestamp_offset, timestamp);
         set_field(b, deletion_time_offset, static_cast<int64_t>(deletion_time.time_since_epoch().count()));
+    }
+    static managed_bytes make_dead(api::timestamp_type timestamp, gc_clock::time_point deletion_time) {
+        managed_bytes b(managed_bytes::initialized_later(), dead_serialized_size());
+        write_dead(b, timestamp, deletion_time);
         return b;
     }
     template <FragmentRange Buffer>
-    static managed_bytes make_live(api::timestamp_type timestamp, const Buffer& value) {
+    static void write_live(atomic_cell_value_mutable_view b, api::timestamp_type timestamp, const Buffer& value) {
         auto value_offset = flags_size + timestamp_size;
-        managed_bytes b(managed_bytes::initialized_later(), value_offset + value.size_bytes());
         b[0] = LIVE_FLAG;
         set_field(b, timestamp_offset, timestamp);
         set_value(b, value_offset, value);
+    }
+    template <FragmentRange Buffer>
+    static managed_bytes make_live(api::timestamp_type timestamp, const Buffer& value) {
+        managed_bytes b(managed_bytes::initialized_later(), live_serialized_size(value.size_bytes()));
+        write_live(b, timestamp, value);
         return b;
     }
     static managed_bytes make_live_counter_update(api::timestamp_type timestamp, int64_t value) {
@@ -166,14 +182,18 @@ public:
         return b;
     }
     template <FragmentRange Buffer>
-    static managed_bytes make_live(api::timestamp_type timestamp, const Buffer& value, gc_clock::time_point expiry, gc_clock::duration ttl) {
+    static void write_live(atomic_cell_value_mutable_view b, api::timestamp_type timestamp, const Buffer& value, gc_clock::time_point expiry, gc_clock::duration ttl) {
         auto value_offset = flags_size + timestamp_size + expiry_size + ttl_size;
-        managed_bytes b(managed_bytes::initialized_later(), value_offset + value.size_bytes());
         b[0] = EXPIRY_FLAG | LIVE_FLAG;
         set_field(b, timestamp_offset, timestamp);
         set_field(b, expiry_offset, static_cast<int64_t>(expiry.time_since_epoch().count()));
         set_field(b, ttl_offset, static_cast<int32_t>(ttl.count()));
         set_value(b, value_offset, value);
+    }
+    template <FragmentRange Buffer>
+    static managed_bytes make_live(api::timestamp_type timestamp, const Buffer& value, gc_clock::time_point expiry, gc_clock::duration ttl) {
+        managed_bytes b(managed_bytes::initialized_later(), live_expiring_serialized_size(value.size_bytes()));
+        write_live(b, timestamp, value, expiry, ttl);
         return b;
     }
     static managed_bytes make_live_uninitialized(api::timestamp_type timestamp, size_t size) {
