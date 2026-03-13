@@ -118,6 +118,7 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
         const dht::token& token,
         mutation_gen&& mutation_gen)
 {
+    try {
     auto op_result = co_await create_operation_ctx(*schema, token);
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
@@ -184,6 +185,9 @@ future<value_or_redirect<>> coordinator::mutate(schema_ptr schema,
             throw;
         }
     }
+    } catch (...) {
+        throw;
+    }
 }
 
 auto coordinator::query(schema_ptr schema,
@@ -193,6 +197,7 @@ auto coordinator::query(schema_ptr schema,
         db::timeout_clock::time_point timeout
     ) -> future<query_result_type>
 {
+    try {
     auto op_result = co_await create_operation_ctx(*schema, ranges[0].start()->value().token());
     if (const auto* redirect = get_if<need_redirect>(&op_result)) {
         co_return *redirect;
@@ -205,6 +210,9 @@ auto coordinator::query(schema_ptr schema,
         query::result_options::only_result(), ranges, trace_state, timeout);
 
     co_return std::move(result);
+    } catch (...) {
+        throw;
+    }
 }
 
 }
