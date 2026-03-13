@@ -1,7 +1,7 @@
 import pytest
 from contextlib import ExitStack
 import re
-from .util import unique_name, config_value_context, new_test_keyspace
+from .util import unique_name, config_value_context, new_test_keyspace, ScyllaMetrics
 from cassandra.protocol import ConfigurationException
 
 # Tests for the replication_strategy_{warn,fail}_list guardrail. Because
@@ -25,6 +25,10 @@ MAXIMUM_RF_WARN_RE = r"{dc}={rf}.*maximum_replication_factor_warn_threshold={thr
 MAXIMUM_RF_FAIL_RE = r"{dc}={rf}.*forbidden.*maximum_replication_factor_fail_threshold={threshold}"
 
 
+def get_metric(cql, name):
+    return ScyllaMetrics.query(cql).get(name) or 0
+
+
 def ks_opts(strategy, rf, dc=None, tablets=True):
     key = dc or 'replication_factor'
     opts = f" WITH REPLICATION = {{ 'class' : '{strategy}', '{key}' : {rf} }}"
@@ -33,8 +37,10 @@ def ks_opts(strategy, rf, dc=None, tablets=True):
     return opts
 
 
-def create_ks_and_assert_warnings_and_errors(cql, ks_opts,
+def create_ks_and_assert_warnings_and_errors(cql, ks_opts, metric_name=None,
                                               warnings=[], failures=[]):
+    before = get_metric(cql, metric_name) if metric_name else None
+
     if failures:
         with pytest.raises(ConfigurationException, match=failures[0]):
             with new_test_keyspace(cql, ks_opts):
@@ -52,9 +58,13 @@ def create_ks_and_assert_warnings_and_errors(cql, ks_opts,
             for w in response_future.warnings:
                 assert any(re.search(p, w) for p in warnings), f"Unexpected warning: {w}"
 
+    if before is not None:
+        assert get_metric(cql, metric_name) > before
+
 
 def test_given_default_config_when_creating_ks_should_only_produce_warning_for_simple_strategy(cql, this_dc):
     create_ks_and_assert_warnings_and_errors(cql, ks_opts('SimpleStrategy', 3),
+        metric_name='scylla_cql_replication_strategy_warn_list_violations',
         warnings=[STRATEGY_WARN_RE.format(strategy='SimpleStrategy')])
 
     for strategy, dc in {'NetworkTopologyStrategy': this_dc, 'EverywhereStrategy': 'replication_factor',
@@ -99,6 +109,11 @@ def test_given_non_empty_warn_and_fail_lists_when_creating_ks_should_fail_query_
             create_ks_and_assert_warnings_and_errors(cql, ks_opts(strategy, 1, dc=dc),
                             failures=[STRATEGY_FAIL_RE.format(strategy=strategy)])
 
+        # Verify metric increment and exact error message (docs/cql/guardrails.rst).
+        create_ks_and_assert_warnings_and_errors(cql, ks_opts('SimpleStrategy', 3),
+            metric_name='scylla_cql_replication_strategy_fail_list_violations',
+            failures=[STRATEGY_FAIL_RE.format(strategy='SimpleStrategy')])
+
 
 def test_given_already_existing_ks_when_altering_ks_should_validate_against_discouraged_strategies(cql, this_dc):
     with ExitStack() as config_modifications:
@@ -135,6 +150,7 @@ def test_given_rf_and_strategy_guardrails_when_creating_ks_should_print_2_warnin
         config_modifications.enter_context(config_value_context(cql, 'replication_strategy_warn_list', 'SimpleStrategy'))
         config_modifications.enter_context(config_value_context(cql, 'minimum_replication_factor_warn_threshold', '3'))
         create_ks_and_assert_warnings_and_errors(cql, ks_opts('SimpleStrategy', 1),
+                        metric_name='scylla_cql_minimum_replication_factor_warn_violations',
                         warnings=[MINIMUM_RF_WARN_RE.format(
                             dc='replication_factor', rf=1, threshold=3),
                             STRATEGY_WARN_RE.format(strategy='SimpleStrategy')])
@@ -145,6 +161,7 @@ def test_given_rf_and_strategy_guardrails_when_violating_fail_rf_limit_and_warn_
         config_modifications.enter_context(config_value_context(cql, 'replication_strategy_warn_list', 'SimpleStrategy'))
         config_modifications.enter_context(config_value_context(cql, 'minimum_replication_factor_fail_threshold', '3'))
         create_ks_and_assert_warnings_and_errors(cql, ks_opts('SimpleStrategy', 1),
+                        metric_name='scylla_cql_minimum_replication_factor_fail_violations',
                         failures=[MINIMUM_RF_FAIL_RE.format(
                             dc='replication_factor', rf=1, threshold=3)])
 
