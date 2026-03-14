@@ -227,7 +227,7 @@ table::make_logstor_mutation_reader(schema_ptr s,
                                    mutation_reader::forwarding fwd_mr) const {
     if (pr.is_singular() && pr.start()->value().has_key()) {
         const dht::decorated_key& key = pr.start()->value().as_decorated_key();
-        return _logstor->make_reader_for_key(std::move(s), std::move(permit), key, slice, std::move(trace_state));
+        return _logstor->make_reader_for_key(std::move(s), logstor_index(), std::move(permit), key, slice, std::move(trace_state));
     } else {
         throw std::runtime_error("Range queries over key-value storage are not supported");
     }
@@ -4388,6 +4388,9 @@ future<> table::discard_logstor_segments() {
     if (!uses_logstor()) {
         co_return;
     }
+
+    _logstor_index->clear();
+
     co_await parallel_foreach_compaction_group([] (compaction_group& cg) {
         return cg.discard_logstor_segments();
     });
@@ -4401,6 +4404,19 @@ void table::mark_ready_for_writes(db::commitlog* cl) {
         _commitlog = cl;
     }
     _readonly = false;
+}
+
+void table::init_logstor(logstor::logstor* ls) {
+    _logstor = ls;
+    _logstor_index = std::make_unique<logstor::primary_index>(_schema);
+}
+
+size_t table::get_logstor_memory_usage() const {
+    size_t m = 0;
+    if (_logstor_index) {
+        m += _logstor_index->get_memory_usage();
+    }
+    return m;
 }
 
 db::commitlog* table::commitlog() const {
@@ -4426,6 +4442,9 @@ void table::set_schema(schema_ptr s) {
     _cache.set_schema(s);
     if (_counter_cell_locks) {
         _counter_cell_locks->set_schema(s);
+    }
+    if (_logstor_index) {
+        _logstor_index->set_schema(s);
     }
     _schema = std::move(s);
 
@@ -4656,7 +4675,7 @@ future<> table::apply(const mutation& m, db::rp_handle&& h, db::timeout_clock::t
     auto holder = cg.async_gate().hold();
 
     if (_logstor) [[unlikely]] {
-        return _logstor->write(cg, m, std::move(holder));
+        return _logstor->write(m, cg, std::move(holder));
     }
 
     return dirty_memory_region_group().run_when_memory_available([this, &m, h = std::move(h), &cg, holder = std::move(holder)] () mutable {
@@ -4675,7 +4694,7 @@ future<> table::apply(const frozen_mutation& m, schema_ptr m_schema, db::rp_hand
     auto holder = cg.async_gate().hold();
 
     if (_logstor) [[unlikely]] {
-        return _logstor->write(cg, m.unfreeze(m_schema), std::move(holder));
+        return _logstor->write(m.unfreeze(m_schema), cg, std::move(holder));
     }
 
     return dirty_memory_region_group().run_when_memory_available([this, &m, m_schema = std::move(m_schema), h = std::move(h), &cg, holder = std::move(holder)]() mutable {
@@ -5151,6 +5170,10 @@ logstor::compaction_manager& compaction_group::get_logstor_compaction_manager() 
 
 const logstor::compaction_manager& compaction_group::get_logstor_compaction_manager() const noexcept {
     return _t.get_logstor_compaction_manager();
+}
+
+logstor::primary_index& compaction_group::get_logstor_index() noexcept {
+    return _t.logstor_index();
 }
 
 compaction::compaction_group_view& compaction_group::as_view_for_static_sharding() const {

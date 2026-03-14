@@ -17,20 +17,17 @@
 #include <openssl/ripemd.h>
 #include <openssl/evp.h>
 
-namespace replica {
-namespace logstor {
+namespace replica::logstor {
 
 seastar::logger logstor_logger("logstor");
 
 logstor::logstor(logstor_config config)
-    : _segment_manager(config.segment_manager_cfg, _index)
+    : _segment_manager(config.segment_manager_cfg)
     , _write_buffer(_segment_manager, config.flush_sg) {
 }
 
 future<> logstor::start() {
     logstor_logger.info("Starting logstor");
-
-    init_crypto();
 
     co_await _segment_manager.start();
     co_await _write_buffer.start();
@@ -44,21 +41,20 @@ future<> logstor::stop() {
     co_await _write_buffer.stop();
     co_await _segment_manager.stop();
 
-    free_crypto();
-
     logstor_logger.info("logstor stopped");
 }
 
 size_t logstor::get_memory_usage() const {
-    return _index.get_memory_usage() + _segment_manager.get_memory_usage();
+    return _segment_manager.get_memory_usage();
 }
 
-future<> logstor::write(compaction_group& cg, const mutation& m, seastar::gate::holder cg_holder) {
-    auto key = calculate_key(*m.schema(), m.decorated_key());
+future<> logstor::write(const mutation& m, compaction_group& cg, seastar::gate::holder cg_holder) {
+    primary_index_key key(m.decorated_key());
     table_id table = m.schema()->id();
+    auto& index = cg.get_logstor_index();
 
     // TODO ?
-    record_generation gen = _index.get(key)
+    record_generation gen = index.get(key)
         .transform([](const index_entry& entry) {
             return entry.generation + 1;
          }).value_or(record_generation(1));
@@ -70,14 +66,14 @@ future<> logstor::write(compaction_group& cg, const mutation& m, seastar::gate::
         .mut = canonical_mutation(m)
     };
 
-    return _write_buffer.write(std::move(record), &cg, std::move(cg_holder)).then_unpack([this, gen, key = std::move(key)]
+    return _write_buffer.write(std::move(record), &cg, std::move(cg_holder)).then_unpack([this, &index, gen, key = std::move(key)]
             (log_location location, seastar::gate::holder op) {
         index_entry new_entry {
             .location = location,
             .generation = gen,
         };
 
-        auto old_entry = _index.exchange(key, std::move(new_entry));
+        auto old_entry = index.exchange(key, std::move(new_entry));
 
         // If overwriting, free old record
         if (old_entry) {
@@ -89,10 +85,10 @@ future<> logstor::write(compaction_group& cg, const mutation& m, seastar::gate::
     });
 }
 
-future<std::optional<log_record>> logstor::read(index_key key) {
-    auto op = _index.start_read();
+future<std::optional<log_record>> logstor::read(const primary_index& index, primary_index_key key) {
+    auto op = index.start_read();
 
-    auto entry_opt = _index.get(key);
+    auto entry_opt = index.get(key);
     if (!entry_opt.has_value()) {
         return make_ready_future<std::optional<log_record>>(std::nullopt);
     }
@@ -100,12 +96,6 @@ future<std::optional<log_record>> logstor::read(index_key key) {
     const auto& entry = *entry_opt;
 
     return _segment_manager.read(entry.location).then([key = std::move(key), op = std::move(op)] (log_record record) {
-        if (record.key != key) [[unlikely]] {
-            throw std::runtime_error(fmt::format(
-                "Key mismatch reading log entry: expected {}, got {}",
-                key, record.key
-            ));
-        }
         return std::optional<log_record>(std::move(record));
     }).handle_exception([] (std::exception_ptr ep) {
         logstor_logger.error("Error reading record: {}", ep);
@@ -113,18 +103,19 @@ future<std::optional<log_record>> logstor::read(index_key key) {
     });
 }
 
-future<std::optional<canonical_mutation>> logstor::read(const schema& s, const dht::decorated_key& key) {
-    return read(calculate_key(s, key)).then([&key] (std::optional<log_record> record_opt) -> std::optional<canonical_mutation> {
+future<std::optional<canonical_mutation>> logstor::read(const schema& s, const primary_index& index, const dht::decorated_key& dk) {
+    primary_index_key key(dk);
+    return read(index, key).then([&dk] (std::optional<log_record> record_opt) -> std::optional<canonical_mutation> {
         if (!record_opt.has_value()) {
             return std::nullopt;
         }
 
         auto& record = *record_opt;
 
-        if (record.mut.key() != key.key()) [[unlikely]] {
+        if (record.mut.key() != dk.key()) [[unlikely]] {
             throw std::runtime_error(fmt::format(
                 "Key mismatch reading log entry: expected {}, got {}",
-                key.key(), record.mut.key()
+                dk.key(), record.mut.key()
             ));
         }
 
@@ -149,6 +140,7 @@ const compaction_manager& logstor::get_compaction_manager() const noexcept {
 }
 
 mutation_reader logstor::make_reader_for_key(schema_ptr schema,
+                                            const primary_index& index,
                                             reader_permit permit,
                                             const dht::decorated_key& key,
                                             const query::partition_slice& slice,
@@ -158,6 +150,7 @@ mutation_reader logstor::make_reader_for_key(schema_ptr schema,
     class single_key_reader : public mutation_reader::impl {
     private:
         logstor* _logstor;
+        const primary_index& _index;
         dht::decorated_key _key;
         query::partition_slice _slice;
         tracing::trace_state_ptr _trace_state;
@@ -165,6 +158,7 @@ mutation_reader logstor::make_reader_for_key(schema_ptr schema,
 
     public:
         single_key_reader(schema_ptr schema,
+                         const primary_index& index,
                          reader_permit permit,
                          logstor* logstor,
                          dht::decorated_key key,
@@ -172,6 +166,7 @@ mutation_reader logstor::make_reader_for_key(schema_ptr schema,
                          tracing::trace_state_ptr trace_state)
             : impl(std::move(schema), std::move(permit))
             , _logstor(logstor)
+            , _index(index)
             , _key(std::move(key))
             , _slice(std::move(slice))
             , _trace_state(std::move(trace_state)) {
@@ -187,7 +182,7 @@ mutation_reader logstor::make_reader_for_key(schema_ptr schema,
                 // Mark as awaiting I/O during disk read
                 auto await_guard = reader_permit::awaits_guard(_permit);
 
-                auto cmut = co_await _logstor->read(*_schema, _key);
+                auto cmut = co_await _logstor->read(*_schema, _index, _key);
 
                 if (!cmut.has_value()) {
                     // Key not found - end of stream
@@ -245,6 +240,7 @@ mutation_reader logstor::make_reader_for_key(schema_ptr schema,
 
     return make_mutation_reader<single_key_reader>(
         schema,
+        index,
         std::move(permit),
         this,
         key,
@@ -261,61 +257,4 @@ void logstor::set_trigger_separator_flush_hook(std::function<void()> fn) {
     _segment_manager.set_trigger_separator_flush_hook(std::move(fn));
 }
 
-// Cache RIPEMD-160 algorithm descriptor and context
-namespace {
-thread_local EVP_MD* cached_ripemd160_md = nullptr;
-thread_local EVP_MD_CTX* cached_ripemd160_ctx = nullptr;
-}
-
-void logstor::init_crypto() {
-    cached_ripemd160_md = EVP_MD_fetch(nullptr, "RIPEMD160", nullptr);
-    if (!cached_ripemd160_md) {
-        throw std::runtime_error("Failed to fetch RIPEMD160 algorithm");
-    }
-
-    cached_ripemd160_ctx = EVP_MD_CTX_new();
-    if (!cached_ripemd160_ctx) {
-        throw std::runtime_error("Failed to create RIPEMD160 context");
-    }
-}
-
-void logstor::free_crypto() {
-    if (cached_ripemd160_ctx) {
-        EVP_MD_CTX_free(cached_ripemd160_ctx);
-        cached_ripemd160_ctx = nullptr;
-    }
-    if (cached_ripemd160_md) {
-        EVP_MD_free(cached_ripemd160_md);
-        cached_ripemd160_md = nullptr;
-    }
-}
-
-index_key logstor::calculate_key(const schema& s, const dht::decorated_key& key) {
-    // hash of (ks name, table name, partition key)
-
-    constexpr char separator = ':';
-
-    EVP_MD_CTX* ctx = cached_ripemd160_ctx;
-    EVP_DigestInit_ex(ctx, cached_ripemd160_md, nullptr);
-
-    auto ks_bytes = to_bytes_view(s.ks_name());
-    EVP_DigestUpdate(ctx, ks_bytes.data(), ks_bytes.size());
-    EVP_DigestUpdate(ctx, &separator, 1);
-
-    auto cf_bytes = to_bytes_view(s.cf_name());
-    EVP_DigestUpdate(ctx, cf_bytes.data(), cf_bytes.size());
-    EVP_DigestUpdate(ctx, &separator, 1);
-
-    managed_bytes_view key_view(key.key());
-    for (bytes_view frag : fragment_range(key_view)) {
-        EVP_DigestUpdate(ctx, frag.data(), frag.size());
-    }
-
-    index_key result;
-    EVP_DigestFinal_ex(ctx, result.digest.data(), nullptr);
-
-    return result;
-}
-
-}
 }

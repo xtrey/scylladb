@@ -24,6 +24,7 @@ namespace replica::logstor {
 
 class compaction_manager;
 class segment_set;
+class primary_index;
 
 static constexpr size_t default_segment_size = 128 * 1024;
 static constexpr size_t default_file_size = 32 * 1024 * 1024;
@@ -81,7 +82,7 @@ private:
 public:
     static constexpr size_t block_alignment = 4096;
 
-    explicit segment_manager(segment_manager_config config, log_index&);
+    explicit segment_manager(segment_manager_config config);
     ~segment_manager();
 
     segment_manager(const segment_manager&) = delete;

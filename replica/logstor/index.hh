@@ -7,221 +7,74 @@
  */
 #pragma once
 
+#include "dht/decorated_key.hh"
+#include "dht/ring_position.hh"
 #include "types.hh"
 #include "utils/bptree.hh"
+#include "utils/double-decker.hh"
 #include "utils/phased_barrier.hh"
 
 namespace replica::logstor {
 
-struct index_key_less {
-    bool operator()(const index_key& a, const index_key& b) const noexcept {
-        return a < b;
-    }
-};
-
-class log_index_bucket {
-    using index_tree = bplus::tree<index_key, index_entry, index_key_less, 16>;
-
-    index_tree _index;
-
+class primary_index_entry {
+    dht::decorated_key _key;
+    index_entry _e;
+    struct {
+        bool _head : 1;
+        bool _tail : 1;
+        bool _train : 1;
+    } _flags{};
 public:
-    log_index_bucket() : _index(index_key_less{}) {}
+    primary_index_entry(dht::decorated_key key, index_entry e)
+        : _key(std::move(key))
+        , _e(std::move(e))
+    { }
 
-    std::optional<index_entry> get(const index_key& key) const {
-        auto it = _index.find(key);
-        return it != _index.end() ? std::make_optional(*it) : std::nullopt;
-    }
+    primary_index_entry(primary_index_entry&&) noexcept = default;
 
-    std::optional<index_entry> exchange(const index_key& key, index_entry new_entry) {
-        auto it = _index.find(key);
-        std::optional<index_entry> old_entry;
+    bool is_head() const noexcept { return _flags._head; }
+    void set_head(bool v) noexcept { _flags._head = v; }
+    bool is_tail() const noexcept { return _flags._tail; }
+    void set_tail(bool v) noexcept { _flags._tail = v; }
+    bool with_train() const noexcept { return _flags._train; }
+    void set_train(bool v) noexcept { _flags._train = v; }
 
-        if (it != _index.end()) {
-            old_entry = *it;
-            *it = std::move(new_entry);
-        } else {
-            _index.emplace(std::move(key), std::move(new_entry));
-        }
+    const dht::decorated_key& key() const noexcept { return _key; }
+    const index_entry& entry() const noexcept { return _e; }
 
-        return old_entry;
-    }
+    friend class primary_index;
 
-    bool update_record_location(const index_key& key, log_location old_location, log_location new_location) {
-        auto it = _index.find(key);
-        if (it != _index.end()) {
-            if (it->location == old_location) {
-                it->location = new_location;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    std::pair<bool, std::optional<index_entry>> insert_if_newer(const index_key& key, index_entry new_entry) {
-        auto it = _index.find(key);
-        if (it != _index.end()) {
-            if (it->generation < new_entry.generation) {
-                auto old_entry = *it;
-                *it = std::move(new_entry);
-                return {true, std::make_optional(old_entry)};
-            } else {
-                return {false, std::make_optional(*it)};
-            }
-        } else {
-            _index.emplace(key, std::move(new_entry));
-            return {true, std::nullopt};
-        }
-    }
-
-    bool erase(const index_key& key, log_location loc) {
-        auto it = _index.find(key);
-        if (it != _index.end() && it->location == loc) {
-            _index.erase(key);
-            return true;
-        }
-        return false;
-    }
-
-    auto begin() const { return _index.begin(); }
-    auto end() const { return _index.end(); }
+    friend dht::ring_position_view ring_position_view_to_compare(const primary_index_entry& e) { return e._key; }
 };
 
-class log_index {
-
-    static constexpr size_t NUM_BUCKETS = 1 << 20; // power of 2
-
-    using bucket_array = std::array<log_index_bucket, NUM_BUCKETS>;
-
-    bucket_array _buckets;
+class primary_index final {
+public:
+    using partitions_type = double_decker<int64_t, primary_index_entry,
+                            dht::raw_token_less_comparator, dht::ring_position_comparator,
+                            16, bplus::key_search::linear>;
+private:
+    partitions_type _partitions;
+    schema_ptr _schema;
     size_t _key_count = 0;
 
-    size_t bucket_index(const index_key& key) const noexcept {
-        uint32_t prefix;
-        std::memcpy(&prefix, key.digest.data(), sizeof(prefix));
-        return static_cast<size_t>(prefix & (NUM_BUCKETS - 1));
-    }
-
-    log_index_bucket& get_bucket(const index_key& key) noexcept {
-        return _buckets[bucket_index(key)];
-    }
-
-    const log_index_bucket& get_bucket(const index_key& key) const noexcept {
-        return _buckets[bucket_index(key)];
-    }
-
-    utils::phased_barrier _reads_phaser{"logstor_index_reads"};
+    mutable utils::phased_barrier _reads_phaser{"logstor_primary_index"};
 
 public:
-    std::optional<index_entry> get(const index_key& key) const {
-        return get_bucket(key).get(key);
+    explicit primary_index(schema_ptr schema)
+        : _partitions(dht::raw_token_less_comparator{})
+        , _schema(std::move(schema))
+        {}
+
+    void set_schema(schema_ptr s) {
+        _schema = std::move(s);
     }
 
-    std::optional<index_entry> exchange(const index_key& key, index_entry new_entry) {
-        auto prev = get_bucket(key).exchange(key, std::move(new_entry));
-        if (!prev) {
-            ++_key_count;
-        }
-        return prev;
+    void clear() {
+        _partitions.clear();
+        _key_count = 0;
     }
 
-    bool update_record_location(const index_key& key, log_location old_location, log_location new_location) {
-        return get_bucket(key).update_record_location(key, old_location, new_location);
-    }
-
-    std::pair<bool, std::optional<index_entry>> insert_if_newer(const index_key& key, index_entry new_entry) {
-        auto res = get_bucket(key).insert_if_newer(key, std::move(new_entry));
-        if (res.first && !res.second) {
-            ++_key_count;
-        }
-        return res;
-    }
-
-    bool erase(const index_key& key, log_location loc) {
-        bool erased = get_bucket(key).erase(key, loc);
-        if (erased) {
-            --_key_count;
-        }
-        return erased;
-    }
-
-    class const_iterator {
-        using bucket_array = log_index::bucket_array;
-        using bucket_iterator = decltype(std::declval<const log_index_bucket>().begin());
-
-        const bucket_array* _buckets;
-        size_t _bucket_idx;
-        bucket_iterator _bucket_it;
-
-        void advance_to_next_valid() {
-            while (_bucket_idx < NUM_BUCKETS) {
-                if (_bucket_it != (*_buckets)[_bucket_idx].end()) {
-                    return;
-                }
-                ++_bucket_idx;
-                if (_bucket_idx < NUM_BUCKETS) {
-                    _bucket_it = (*_buckets)[_bucket_idx].begin();
-                }
-            }
-        }
-
-    public:
-        using iterator_category = std::forward_iterator_tag;
-        using value_type = index_entry;
-        using difference_type = std::ptrdiff_t;
-        using pointer = const value_type*;
-        using reference = const value_type&;
-
-        const_iterator(const bucket_array* buckets, size_t bucket_idx, bucket_iterator bucket_it)
-                : _buckets(buckets)
-                , _bucket_idx(bucket_idx)
-                , _bucket_it(bucket_it) {
-            advance_to_next_valid();
-        }
-
-        reference operator*() const {
-            return *_bucket_it;
-        }
-
-        pointer operator->() const {
-            return &(*_bucket_it);
-        }
-
-        const_iterator& operator++() {
-            ++_bucket_it;
-            advance_to_next_valid();
-            return *this;
-        }
-
-        const_iterator operator++(int) {
-            const_iterator tmp = *this;
-            ++(*this);
-            return tmp;
-        }
-
-        bool operator==(const const_iterator& other) const {
-            if (_bucket_idx != other._bucket_idx) {
-                return false;
-            }
-            if (_bucket_idx >= NUM_BUCKETS) {
-                return true;
-            }
-            return _bucket_it == other._bucket_it;
-        }
-
-        bool operator!=(const const_iterator& other) const {
-            return !(*this == other);
-        }
-    };
-
-    const_iterator begin() const {
-        return const_iterator(&_buckets, 0, _buckets[0].begin());
-    }
-
-    const_iterator end() const {
-        return const_iterator(&_buckets, NUM_BUCKETS, {});
-    }
-
-    utils::phased_barrier::operation start_read() {
+    utils::phased_barrier::operation start_read() const {
         return _reads_phaser.start();
     }
 
@@ -229,14 +82,76 @@ public:
         return _reads_phaser.advance_and_await();
     }
 
-    size_t get_memory_usage() const {
-        // approximate
-        return sizeof(log_index_bucket) * NUM_BUCKETS + _key_count * sizeof(index_entry);
+    std::optional<index_entry> get(const primary_index_key& key) const {
+        auto it = _partitions.find(key.dk, dht::ring_position_comparator(*_schema));
+        if (it != _partitions.end()) {
+            return it->_e;
+        }
+        return std::nullopt;
     }
 
-    size_t get_key_count() const {
-        return _key_count;
+    std::optional<index_entry> exchange(const primary_index_key& key, index_entry new_entry) {
+        partitions_type::bound_hint hint;
+        auto i = _partitions.lower_bound(key.dk, dht::ring_position_comparator(*_schema), hint);
+        if (hint.match) {
+            auto old_entry = i->_e;
+            i->_e = std::move(new_entry);
+            return old_entry;
+        } else {
+            _partitions.emplace_before(i, key.dk.token().raw(), hint, key.dk, std::move(new_entry));
+            ++_key_count;
+            return std::nullopt;
+        }
     }
+
+    bool update_record_location(const primary_index_key& key, log_location old_location, log_location new_location) {
+        auto it = _partitions.find(key.dk, dht::ring_position_comparator(*_schema));
+        if (it != _partitions.end()) {
+            if (it->_e.location == old_location) {
+                it->_e.location = new_location;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::pair<bool, std::optional<index_entry>> insert_if_newer(const primary_index_key& key, index_entry new_entry) {
+        partitions_type::bound_hint hint;
+        auto i = _partitions.lower_bound(key.dk, dht::ring_position_comparator(*_schema), hint);
+        if (hint.match) {
+            if (i->_e.generation < new_entry.generation) {
+                auto old_entry = i->_e;
+                i->_e = std::move(new_entry);
+                return {true, std::make_optional(old_entry)};
+            } else {
+                return {false, std::make_optional(i->_e)};
+            }
+        } else {
+            _partitions.emplace_before(i, key.dk.token().raw(), hint, key.dk, std::move(new_entry));
+            ++_key_count;
+            return {true, std::nullopt};
+        }
+    }
+
+    bool erase(const primary_index_key& key, log_location loc) {
+        auto it = _partitions.find(key.dk, dht::ring_position_comparator(*_schema));
+        if (it != _partitions.end() && it->_e.location == loc) {
+            it.erase(dht::raw_token_less_comparator{});
+            --_key_count;
+            return true;
+        }
+        return false;
+    }
+
+    auto begin() const noexcept { return _partitions.begin(); }
+    auto end() const noexcept { return _partitions.end(); }
+
+    bool empty() const noexcept { return _partitions.empty(); }
+
+    size_t get_key_count() const noexcept { return _key_count; }
+
+    size_t get_memory_usage() const noexcept { return _key_count * sizeof(index_entry); }
+
 };
 
 }

@@ -396,7 +396,8 @@ database::database(const db::config& cfg, database_config dbcfg, service::migrat
     , _dirty_memory_manager(*this, dbcfg.available_memory * 0.50, cfg.unspooled_dirty_soft_limit(), dbcfg.statement_scheduling_group)
     , _dirty_memory_threshold_controller([this] {
         if (_logstor) {
-            size_t available_memory = _dbcfg.available_memory > _logstor->get_memory_usage() ? _dbcfg.available_memory - _logstor->get_memory_usage() : 0;
+            size_t logstor_memory_usage = get_logstor_memory_usage();
+            size_t available_memory = _dbcfg.available_memory > logstor_memory_usage ? _dbcfg.available_memory - logstor_memory_usage : 0;
             _dirty_memory_manager.update_threshold(available_memory * 0.50);
         }
     })
@@ -1175,7 +1176,7 @@ void database::add_column_family(keyspace& ks, schema_ptr schema, column_family:
         if (!_logstor) {
             on_internal_error(dblog, "The table is using logstor but logstor is not initialized");
         }
-        cf->set_logstor(_logstor.get());
+        cf->init_logstor(_logstor.get());
         dblog.info0("Table {}.{} is using logstor storage", schema->ks_name(), schema->cf_name());
     }
 
@@ -2898,6 +2899,23 @@ future<> database::flush_logstor_separator() {
 
 future<logstor::table_segment_stats> database::get_logstor_table_segment_stats(table_id table) const {
     return find_column_family(table).get_logstor_segment_stats();
+}
+
+size_t database::get_logstor_memory_usage() const {
+    if (!_logstor) {
+        return 0;
+    }
+    size_t m = 0;
+
+    m += _logstor->get_memory_usage();
+
+    get_tables_metadata().for_each_table([&m] (table_id, lw_shared_ptr<replica::table> table) {
+        if (table->uses_logstor()) {
+            m += table->get_logstor_memory_usage();
+        }
+    });
+
+    return m;
 }
 
 future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, table_id uuid, sstring tag, db::snapshot_options opts) {

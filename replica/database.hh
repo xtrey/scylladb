@@ -546,6 +546,7 @@ private:
     std::vector<view_ptr> _views;
 
     logstor::logstor* _logstor = nullptr;
+    std::unique_ptr<logstor::primary_index> _logstor_index;
 
     std::unique_ptr<cell_locker> _counter_cell_locks; // Memory-intensive; allocate only when needed.
 
@@ -836,13 +837,20 @@ public:
     // to issue disk operations safely.
     void mark_ready_for_writes(db::commitlog* cl);
 
-    void set_logstor(logstor::logstor* ls) {
-        _logstor = ls;
-    }
+    void init_logstor(logstor::logstor* ls);
 
     bool uses_logstor() const {
         return _logstor != nullptr;
     }
+
+    logstor::primary_index& logstor_index() noexcept {
+        return *_logstor_index;
+    }
+    const logstor::primary_index& logstor_index() const noexcept {
+        return *_logstor_index;
+    }
+
+    size_t get_logstor_memory_usage() const;
 
     // Creates a mutation reader which covers all data sources for this column family.
     // Caller needs to ensure that column_family remains live (FIXME: relax this).
@@ -1148,6 +1156,10 @@ public:
     }
 
     logstor::segment_manager& get_logstor_segment_manager() noexcept {
+        return _logstor->get_segment_manager();
+    }
+
+    const logstor::segment_manager& get_logstor_segment_manager() const noexcept {
         return _logstor->get_segment_manager();
     }
 
@@ -2039,6 +2051,7 @@ public:
     static future<> flush_logstor_separator_on_all_shards(sharded<database>& sharded_db);
     future<> flush_logstor_separator();
     future<logstor::table_segment_stats> get_logstor_table_segment_stats(table_id table) const;
+    size_t get_logstor_memory_usage() const;
 
     static future<db_clock::time_point> get_all_tables_flushed_at(sharded<database>& sharded_db);
 

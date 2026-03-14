@@ -11,7 +11,7 @@
 #include <fmt/format.h>
 #include "mutation/canonical_mutation.hh"
 #include "replica/logstor/utils.hh"
-#include "utils/hash.hh"
+#include "dht/decorated_key.hh"
 
 namespace replica::logstor {
 
@@ -30,13 +30,8 @@ struct log_location {
     bool operator==(const log_location& other) const noexcept = default;
 };
 
-struct index_key {
-    static constexpr size_t digest_size = 20;
-
-    std::array<uint8_t, digest_size> digest;
-
-    bool operator==(const index_key& other) const noexcept = default;
-    auto operator<=>(const index_key& other) const noexcept = default;
+struct primary_index_key {
+    dht::decorated_key dk;
 };
 
 using record_generation = generation_base<uint16_t>;
@@ -50,7 +45,7 @@ struct index_entry {
 };
 
 struct log_record {
-    index_key key;
+    primary_index_key key;
     record_generation generation;
     table_id table;
     canonical_mutation mut;
@@ -77,9 +72,9 @@ struct fmt::formatter<replica::logstor::log_location> : fmt::formatter<string_vi
 };
 
 template <>
-struct fmt::formatter<replica::logstor::index_key> : fmt::formatter<string_view> {
+struct fmt::formatter<replica::logstor::primary_index_key> : fmt::formatter<string_view> {
     template <typename FormatContext>
-    auto format(const replica::logstor::index_key& key, FormatContext& ctx) const {
-        return fmt::format_to(ctx.out(), "{:02x}", fmt::join(key.digest, ""));
+    auto format(const replica::logstor::primary_index_key& key, FormatContext& ctx) const {
+        return fmt::format_to(ctx.out(), "{}", key.dk);
     }
 };
