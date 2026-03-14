@@ -251,6 +251,10 @@ make_conjunction(predicate a, predicate b) {
         on_internal_error(rlogger, "make_conjunction: merging non-comparable columns");
     }
 
+    if (a.order != b.order) {
+        on_internal_error(rlogger, "make_conjunction: merging predicates with different comparison orders");
+    }
+
     auto& sa = a.solve_for;
     auto& sb = b.solve_for;
 
@@ -272,6 +276,12 @@ make_conjunction(predicate a, predicate b) {
         .comparable = a.comparable && b.comparable,  // Result is only comparable if both inputs follow CQL comparison semantics.
         .is_multi_column = a.is_multi_column,  // Both predicates are on the same target, so they agree on multi-column-ness.
         .is_not_null_single_column = false,  // A conjunction is not a pure IS NOT NULL check.
+        .equality = false,        // A conjunction is not a single EQ.
+        .is_in = false,           // A conjunction is not a single IN.
+        .is_slice = false,        // A conjunction is not a single slice.
+        .is_upper_bound = false,  // A conjunction has no single direction.
+        .is_lower_bound = false,  // A conjunction has no single direction.
+        .order = a.order,         // Both predicates are on the same column, so comparison order must agree.
     };
 }
 
@@ -389,6 +399,11 @@ to_predicates(
                                   .filter = oper,
                                   .on = on_column{col.col},
                                   .is_singleton = (oper.op == oper_t::EQ),
+                                  .equality = (oper.op == oper_t::EQ),
+                                  .is_slice = expr::is_slice(oper.op),
+                                  .is_upper_bound = (oper.op == oper_t::LT || oper.op == oper_t::LTE),
+                                  .is_lower_bound = (oper.op == oper_t::GT || oper.op == oper_t::GTE),
+                                  .order = oper.order,
                               });
                             } else if (oper.op == oper_t::IN) {
                               auto solve = [oper, type, cdef] (const query_options& options) {
@@ -399,6 +414,8 @@ to_predicates(
                                   .filter = oper,
                                   .on = on_column{col.col},
                                   .is_singleton = false,
+                                  .is_in = true,
+                                  .order = oper.order,
                               });
                             } else if (oper.op == oper_t::CONTAINS || oper.op == oper_t::CONTAINS_KEY) {
                               auto solve = [oper] (const query_options& options) {
@@ -413,6 +430,7 @@ to_predicates(
                                   .filter = oper,
                                   .on = on_column{col.col},
                                   .is_singleton = false,
+                                  .order = oper.order,
                               });
                             }
                             return cannot_solve_on_column(oper, col.col);
@@ -440,6 +458,8 @@ to_predicates(
                                 .filter = oper,
                                 .on = on_column{col.col},
                                 .is_singleton = true,
+                                .equality = true,
+                                .order = oper.order,
                             });
                           }
                           return cannot_solve_on_column(oper, col.col);
@@ -473,6 +493,12 @@ to_predicates(
                                 .on = on_clustering_key_prefix{std::move(columns)},
                                 .is_singleton = oper.op == oper_t::EQ,
                                 .is_multi_column = true,
+                                .equality = (oper.op == oper_t::EQ),
+                                .is_in = (oper.op == oper_t::IN),
+                                .is_slice = expr::is_slice(oper.op),
+                                .is_upper_bound = (oper.op == oper_t::LT || oper.op == oper_t::LTE),
+                                .is_lower_bound = (oper.op == oper_t::GT || oper.op == oper_t::GTE),
+                                .order = oper.order,
                             });
                         },
                         [&] (const function_call& token_fun_call) -> std::vector<predicate> {
@@ -512,6 +538,11 @@ to_predicates(
                             .filter = oper,
                             .on = on_partition_key_token{table_schema_opt},
                             .is_singleton = (oper.op == oper_t::EQ),
+                            .equality = (oper.op == oper_t::EQ),
+                            .is_slice = expr::is_slice(oper.op),
+                            .is_upper_bound = (oper.op == oper_t::LT || oper.op == oper_t::LTE),
+                            .is_lower_bound = (oper.op == oper_t::GT || oper.op == oper_t::GTE),
+                            .order = oper.order,
                           });
                         },
                         [&] (const binary_operator&) -> std::vector<predicate> {
