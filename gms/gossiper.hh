@@ -203,7 +203,6 @@ public:
     };
     static constexpr std::array SILENT_SHUTDOWN_STATES{
         versioned_value::STATUS_LEFT,
-        versioned_value::STATUS_BOOTSTRAPPING,
         versioned_value::STATUS_UNKNOWN,
     };
     static constexpr std::chrono::milliseconds INTERVAL{1000};

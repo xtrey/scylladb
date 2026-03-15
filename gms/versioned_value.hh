@@ -45,7 +45,6 @@ public:
 
     // values for ApplicationState.STATUS
     static constexpr std::string_view STATUS_UNKNOWN{"UNKNOWN"};
-    static constexpr std::string_view STATUS_BOOTSTRAPPING{"BOOT"};
     static constexpr std::string_view STATUS_NORMAL{"NORMAL"};
     static constexpr std::string_view STATUS_LEFT{"LEFT"};
 
@@ -91,11 +90,6 @@ public:
 
     static versioned_value clone_with_higher_version(const versioned_value& value) noexcept {
         return versioned_value(value.value());
-    }
-
-    static versioned_value bootstrapping(const std::unordered_set<dht::token>& tokens) {
-        return versioned_value(version_string({sstring(versioned_value::STATUS_BOOTSTRAPPING),
-                                               make_token_string(tokens)}));
     }
 
     static versioned_value normal(const std::unordered_set<dht::token>& tokens) {
