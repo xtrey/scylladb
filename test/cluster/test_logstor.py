@@ -177,7 +177,6 @@ async def test_parallel_big_writes(manager: ManagerClient):
             assert rows[0].v == f"{i}-{large_value}"
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="TODO")
 async def test_recovery_basic(manager: ManagerClient):
     """
     Test that logstor data persists across server restarts.
@@ -260,7 +259,6 @@ async def test_recovery_basic(manager: ManagerClient):
             assert rows[0].v == expected_v, f"Key {pk} has wrong value after additional writes"
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="TODO")
 async def test_recovery_with_segment_reuse(manager: ManagerClient):
     """
     Test recovery after segments have been compacted and reused.

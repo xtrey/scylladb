@@ -932,7 +932,6 @@ database::init_logstor() {
         .flush_sg = _dbcfg.commitlog_scheduling_group,
     };
     _logstor = std::make_unique<logstor::logstor>(std::move(cfg));
-    co_await _logstor->start();
 
     _logstor->set_trigger_compaction_hook([this] {
         trigger_logstor_compaction(false);
@@ -942,9 +941,21 @@ database::init_logstor() {
         (void)flush_logstor_separator();
     });
 
-    _dirty_memory_threshold_controller.arm_periodic(std::chrono::seconds(5));
-
     dblog.info("logstor initialized");
+    co_return;
+}
+
+future<>
+database::recover_logstor() {
+    if (!_logstor) {
+        co_return;
+    }
+
+    co_await _logstor->do_recovery(*this);
+
+    co_await _logstor->start();
+
+    _dirty_memory_threshold_controller.arm_periodic(std::chrono::seconds(5));
 }
 
 future<> database::modify_keyspace_on_all_shards(sharded<database>& sharded_db, std::function<future<>(replica::database&)> func) {

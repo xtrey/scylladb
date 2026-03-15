@@ -39,6 +39,7 @@
 #include "utils/dynamic_bitset.hh"
 #include "utils/serialized_action.hh"
 #include "utils/lister.hh"
+#include "replica/database.hh"
 
 namespace replica::logstor {
 
@@ -613,6 +614,8 @@ public:
     segment_manager_impl(const segment_manager_impl&) = delete;
     segment_manager_impl& operator=(const segment_manager_impl&) = delete;
 
+    future<> do_recovery(replica::database&);
+
     future<> start();
     future<> stop();
 
@@ -629,9 +632,9 @@ public:
     future<> for_each_record(const std::vector<log_segment_id>&,
                             std::function<future<>(log_location, log_record)>);
 
-    future<> do_recovery();
-    future<> recover_segment(log_segment_id);
+    future<> recover_segment(replica::database&, log_segment_id);
     future<std::optional<segment_generation>> recover_segment_generation(log_segment_id);
+    future<> add_segment_to_compaction_group(replica::database&, segment_descriptor&);
 
     void trigger_compaction() {
         if (_cfg.compaction_enabled && _trigger_compaction_fn) {
@@ -870,10 +873,6 @@ segment_manager_impl::segment_manager_impl(segment_manager_config config)
 }
 
 future<> segment_manager_impl::start() {
-    co_await _file_mgr.start();
-
-    co_await do_recovery();
-
     // Start background replenisher before creating initial segment
     _reserve_replenisher = with_scheduling_group(_cfg.compaction_sg, [this] {
         return replenish_reserve();
@@ -1538,7 +1537,7 @@ future<> compaction_manager_impl::write_to_separator(write_buffer& wb, segment_r
         }
 
         buf.pending_updates.push_back(
-            buf.write(w.writer).then_unpack([this, &index, key = std::move(key), prev_loc] (log_location new_loc, seastar::gate::holder op) {
+            buf.write(std::move(w.writer)).then_unpack([this, &index, key = std::move(key), prev_loc] (log_location new_loc, seastar::gate::holder op) {
                 if (update_record_location(index, key, prev_loc, new_loc)) {
                     _sm.free_record(prev_loc);
                 } else {
@@ -1586,8 +1585,10 @@ std::chrono::microseconds segment_manager_impl::calculate_separator_delay() cons
     return std::chrono::microseconds(size_t(adjust(debt_ratio) * _cfg.separator_delay_limit_ms * 1000));
 }
 
-future<> segment_manager_impl::do_recovery() {
+future<> segment_manager_impl::do_recovery(replica::database& db) {
     logstor_logger.info("Starting recovery for shard {} in directory {}", this_shard_id(), _cfg.base_dir.string());
+
+    co_await _file_mgr.start();
 
     // Scan the base directory for all files belonging to this shard.
     std::set<size_t> found_file_ids;
@@ -1625,13 +1626,13 @@ future<> segment_manager_impl::do_recovery() {
         }
         next_file_id++;
     }
-    _file_mgr.recover_next_file_id(next_file_id);
 
     // populate index from all segments. keep the latest record for each key.
     for (auto file_id : found_file_ids) {
+        logstor_logger.info("Recovering segments from file {}: {}%", _file_mgr.get_file_path(file_id), (file_id + 1) * 100 / found_file_ids.size());
         co_await max_concurrent_for_each(segments_in_file(file_id), 32,
-            [this] (log_segment_id seg_id) {
-                return recover_segment(seg_id);
+            [this, &db] (log_segment_id seg_id) {
+                return recover_segment(db, seg_id);
             }
         );
     }
@@ -1639,17 +1640,22 @@ future<> segment_manager_impl::do_recovery() {
     // go over the index and mark all segments that have live data as used.
     size_t allocated_segment_count = next_file_id * _segments_per_file;
     utils::dynamic_bitset used_segments(allocated_segment_count);
-    /*
-    for (const auto& entry : _index) {
-        used_segments.set(entry.location.segment.value);
-        co_await coroutine::maybe_yield();
-    }
-        */
 
-    // put used segments in the histogram, and put the rest in the free list.
+    co_await db.get_tables_metadata().for_each_table_gently([&] (table_id tid, lw_shared_ptr<table> tp) -> future<> {
+        if (!tp->uses_logstor()) {
+            co_return;
+        }
+        for (const auto& entry : tp->logstor_index()) {
+            used_segments.set(entry.entry().location.segment.value);
+            co_await coroutine::maybe_yield();
+        }
+    });
+
+    // put used segments in compaction groups, and put the rest in the free list.
     size_t free_segment_count = 0;
     size_t used_segment_count = 0;
     for (size_t seg_idx = 0; seg_idx < allocated_segment_count; ++seg_idx) {
+        co_await coroutine::maybe_yield();
         log_segment_id seg_id(seg_idx);
         auto& desc = get_segment_descriptor(seg_id);
         if (!used_segments.test(seg_idx)) {
@@ -1658,24 +1664,34 @@ future<> segment_manager_impl::do_recovery() {
             free_segment_count++;
         } else {
             used_segment_count++;
-            _stats.segments_in_use++;
-
-            // TODO
-            // mixed segments - write to separator buffers
-            // non-mixed segments - add to compaction groups
         }
+    }
+    logstor_logger.info("Found {} used segments and {} free segments", used_segment_count, free_segment_count);
+
+    size_t recovered_used_segment_count = 0;
+    for (size_t seg_idx = 0; seg_idx < allocated_segment_count; ++seg_idx) {
         co_await coroutine::maybe_yield();
+        log_segment_id seg_id(seg_idx);
+        auto& desc = get_segment_descriptor(seg_id);
+        if (used_segments.test(seg_idx)) {
+            logstor_logger.trace("Recovering used segment {}", seg_id);
+            if (recovered_used_segment_count % 1000 == 0) {
+                logstor_logger.info("Recovering used segments: {}%", 100 * recovered_used_segment_count / used_segment_count);
+            }
+            co_await add_segment_to_compaction_group(db, desc);
+            _stats.segments_in_use++;
+            recovered_used_segment_count++;
+        }
     }
 
     _next_new_segment_id = allocated_segment_count;
 
-    logstor_logger.trace("Recovery: found {} used segments and {} free segments",
-                        used_segment_count, free_segment_count);
+    _file_mgr.recover_next_file_id(next_file_id);
 
     logstor_logger.info("Recovery complete");
 }
 
-future<> segment_manager_impl::recover_segment(log_segment_id segment_id) {
+future<> segment_manager_impl::recover_segment(replica::database& db, log_segment_id segment_id) {
     auto& desc = get_segment_descriptor(segment_id);
     desc.reset(_cfg.segment_size);
 
@@ -1685,8 +1701,7 @@ future<> segment_manager_impl::recover_segment(log_segment_id segment_id) {
     }
     desc.seg_gen = *seg_gen_opt;
 
-    /*
-    co_await for_each_record(segment_id, [this, &desc] (log_location loc, log_record record) -> future<> {
+    co_await for_each_record(segment_id, [this, &desc, &db] (log_location loc, log_record record) -> future<> {
         logstor_logger.trace("Recovery: read record at {} gen {}", loc, record.generation);
 
         index_entry new_entry {
@@ -1694,16 +1709,24 @@ future<> segment_manager_impl::recover_segment(log_segment_id segment_id) {
             .generation = record.generation
         };
 
-        if (auto [inserted, prev_entry] = _index.insert_if_newer(record.key, new_entry); inserted) {
-            desc.on_write(loc);
-            if (prev_entry) {
-                get_segment_descriptor(prev_entry->location).on_free(prev_entry->location);
+        try {
+            auto& t = db.find_column_family(record.table);
+            if (!t.uses_logstor()) {
+                co_return;
             }
+            auto [inserted, prev_entry] = t.logstor_index().insert_if_newer(record.key, new_entry);
+            if (inserted) {
+                desc.on_write(loc);
+                if (prev_entry) {
+                    get_segment_descriptor(prev_entry->location).on_free(prev_entry->location);
+                }
+            }
+        } catch (const replica::no_such_column_family&) {
+            // ignore record
         }
 
         co_return;
     });
-    */
 }
 
 future<std::optional<segment_generation>> segment_manager_impl::recover_segment_generation(log_segment_id segment_id) {
@@ -1738,6 +1761,100 @@ future<std::optional<segment_generation>> segment_manager_impl::recover_segment_
     co_return max_gen;
 }
 
+future<> segment_manager_impl::add_segment_to_compaction_group(replica::database& db, segment_descriptor& desc) {
+    auto seg_id = desc_to_segment_id(desc);
+
+    auto for_each_live_record = [this, &db, seg_id] (std::function<future<>(log_location, log_record, table&)> callback) {
+        return for_each_record(seg_id, [&db, callback = std::move(callback)] (log_location loc, log_record record) -> future<> {
+            try {
+                auto& t = db.find_column_family(record.table);
+                if (!t.uses_logstor()) {
+                    co_return;
+                }
+                if (t.logstor_index().get(record.key).transform([](auto&& entry) { return entry.location; }) == loc) {
+                    co_await callback(loc, std::move(record), t);
+                }
+            } catch(const replica::no_such_column_family&) {
+                co_return;
+            }
+        });
+    };
+
+    // find the segment's table and token range
+    struct mixed_tables{};
+    std::optional<std::variant<table_id, mixed_tables>> segment_table;
+    std::optional<dht::token> first_token;
+    std::optional<dht::token> last_token;
+    size_t live_record_count = 0;
+    co_await for_each_live_record([&segment_table, &first_token, &last_token, &live_record_count] (log_location loc, log_record record, table&) -> future<> {
+        ++live_record_count;
+
+        if (!segment_table) {
+            segment_table = record.table;
+        } else if (std::holds_alternative<table_id>(*segment_table) && std::get<table_id>(*segment_table) != record.table) {
+            segment_table = mixed_tables{};
+        }
+
+        auto record_token = record.key.dk.token();
+        if (!first_token || record_token < *first_token) {
+            first_token = record_token;
+        }
+        if (!last_token || record_token > *last_token) {
+            last_token = record_token;
+        }
+        co_return;
+    });
+
+    bool need_separator = false;
+    if (!segment_table) {
+        logstor_logger.warn("Segment {} has no live records, but was not freed. Freeing now.", seg_id);
+        desc.on_free_segment();
+        _free_segments.push_back(seg_id);
+    } else if (std::holds_alternative<mixed_tables>(*segment_table)) {
+        logstor_logger.debug("Segment {} has {} live records from multiple tables", seg_id, live_record_count);
+        need_separator = true;
+    } else {
+        auto tid = std::get<table_id>(*segment_table);
+        auto& t = db.find_column_family(tid);
+        if (t.add_logstor_segment(desc, *first_token, *last_token)) {
+            // all record belong to a single compaction group and the segment was added to the compaction group
+            logstor_logger.debug("Add segment {} with {} record with tokens [{},{}] to table", seg_id, live_record_count, *first_token, *last_token);
+        } else {
+            // the record belong to different compaction groups - write to separator
+            logstor_logger.debug("Add segment {} with {} record with tokens [{},{}] to separator", seg_id, live_record_count, *first_token, *last_token);
+            need_separator = true;
+        }
+    }
+
+    if (need_separator) {
+        auto seg_ref = make_segment_ref(seg_id);
+        co_await for_each_live_record([this, seg_ref] (log_location prev_loc, log_record record, table& t) -> future<> {
+            auto key = record.key;
+
+            auto& index = t.logstor_index();
+
+            log_record_writer writer(std::move(record));
+            auto& buf = t.get_logstor_separator_buffer(key.dk.token(), writer.size());
+
+            if (buf.held_segments.empty() || buf.held_segments.back().id() != seg_ref.id()) {
+                buf.held_segments.push_back(seg_ref);
+            }
+
+            buf.pending_updates.push_back(
+                buf.write(std::move(writer)).then_unpack([this, &index, key = std::move(key), prev_loc] (log_location new_loc, seastar::gate::holder op) {
+                    if (index.update_record_location(key, prev_loc, new_loc)) {
+                        free_record(prev_loc);
+                    } else {
+                        free_record(new_loc);
+                    }
+                    return make_ready_future<>();
+                }
+            ));
+            return make_ready_future<>();
+        });
+    }
+}
+
 // segment_manager wrapper
 
 segment_manager::segment_manager(segment_manager_config config)
@@ -1752,6 +1869,10 @@ segment_manager_impl& segment_manager::get_impl() noexcept {
 
 const segment_manager_impl& segment_manager::get_impl() const noexcept {
     return *_impl;
+}
+
+future<> segment_manager::do_recovery(replica::database& db) {
+    return _impl->do_recovery(db);
 }
 
 future<> segment_manager::start() {

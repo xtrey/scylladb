@@ -1615,6 +1615,19 @@ table::update_cache(compaction_group& cg, lw_shared_ptr<memtable> m, std::vector
     }
 }
 
+bool table::add_logstor_segment(logstor::segment_descriptor& seg_desc, dht::token first_token, dht::token last_token) {
+    auto& cg = compaction_group_for_token(first_token);
+    if (&cg != &compaction_group_for_token(last_token)) {
+        return false;
+    }
+    cg.add_logstor_segment(seg_desc);
+    return true;
+}
+
+logstor::separator_buffer& table::get_logstor_separator_buffer(dht::token token, size_t write_size) {
+    return compaction_group_for_token(token).get_separator_buffer(write_size);
+}
+
 // Handles permit management only, used for situations where we don't want to inform
 // the compaction manager about backlogs (i.e., tests)
 class permit_monitor : public sstables::write_monitor {

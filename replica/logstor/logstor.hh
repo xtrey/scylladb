@@ -23,6 +23,7 @@
 namespace replica {
 
 class compaction_group;
+class database;
 
 namespace logstor {
 
@@ -44,6 +45,8 @@ public:
 
     logstor(const logstor&) = delete;
     logstor& operator=(const logstor&) = delete;
+
+    future<> do_recovery(replica::database&);
 
     future<> start();
     future<> stop();

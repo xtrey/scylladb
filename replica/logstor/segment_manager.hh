@@ -20,7 +20,11 @@
 #include "types.hh"
 #include "utils/updateable_value.hh"
 
-namespace replica::logstor {
+namespace replica {
+
+class database;
+
+namespace logstor {
 
 class compaction_manager;
 class segment_set;
@@ -88,6 +92,8 @@ public:
     segment_manager(const segment_manager&) = delete;
     segment_manager& operator=(const segment_manager&) = delete;
 
+    future<> do_recovery(replica::database&);
+
     future<> start();
     future<> stop();
 
@@ -118,4 +124,5 @@ public:
 
 };
 
+}
 }

@@ -16,6 +16,7 @@
 #include <seastar/core/execution_stage.hh>
 #include <seastar/core/when_all.hh>
 #include "replica/global_table_ptr.hh"
+#include "replica/logstor/compaction.hh"
 #include "types/user.hh"
 #include "utils/assert.hh"
 #include "utils/hash.hh"
@@ -614,6 +615,10 @@ public:
     future<> add_sstable_and_update_cache(sstables::shared_sstable sst,
                                           sstables::offstrategy offstrategy = sstables::offstrategy::no);
     future<> add_sstables_and_update_cache(const std::vector<sstables::shared_sstable>& ssts);
+
+    bool add_logstor_segment(logstor::segment_descriptor&, dht::token first_token, dht::token last_token);
+
+    logstor::separator_buffer& get_logstor_separator_buffer(dht::token token, size_t write_size);
 
     // Restricted to new sstables produced by external processes such as repair.
     // The sstable might undergo split if table is in split mode.
@@ -1746,6 +1751,7 @@ public:
     const data_dictionary::user_types_storage& user_types() const noexcept;
     future<> init_commitlog();
     future<> init_logstor();
+    future<> recover_logstor();
     const gms::feature_service& features() const { return _feat; }
     future<> apply_in_memory(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&&, db::timeout_clock::time_point timeout);
     future<> apply_in_memory(const mutation& m, column_family& cf, db::rp_handle&&, db::timeout_clock::time_point timeout);

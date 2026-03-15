@@ -26,6 +26,10 @@ logstor::logstor(logstor_config config)
     , _write_buffer(_segment_manager, config.flush_sg) {
 }
 
+future<> logstor::do_recovery(replica::database& db) {
+    co_await _segment_manager.do_recovery(db);
+}
+
 future<> logstor::start() {
     logstor_logger.info("Starting logstor");
 

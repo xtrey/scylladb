@@ -1964,6 +1964,11 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             checkpoint(stop_signal, "loading non-system sstables");
             replica::distributed_loader::init_non_system_keyspaces(db, proxy, sys_ks).get();
 
+            checkpoint(stop_signal, "recovering logstor");
+            db.invoke_on_all([] (replica::database& db) {
+                return db.recover_logstor();
+            }).get();
+
             // Depends on all keyspaces being initialized because after this call
             // we can be reloading schema.
             mm.local().register_feature_listeners();
