@@ -2498,17 +2498,6 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
         replace_host_id = _gossiper.get_host_id(replace_address);
     }
 
-    auto state = _gossiper.get_endpoint_state_ptr(replace_host_id);
-    if (!state) {
-        throw std::runtime_error(::format("Cannot replace_address {} because it doesn't exist in gossip", replace_address));
-    }
-
-    // Reject to replace a node that has left the ring
-    auto status = _gossiper.get_gossip_status(replace_host_id);
-    if (status == gms::versioned_value::STATUS_LEFT || status == gms::versioned_value::REMOVED_TOKEN) {
-        throw std::runtime_error(::format("Cannot replace_address {} because it has left the ring, status={}", replace_address, status));
-    }
-
     auto dc_rack = get_dc_rack_for(replace_host_id).value_or(locator::endpoint_dc_rack::default_location);
 
     auto ri = replacement_info {

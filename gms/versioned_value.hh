@@ -49,8 +49,6 @@ public:
     static constexpr std::string_view STATUS_NORMAL{"NORMAL"};
     static constexpr std::string_view STATUS_LEFT{"LEFT"};
 
-    static constexpr std::string_view REMOVED_TOKEN{"removed"};
-
     static constexpr std::string_view SHUTDOWN{"shutdown"};
 
     [[nodiscard]] version_type version() const noexcept { return _version; };

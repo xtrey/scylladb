@@ -2350,7 +2350,6 @@ bool gossiper::is_safe_for_bootstrap(inet_address endpoint) const {
     auto status = get_gossip_status(*eps);
     std::unordered_set<std::string_view> allowed_statuses{
         versioned_value::STATUS_LEFT,
-        versioned_value::REMOVED_TOKEN,
     };
     allowed = allowed_statuses.contains(status);
     logger.debug("is_safe_for_bootstrap: node={}, status={}, allowed_to_bootstrap={}", endpoint, status, allowed);

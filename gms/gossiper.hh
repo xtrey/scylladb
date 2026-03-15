@@ -199,11 +199,9 @@ private:
 
 public:
     static constexpr std::array DEAD_STATES{
-        versioned_value::REMOVED_TOKEN,
         versioned_value::STATUS_LEFT,
     };
     static constexpr std::array SILENT_SHUTDOWN_STATES{
-        versioned_value::REMOVED_TOKEN,
         versioned_value::STATUS_LEFT,
         versioned_value::STATUS_BOOTSTRAPPING,
         versioned_value::STATUS_UNKNOWN,
