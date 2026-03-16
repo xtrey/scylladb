@@ -17,6 +17,7 @@
 #include <seastar/core/thread.hh>
 #include <seastar/core/byteorder.hh>
 #include <seastar/core/future.hh>
+#include <seastar/core/sleep.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/reactor.hh>
 #include <seastar/core/temporary_buffer.hh>
@@ -682,8 +683,9 @@ static void prepopulate(const raw_cql_test_config& cfg) {
     }
 }
 
-static void wait_for_cql(const raw_cql_test_config& cfg) {
+static void wait_for_cql(const raw_cql_test_config& cfg, abort_source& as) {
     for (int attempt = 0; attempt < 3000; ++attempt) {
+        as.check();
         try {
             auto cs = connect(socket_address{net::inet_address{cfg.remote_host}, cfg.port}).get();
             auto conn = make_connection(std::move(cs), cfg);
@@ -691,9 +693,8 @@ static void wait_for_cql(const raw_cql_test_config& cfg) {
             conn->stop().get();
             return;
         } catch (...) {
-            // not ready yet
         }
-        sleep(std::chrono::milliseconds(100)).get();
+        sleep_abortable(std::chrono::milliseconds(100), as).get();
         if (attempt >= 100 && attempt % 10 == 0) {
             std::cout << format("Retrying connect to cql port (attempt {})", attempt+1) << std::endl;
         }
@@ -713,7 +714,7 @@ static void workload_main(const raw_cql_test_config& cfg, sharded<abort_source>*
             });
         }).get();
     });
-    wait_for_cql(cfg);
+    wait_for_cql(cfg, as->local());
     if (cfg.workload != "connect") {
         prepopulate(cfg);
     }

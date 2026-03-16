@@ -77,8 +77,9 @@ static future<> make_request(http::experimental::client& cli, sstring operation,
     });
 }
 
-static void wait_for_alternator(const test_config& c) {
+static void wait_for_alternator(const test_config& c, abort_source& as) {
     for (int attempt = 0; attempt < 3000; ++attempt) {
+        as.check();
         try {
             auto cli = get_client(c);
             auto close = defer([&] { cli.close().get(); });
@@ -86,7 +87,7 @@ static void wait_for_alternator(const test_config& c) {
             return;
         } catch (...) {
         }
-        sleep(std::chrono::milliseconds(100)).get();
+        sleep_abortable(std::chrono::milliseconds(100), as).get();
         if (attempt >= 100 && attempt % 10 == 0) {
             std::cout << fmt::format("Retrying connect to alternator port (attempt {})", attempt + 1) << std::endl;
         }
@@ -389,7 +390,7 @@ auto make_client_pool(const test_config& c) {
 void workload_main(const test_config& c, sharded<abort_source>* as) {
     std::cout << "Running test with config: " << c << std::endl;
 
-    wait_for_alternator(c);
+    wait_for_alternator(c, as->local());
 
     auto cli = get_client(c);
     auto finally = defer([&] {
