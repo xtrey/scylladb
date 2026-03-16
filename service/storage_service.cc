@@ -3804,14 +3804,14 @@ storage_service::describe_ring(const sstring& keyspace, bool include_only_local_
 }
 
 future<utils::chunked_vector<dht::token_range_endpoints>>
-storage_service::describe_ring_for_table(const sstring& keyspace_name, const sstring& table_name) const {
-    slogger.debug("describe_ring for table {}.{}", keyspace_name, table_name);
-    auto& t = _db.local().find_column_family(keyspace_name, table_name);
+storage_service::describe_ring_for_table(table_id tid) const {
+    auto& t = _db.local().find_column_family(tid);
+    const auto& schema = *t.schema();
+    slogger.debug("describe_ring for table {}.{}", schema.ks_name(), schema.cf_name());
     if (!t.uses_tablets()) {
-        auto ranges = co_await describe_ring(keyspace_name);
+        auto ranges = co_await describe_ring(schema.ks_name());
         co_return ranges;
     }
-    table_id tid = t.schema()->id();
     auto erm = t.get_effective_replication_map();
     auto& tmap = erm->get_token_metadata_ptr()->tablets().get_tablet_map(tid);
     const auto& topology = erm->get_topology();
