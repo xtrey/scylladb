@@ -1351,13 +1351,10 @@ future<> gossiper::do_gossip_to_unreachable_member(gossip_digest_syn message) {
         std::uniform_real_distribution<double> dist(0, 1);
         double rand_dbl = dist(_random_engine);
         if (rand_dbl < prob) {
-            std::set<locator::host_id> addrs;
-            for (auto&& x : _unreachable_endpoints) {
-                // Ignore the node which is decommissioned
-                if (get_gossip_status(_address_map.get(x.first)) != sstring(versioned_value::STATUS_LEFT)) {
-                    addrs.insert(x.first);
-                }
-            }
+            auto addrs = _unreachable_endpoints | std::ranges::views::keys | std::views::filter([this] (auto ep) {
+                // Ignore the node which is no longer part of the cluster
+                return !_topo_sm._topology.left_nodes.contains(raft::server_id(ep.uuid()));
+            }) | std::ranges::to<std::set>();
             logger.trace("do_gossip_to_unreachable_member: live_endpoint nr={} unreachable_endpoints nr={}",
                 live_endpoint_count, unreachable_endpoint_count);
             return send_gossip(message, addrs);
@@ -1702,7 +1699,7 @@ future<> gossiper::handle_major_state_change(endpoint_state eps, permit_id pid, 
 }
 
 bool gossiper::is_dead_state(const endpoint_state& eps) const {
-    return std::ranges::any_of(DEAD_STATES, [state = get_gossip_status(eps)](const auto& deadstate) { return state == deadstate; });
+    return _topo_sm._topology.left_nodes.contains(raft::server_id(eps.get_host_id().uuid()));
 }
 
 bool gossiper::is_shutdown(const locator::host_id& endpoint) const {
@@ -2144,11 +2141,9 @@ future<> gossiper::do_stop_gossiping() {
         logger.info("gossip is already stopped");
         co_return;
     }
+
     auto my_ep_state = get_this_endpoint_state_ptr();
-    if (my_ep_state) {
-        logger.info("My status = {}", get_gossip_status(*my_ep_state));
-    }
-    if (my_ep_state && !is_silent_shutdown_state(*my_ep_state)) {
+    if (my_ep_state && _topo_sm._topology.normal_nodes.contains(raft::server_id(my_host_id().uuid()))) {
         auto local_generation = my_ep_state->get_heart_beat_state().get_generation();
         logger.info("Announcing shutdown");
         co_await add_local_application_state(application_state::STATUS, versioned_value::shutdown(true));
