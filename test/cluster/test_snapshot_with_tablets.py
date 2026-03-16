@@ -71,7 +71,7 @@ async def test_snapshot_on_all_nodes(manager: ManagerClient):
     """
     topology = topo(rf = 3, nodes = 3, racks = 3, dcs = 1)
 
-    servers, _ = await create_cluster(topology, True, manager, logger)
+    servers, _ = await create_cluster(topology, manager, logger)
 
     snapshot_name = unique_name('snap_')
 
