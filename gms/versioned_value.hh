@@ -46,7 +46,6 @@ public:
     // values for ApplicationState.STATUS
     static constexpr std::string_view STATUS_UNKNOWN{"UNKNOWN"};
     static constexpr std::string_view STATUS_NORMAL{"NORMAL"};
-    static constexpr std::string_view STATUS_LEFT{"LEFT"};
 
     static constexpr std::string_view SHUTDOWN{"shutdown"};
 
@@ -103,12 +102,6 @@ public:
 
     static versioned_value schema(const table_schema_version& new_version) {
         return versioned_value(new_version.to_sstring());
-    }
-
-    static versioned_value left(const std::unordered_set<dht::token>& tokens, int64_t expire_time) {
-        return versioned_value(version_string({sstring(versioned_value::STATUS_LEFT),
-                                               make_token_string(tokens),
-                                               std::to_string(expire_time)}));
     }
 
     static versioned_value host_id(const locator::host_id& host_id) {

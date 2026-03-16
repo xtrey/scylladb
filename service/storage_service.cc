@@ -2744,12 +2744,7 @@ future<> storage_service::raft_decommission() {
     rtlogger.info("decommission: waiting for completion (request ID: {})", request_id);
     auto error = co_await wait_for_topology_request_completion(request_id);
 
-    if (error.empty()) {
-        // Need to set it otherwise gossiper will try to send shutdown on exit
-        rtlogger.info("decommission: successfully removed from topology (request ID: {}), updating gossip status", request_id);
-        co_await _gossiper.add_local_application_state(std::pair(gms::application_state::STATUS, gms::versioned_value::left({}, _gossiper.now().time_since_epoch().count())));
-        rtlogger.info("Decommission succeeded. Request ID: {}", request_id);
-    } else  {
+    if (!error.empty()) {
         auto err = fmt::format("Decommission failed. See earlier errors ({}). Request ID: {}", error, request_id);
         rtlogger.error("{}", err);
         throw std::runtime_error(err);

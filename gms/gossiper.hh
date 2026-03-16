@@ -198,13 +198,6 @@ private:
     endpoint_locks_map _endpoint_locks;
 
 public:
-    static constexpr std::array DEAD_STATES{
-        versioned_value::STATUS_LEFT,
-    };
-    static constexpr std::array SILENT_SHUTDOWN_STATES{
-        versioned_value::STATUS_LEFT,
-        versioned_value::STATUS_UNKNOWN,
-    };
     static constexpr std::chrono::milliseconds INTERVAL{1000};
 
     // Maximum difference between remote generation value and generation
@@ -580,7 +573,6 @@ public:
     bool is_shutdown(const endpoint_state& eps) const;
     bool is_normal(const locator::host_id& endpoint) const;
     bool is_cql_ready(const locator::host_id& endpoint) const;
-    bool is_silent_shutdown_state(const endpoint_state& ep_state) const;
     void force_newer_generation();
 public:
     std::string_view get_gossip_status(const endpoint_state& ep_state) const noexcept;

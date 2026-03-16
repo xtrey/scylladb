@@ -1714,10 +1714,6 @@ bool gossiper::is_normal(const locator::host_id& endpoint) const {
     return get_gossip_status(endpoint) == versioned_value::STATUS_NORMAL;
 }
 
-bool gossiper::is_silent_shutdown_state(const endpoint_state& ep_state) const{
-    return std::ranges::any_of(SILENT_SHUTDOWN_STATES, [state = get_gossip_status(ep_state)](const auto& deadstate) { return state == deadstate; });
-}
-
 future<> gossiper::apply_new_states(endpoint_state local_state, const endpoint_state& remote_state, permit_id pid, bool shadow_round) {
     // don't SCYLLA_ASSERT here, since if the node restarts the version will go back to zero
     //int oldVersion = local_state.get_heart_beat_state().get_heart_beat_version();
