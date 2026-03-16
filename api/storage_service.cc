@@ -572,14 +572,6 @@ void unset_view_builder(http_context& ctx, routes& r) {
     cf::get_built_indexes.unset(r);
 }
 
-static future<json::json_return_type> describe_ring_as_json(sharded<service::storage_service>& ss, sstring keyspace) {
-    co_return json::json_return_type(stream_range_as_array(co_await ss.local().describe_ring(keyspace), token_range_endpoints_to_json));
-}
-
-static future<json::json_return_type> describe_ring_as_json_for_table(const sharded<service::storage_service>& ss, table_id tid) {
-    co_return json::json_return_type(stream_range_as_array(co_await ss.local().describe_ring_for_table(tid), token_range_endpoints_to_json));
-}
-
 namespace {
 template <typename Key, typename Value>
 storage_service_json::mapper map_to_json(const std::pair<Key, Value>& i) {
@@ -677,13 +669,16 @@ rest_describe_ring(http_context& ctx, sharded<service::storage_service>& ss, std
         if (!req->param.exists("keyspace")) {
             throw bad_param_exception("The keyspace param is not provided");
         }
-        auto keyspace = req->get_path_param("keyspace");
+        auto keyspace = validate_keyspace(ctx, req);
         auto table = req->get_query_param("table");
+        utils::chunked_vector<dht::token_range_endpoints> ranges;
         if (!table.empty()) {
             auto table_id = validate_table(ctx.db.local(), keyspace, table);
-            co_return co_await describe_ring_as_json_for_table(ss, table_id);
+            ranges = co_await ss.local().describe_ring_for_table(table_id);
+        } else {
+            ranges = co_await ss.local().describe_ring(keyspace);
         }
-        co_return co_await describe_ring_as_json(ss, validate_keyspace(ctx, req));
+        co_return json::json_return_type(stream_range_as_array(std::move(ranges), token_range_endpoints_to_json));
 }
 
 static
