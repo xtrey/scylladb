@@ -408,7 +408,7 @@ public:
 
     const stats& get_stats() const noexcept { return _stats; }
 
-    future<> write_to_separator(write_buffer&, segment_ref);
+    future<> write_to_separator(write_buffer&, segment_ref, size_t segment_seq_num);
 
     separator_buffer allocate_separator_buffer() override;
     future<> flush_separator_buffer(separator_buffer buf, compaction_group&) override;
@@ -582,6 +582,7 @@ class segment_manager_impl {
     seg_ptr _active_segment;
     segment_pool _segment_pool;
     std::optional<shared_future<>> _switch_segment_fut;
+    size_t _segment_seq_num{0};
 
     seastar::gate _async_gate;
     future<> _reserve_replenisher{make_ready_future<>()};
@@ -589,9 +590,6 @@ class segment_manager_impl {
 
     std::vector<segment_descriptor> _segment_descs;
     seastar::circular_buffer<log_segment_id> _free_segments;
-
-    // number of segments that are held by separator buffers waiting to be flushed.
-    size_t _held_segment_count{0};
 
     static constexpr size_t separator_flush_max_concurrency = 4;
 
@@ -602,7 +600,7 @@ class segment_manager_impl {
     std::vector<write_buffer*> _available_separator_buffers;
 
     std::function<void()> _trigger_compaction_fn;
-    std::function<void()> _trigger_separator_flush_fn;
+    std::function<void(size_t)> _trigger_separator_flush_fn;
 
     utils::phased_barrier _writes_phaser{"logstor_sm_writes"};
 
@@ -642,9 +640,9 @@ public:
         }
     }
 
-    void trigger_separator_flush() {
+    void trigger_separator_flush(size_t seq) {
         if (_trigger_separator_flush_fn) {
-            _trigger_separator_flush_fn();
+            _trigger_separator_flush_fn(seq);
         }
     }
 
@@ -660,7 +658,7 @@ public:
         _trigger_compaction_fn = std::move(fn);
     }
 
-    void set_trigger_separator_flush_hook(std::function<void()> fn) {
+    void set_trigger_separator_flush_hook(std::function<void(size_t)> fn) {
         _trigger_separator_flush_fn = std::move(fn);
     }
 
@@ -720,14 +718,11 @@ private:
     future<segment_allocation_guard> allocate_segment();
 
     segment_ref make_segment_ref(log_segment_id seg_id) {
-        ++_held_segment_count;
         return segment_ref(seg_id,
             [this, seg_id] {
-                --_held_segment_count;
                 return free_segment(seg_id);
             },
-            [this, seg_id] {
-                --_held_segment_count;
+            [seg_id] {
                 logstor_logger.warn("Segment {} has no more references but it can't be freed", seg_id);
             }
         );
@@ -939,6 +934,7 @@ future<log_location> segment_manager_impl::write(write_buffer& wb) {
         seg_ptr seg = _active_segment;
         auto seg_holder = seg->hold();
         auto seg_ref = seg->ref();
+        auto segment_seq_num = _segment_seq_num;
 
         auto loc = seg->allocate(data.size());
         auto& desc = get_segment_descriptor(loc);
@@ -957,7 +953,7 @@ future<log_location> segment_manager_impl::write(write_buffer& wb) {
         co_await wb.complete_writes(loc);
 
         co_await with_scheduling_group(_cfg.separator_sg, [&] {
-            return _compaction_mgr.write_to_separator(wb, std::move(seg_ref));
+            return _compaction_mgr.write_to_separator(wb, std::move(seg_ref), segment_seq_num);
         });
     }
 
@@ -1055,6 +1051,7 @@ future<> segment_manager_impl::switch_active_segment() {
 
     auto old_seg = std::exchange(_active_segment, std::move(new_seg));
     _stats.segments_in_use++;
+    _segment_seq_num++;
 
     if (old_seg) {
         // close old segment in background
@@ -1063,11 +1060,10 @@ future<> segment_manager_impl::switch_active_segment() {
         }).then([old_seg] {});
     }
 
-    // a slow compaction group may take long to fill the separator buffer, and it holds
-    // the segments until the buffer is flushed. if there are too many held segments
-    // then trigger separator flush to free held segments.
-    if (_held_segment_count > _max_segments / 10) {
-        trigger_separator_flush();
+    // trigger separator flush for separator buffers that hold old segments
+    auto u = std::max<size_t>(1, _max_segments / 100);
+    if (_segment_seq_num % u == 0 && _segment_seq_num > 5*u) {
+        trigger_separator_flush(_segment_seq_num - 5*u);
     }
 
     _active_segment->start(make_segment_ref(_active_segment->id()));
@@ -1520,7 +1516,7 @@ separator_buffer compaction_manager_impl::allocate_separator_buffer() {
     return separator_buffer(wb);
 }
 
-future<> compaction_manager_impl::write_to_separator(write_buffer& wb, segment_ref seg_ref) {
+future<> compaction_manager_impl::write_to_separator(write_buffer& wb, segment_ref seg_ref, size_t segment_seq_num) {
     for (auto&& w : wb.records()) {
         co_await coroutine::maybe_yield();
 
@@ -1534,6 +1530,10 @@ future<> compaction_manager_impl::write_to_separator(write_buffer& wb, segment_r
         // the segment is freed after all separator buffers that reference it are flushed.
         if (buf.held_segments.empty() || buf.held_segments.back().id() != seg_ref.id()) {
             buf.held_segments.push_back(seg_ref);
+        }
+
+        if (!buf.min_seq_num || segment_seq_num < *buf.min_seq_num) {
+            buf.min_seq_num = segment_seq_num;
         }
 
         buf.pending_updates.push_back(
@@ -1904,7 +1904,7 @@ void segment_manager::set_trigger_compaction_hook(std::function<void()> fn) {
     _impl->set_trigger_compaction_hook(std::move(fn));
 }
 
-void segment_manager::set_trigger_separator_flush_hook(std::function<void()> fn) {
+void segment_manager::set_trigger_separator_flush_hook(std::function<void(size_t)> fn) {
     _impl->set_trigger_separator_flush_hook(std::move(fn));
 }
 

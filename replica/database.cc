@@ -937,8 +937,8 @@ database::init_logstor() {
         trigger_logstor_compaction(false);
     });
 
-    _logstor->set_trigger_separator_flush_hook([this] {
-        (void)flush_logstor_separator();
+    _logstor->set_trigger_separator_flush_hook([this] (size_t seq_num) {
+        (void)flush_logstor_separator(seq_num);
     });
 
     dblog.info("logstor initialized");
@@ -2902,9 +2902,9 @@ future<> database::flush_logstor_separator_on_all_shards(sharded<database>& shar
     });
 }
 
-future<> database::flush_logstor_separator() {
-    return _tables_metadata.parallel_for_each_table([] (table_id, lw_shared_ptr<table> table) {
-        return table->flush_separator();
+future<> database::flush_logstor_separator(std::optional<size_t> seq_num) {
+    return _tables_metadata.parallel_for_each_table([seq_num] (table_id, lw_shared_ptr<table> table) {
+        return table->flush_separator(seq_num);
     });
 }
 

@@ -416,3 +416,44 @@ async def test_drop_table(manager: ManagerClient):
             rows = await cql.run_async(f"SELECT pk, v FROM {ks}.test2 WHERE pk = {i}")
             assert len(rows) == 1, f"Expected 1 row for key {i} in test2 after all operations, but got {len(rows)}"
             assert rows[0].v == value, f"Expected value of size {value_size} for key {i} in test2 after all operations, but got {len(rows[0].v)}"
+
+@pytest.mark.asyncio
+async def test_trigger_separator_flush(manager: ManagerClient):
+    """
+    Write to 2 tablets, one slower than the other.
+    The separator buffer of the slow tablet holds writes from many different segments until it becomes full.
+    Separator flush should be triggered for the slow tablet before it's full in order to free the segments it holds.
+    Otherwise, the faster tablet can get stuck.
+    """
+    disk_size_mb = 4
+    file_size_mb = 1
+    value_size = 50 * 1024
+
+    cmdline = ['--logger-log-level', 'logstor=debug', '--smp=1']
+    cfg = {
+        'enable_logstor': True,
+        'logstor_disk_size_in_mb': disk_size_mb,
+        'logstor_file_size_in_mb': file_size_mb,
+        'experimental_features': ['logstor']
+    }
+    servers = await manager.servers_add(1, cmdline=cmdline, config=cfg)
+    cql = manager.get_cql()
+
+    async with new_test_keyspace(manager, "WITH tablets={'initial':2}") as ks:
+        await cql.run_async(f"CREATE TABLE {ks}.test (pk int PRIMARY KEY, v text) WITH storage_engine = 'logstor'")
+
+        # Calculate how many writes needed to fill disk twice
+        disk_size_bytes = disk_size_mb * 1024 * 1024
+        writes_to_fill_disk = disk_size_bytes // (value_size + 100)
+        total_writes = 2 * writes_to_fill_disk
+
+        # Write with overwrites to fill disk twice
+        for i in range(total_writes):
+            # write small values to multiple keys that will go to both tablets, in order to fill the slow tablet.
+            for k in range(10):
+                await cql.run_async(f"INSERT INTO {ks}.test (pk, v) VALUES ({k}, 'x')")
+
+            # write large values to a single key in the fast tablet
+            pk = 0
+            value = f"value_{i}_" + ('x' * (value_size - 20))
+            await cql.run_async(f"INSERT INTO {ks}.test (pk, v) VALUES ({pk}, '{value}')")

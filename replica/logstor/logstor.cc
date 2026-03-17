@@ -290,7 +290,7 @@ void logstor::set_trigger_compaction_hook(std::function<void()> fn) {
     _segment_manager.set_trigger_compaction_hook(std::move(fn));
 }
 
-void logstor::set_trigger_separator_flush_hook(std::function<void()> fn) {
+void logstor::set_trigger_separator_flush_hook(std::function<void(size_t)> fn) {
     _segment_manager.set_trigger_separator_flush_hook(std::move(fn));
 }
 

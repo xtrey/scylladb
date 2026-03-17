@@ -295,7 +295,7 @@ public:
 
     future<> discard_logstor_segments();
 
-    future<> flush_separator();
+    future<> flush_separator(std::optional<size_t> seq_num = std::nullopt);
     logstor::separator_buffer& get_separator_buffer(size_t write_size);
 
     logstor::segment_set& logstor_segments() noexcept {

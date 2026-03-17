@@ -127,6 +127,7 @@ struct separator_buffer {
     write_buffer* buf;
     utils::chunked_vector<future<>> pending_updates;
     utils::chunked_vector<segment_ref> held_segments;
+    std::optional<size_t> min_seq_num;
     bool flushed{false};
 
     separator_buffer(write_buffer* wb)
