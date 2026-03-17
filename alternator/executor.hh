@@ -51,6 +51,10 @@ namespace service {
     class storage_service;
 }
 
+namespace vector_search {
+    class vector_store_client;
+}
+
 namespace cdc {
     class metadata;
 }
@@ -150,6 +154,7 @@ class executor : public peering_sharded_service<executor> {
     service::migration_manager& _mm;
     db::system_distributed_keyspace& _sdks;
     cdc::metadata& _cdc_metadata;
+    vector_search::vector_store_client& _vsc;
     utils::updateable_value<bool> _enforce_authorization;
     utils::updateable_value<bool> _warn_authorization;
     seastar::sharded<audit::audit>& _audit;
@@ -193,6 +198,7 @@ public:
              service::migration_manager& mm,
              db::system_distributed_keyspace& sdks,
              cdc::metadata& cdc_metadata,
+             vector_search::vector_store_client& vsc,
              smp_service_group ssg,
              utils::updateable_value<uint32_t> default_timeout_in_ms);
     ~executor();
