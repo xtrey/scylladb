@@ -193,6 +193,7 @@ public:
                     if (_pos == _info.size()) {
                         _info.clear();
                         _info = co_await _client->list_objects(_bucket, _prefix, _paging);
+                        _pos = 0;
                     }
                     if (_info.empty()) {
                         break;
