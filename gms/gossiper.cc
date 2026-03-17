@@ -2322,67 +2322,6 @@ std::string_view gossiper::get_gossip_status(const locator::host_id& endpoint) c
     return do_get_gossip_status(get_application_state_ptr(endpoint, application_state::STATUS));
 }
 
-std::set<sstring> gossiper::get_supported_features(locator::host_id endpoint) const {
-    auto app_state = get_application_state_ptr(endpoint, application_state::SUPPORTED_FEATURES);
-    if (!app_state) {
-        return {};
-    }
-    return feature_service::to_feature_set(app_state->value());
-}
-
-std::set<sstring> gossiper::get_supported_features(const std::unordered_map<locator::host_id, sstring>& loaded_peer_features, ignore_features_of_local_node ignore_local_node) const {
-    std::unordered_map<locator::host_id, std::set<sstring>> features_map;
-    std::set<sstring> common_features;
-
-    for (auto& x : loaded_peer_features) {
-        auto features = feature_service::to_feature_set(x.second);
-        if (features.empty()) {
-            logger.warn("Loaded empty features for peer node {}", x.first);
-        } else {
-            features_map.emplace(x.first, std::move(features));
-        }
-    }
-
-    for (auto& x : _endpoint_state_map) {
-        auto host_id = x.second->get_host_id();
-        auto features = get_supported_features(host_id);
-        if (ignore_local_node && host_id == my_host_id()) {
-            logger.debug("Ignore SUPPORTED_FEATURES of local node: features={}", features);
-            continue;
-        }
-        if (features.empty()) {
-            auto it = loaded_peer_features.find(host_id);
-            if (it != loaded_peer_features.end()) {
-                logger.info("Node {} does not contain SUPPORTED_FEATURES in gossip, using features saved in system table, features={}", host_id, feature_service::to_feature_set(it->second));
-            } else {
-                logger.warn("Node {} does not contain SUPPORTED_FEATURES in gossip or system table", host_id);
-            }
-        } else {
-            // Replace the features with live info
-            features_map[host_id] = std::move(features);
-        }
-    }
-
-    if (ignore_local_node) {
-        features_map.erase(my_host_id());
-    }
-
-    if (!features_map.empty()) {
-        common_features = features_map.begin()->second;
-    }
-
-    for (auto& x : features_map) {
-        auto& features = x.second;
-        std::set<sstring> result;
-        std::set_intersection(features.begin(), features.end(),
-                common_features.begin(), common_features.end(),
-                std::inserter(result, result.end()));
-        common_features = std::move(result);
-    }
-    common_features.erase("");
-    return common_features;
-}
-
 void gossiper::check_snitch_name_matches(sstring local_snitch_name) const {
     for (const auto& [address, state] : _endpoint_state_map) {
         const auto remote_snitch_name = state->get_application_state_ptr(application_state::SNITCH_NAME);

@@ -91,7 +91,6 @@ struct loaded_endpoint_state {
 class gossiper : public seastar::async_sharded_service<gossiper>, public seastar::peering_sharded_service<gossiper> {
 public:
     using clk = seastar::lowres_system_clock;
-    using ignore_features_of_local_node = bool_class<class ignore_features_of_local_node_tag>;
     using generation_for_nodes = std::unordered_map<locator::host_id, generation_type>;
 private:
     using messaging_verb = netw::messaging_verb;
@@ -589,12 +588,7 @@ private:
     gossip_address_map& _address_map;
     gossip_config _gcfg;
     condition_variable _failure_detector_loop_cv;
-    // Get features supported by a particular node
-    std::set<sstring> get_supported_features(locator::host_id endpoint) const;
     locator::token_metadata_ptr get_token_metadata_ptr() const noexcept;
-public:
-    // Get features supported by all the nodes this node knows about
-    std::set<sstring> get_supported_features(const std::unordered_map<locator::host_id, sstring>& loaded_peer_features, ignore_features_of_local_node ignore_local_node) const;
 private:
     seastar::metrics::metric_groups _metrics;
 public:
