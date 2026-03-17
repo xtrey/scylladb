@@ -41,7 +41,7 @@ public:
                _ip == other._ip;
     }
 
-    endpoint_state(inet_address ip) noexcept
+    explicit endpoint_state(inet_address ip) noexcept
         : _heart_beat_state()
         , _update_timestamp(clk::now())
         , _ip(ip)

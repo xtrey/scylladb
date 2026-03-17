@@ -1173,10 +1173,10 @@ future<> gossiper::unregister_(shared_ptr<i_endpoint_state_change_subscriber> su
 
 std::set<locator::host_id> gossiper::get_live_members() const {
     std::set<locator::host_id> live_members(_live_endpoints.begin(), _live_endpoints.end());
-    auto myip = get_broadcast_address();
+    auto myid = my_host_id();
     logger.debug("live_members before={}", live_members);
-    if (!is_shutdown(myip)) {
-        live_members.insert(my_host_id());
+    if (!is_shutdown(myid)) {
+        live_members.insert(myid);
     }
     logger.debug("live_members after={}", live_members);
     return live_members;
@@ -1389,7 +1389,7 @@ endpoint_state& gossiper::my_endpoint_state() {
     auto ep = get_broadcast_address();
     auto it = _endpoint_state_map.find(id);
     if (it == _endpoint_state_map.end()) {
-        it = _endpoint_state_map.emplace(id, make_endpoint_state_ptr({ep})).first;
+        it = _endpoint_state_map.emplace(id, make_endpoint_state_ptr(endpoint_state{ep})).first;
     }
     return const_cast<endpoint_state&>(*it->second);
 }
