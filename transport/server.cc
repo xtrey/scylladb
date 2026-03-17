@@ -393,7 +393,8 @@ void cql_server::init_messaging_service() {
             co_return co_await container().invoke_on(shard, [src_host, req = std::move(req)] (cql_server& shard_svc) mutable -> future<forward_cql_execute_response> {
                 service::client_state cs(shard_svc._auth_service,
                     &shard_svc._sl_controller,
-                    std::move(req.client_state));
+                    std::move(req.client_state),
+                    &shard_svc._abort_source);
                 tracing::trace_state_ptr trace_state_ptr;
                 if (req.trace_info) {
                     trace_state_ptr = tracing::tracing::get_local_tracing_instance().create_session(*req.trace_info);
@@ -1052,7 +1053,7 @@ cql_server::connection::connection(cql_server& server, socket_address server_add
     : generic_server::connection{server, std::move(fd), sem, std::move(initial_sem_units)}
     , _server(server)
     , _server_addr(server_addr)
-    , _client_state(service::client_state::external_tag{}, server._auth_service, &server._sl_controller, server.timeout_config(), addr, bool(server._used_by_maintenance_socket))
+    , _client_state(service::client_state::external_tag{}, server._auth_service, &server._sl_controller, server.timeout_config(), addr, bool(server._used_by_maintenance_socket), &server._abort_source)
     , _current_scheduling_group(server.get_scheduling_group_for_new_connection())
 {
     _shedding_timer.set_callback([this] {
@@ -1835,7 +1836,7 @@ cql_server::process(uint16_t stream, request_reader in, service::client_state& c
             msg = co_await container().invoke_on(shard, sg, [&, stream, dialect, version] (cql_server& server) -> future<process_fn_return_type> {
                 bytes_ostream linearization_buffer;
                 request_reader in(is, linearization_buffer);
-                auto local_client_state = gcs.get();
+                auto local_client_state = gcs.get(&server._abort_source);
                 auto local_trace_state = gt.get();
                 co_return co_await process_fn(local_client_state, server._query_processor, in, stream, version,
                         /* FIXME */empty_service_permit(), std::move(local_trace_state), false, cached_vals, dialect);
