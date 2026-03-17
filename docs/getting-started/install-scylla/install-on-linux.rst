@@ -133,19 +133,19 @@ Install ScyllaDB
     
                sudo yum install scylla
 
-            Running the command installs the latest official version of ScyllaDB Open Source.
-            Alternatively, you can to install a specific patch version:
+            Running the command installs the latest official version of ScyllaDB.
+            Alternatively, you can install a specific patch version:
 
             .. code-block:: console
     
                sudo yum install scylla-<your patch version>
 
-            Example: The following example shows the command to install ScyllaDB 5.2.3.
+            Example: The following example shows installing ScyllaDB 2025.3.1.
 
             .. code-block:: console
                :class: hide-copy-button
     
-               sudo yum install scylla-5.2.3
+               sudo yum install scylla-2025.3.1
 
 .. include:: /getting-started/_common/setup-after-install.rst
 
