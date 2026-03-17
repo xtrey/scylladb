@@ -4002,6 +4002,7 @@ future<std::unordered_map<sstring, table::snapshot_details>> table::get_snapshot
             }
 
             auto lister = directory_lister(snapshots_dir, lister::dir_entry_types::of<directory_entry_type::directory>());
+            auto close_lister = deferred_close(lister);
             while (auto de = lister.get().get()) {
                 auto snapshot_name = de->name;
                 all_snapshots.emplace(snapshot_name, snapshot_details());
