@@ -120,8 +120,8 @@ async def test_maintenance_socket(manager: ManagerClient, cql_clusters: CqlClust
     session = superuser_cluster.connect()
 
     session.execute("CREATE ROLE john WITH PASSWORD = 'password' AND LOGIN = true;")
-    session.execute("CREATE KEYSPACE ks1 WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1};")
-    session.execute("CREATE KEYSPACE ks2 WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1};")
+    session.execute("CREATE KEYSPACE ks1 WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1};")
+    session.execute("CREATE KEYSPACE ks2 WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1};")
     session.execute("CREATE TABLE ks1.t1 (pk int PRIMARY KEY, val int);")
     session.execute("CREATE TABLE ks2.t1 (pk int PRIMARY KEY, val int);")
     session.execute("GRANT SELECT ON ks1.t1 TO john;")
@@ -146,7 +146,7 @@ async def test_maintenance_socket(manager: ManagerClient, cql_clusters: CqlClust
     maintenance_session.execute("SELECT * FROM ks1.t1")
     maintenance_session.execute("SELECT * FROM ks2.t1")
     maintenance_session.execute("INSERT INTO ks1.t1 (pk, val) VALUES (1, 1);")
-    maintenance_session.execute("CREATE KEYSPACE ks3 WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1};")
+    maintenance_session.execute("CREATE KEYSPACE ks3 WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1};")
     maintenance_session.execute("CREATE TABLE ks1.t2 (pk int PRIMARY KEY, val int);")
 
 
@@ -217,7 +217,7 @@ async def test_no_default_superuser_maintenance_socket_ops(manager: ManagerClien
     cql_clusters.append(admin_session.cluster)
 
     logger.info("Verifying superuser can create a keyspace")
-    admin_session.execute("CREATE KEYSPACE ks1 WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}")
+    admin_session.execute("CREATE KEYSPACE ks1 WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}")
 
     logger.info("Altering role to remove superuser via maintenance socket")
     session.execute(f"ALTER ROLE {new_role} WITH SUPERUSER = false")
@@ -234,7 +234,7 @@ async def test_no_default_superuser_maintenance_socket_ops(manager: ManagerClien
                         auth_provider=PlainTextAuthProvider(username=new_role, password=new_role_password))
         try:
             s = c.connect()
-            s.execute("CREATE KEYSPACE ks2 WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}")
+            s.execute("CREATE KEYSPACE ks2 WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}")
             return None  # Still cached as superuser, retry
         except Unauthorized:
             return True
@@ -288,7 +288,7 @@ async def test_maintenance_socket_grant_revoke(manager: ManagerClient, cql_clust
     session = await get_ready_maintenance_session(socket_path)
     cql_clusters.append(session.cluster)
 
-    session.execute("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}")
+    session.execute("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}")
     session.execute("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
     session.execute("CREATE ROLE role1 WITH PASSWORD = 'pass' AND LOGIN = true")
 
