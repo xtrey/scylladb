@@ -1603,9 +1603,8 @@ future<> gossiper::real_mark_alive(locator::host_id host_id) {
     }
 
     // Do not mark a node with status shutdown as UP.
-    auto status = sstring(get_gossip_status(*es));
-    if (status == sstring(versioned_value::SHUTDOWN)) {
-        logger.warn("Skip marking node {} with status = {} as UP", host_id, status);
+    if (is_shutdown(*es)) {
+        logger.warn("Skip marking node {} with status = shutdown as UP", host_id);
         co_return;
     }
 
@@ -1630,7 +1629,7 @@ future<> gossiper::real_mark_alive(locator::host_id host_id) {
 
     auto addr = es->get_ip();
 
-    logger.info("InetAddress {}/{} is now UP, status = {}", host_id, addr, status);
+    logger.info("InetAddress {}/{} is now UP, status = {}", host_id, addr, get_gossip_status(*es));
 
     co_await _subscribers.for_each([addr, host_id, es, pid = permit.id()] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
         co_await subscriber->on_alive(addr, host_id, es, pid);
