@@ -52,7 +52,7 @@ Install ScyllaDB
             .. code-block:: console
                :substitutions:
     
-               sudo wget -O /etc/apt/sources.list.d/scylla.list http://downloads.scylladb.com/deb/debian/|UBUNTU_SCYLLADB_LIST|
+               sudo wget -O /etc/apt/sources.list.d/scylla.list https://downloads.scylladb.com/deb/debian/|UBUNTU_SCYLLADB_LIST|
 
 
         #. Install ScyllaDB packages.
@@ -125,7 +125,7 @@ Install ScyllaDB
             .. code-block:: console
                :substitutions:
     
-               sudo curl -o /etc/yum.repos.d/scylla.repo -L http://downloads.scylladb.com/rpm/centos/|CENTOS_SCYLLADB_REPO|
+               sudo curl -o /etc/yum.repos.d/scylla.repo -L https://downloads.scylladb.com/rpm/centos/|CENTOS_SCYLLADB_REPO|
 
         #. Install ScyllaDB packages.
 
