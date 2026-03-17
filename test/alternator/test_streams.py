@@ -469,18 +469,6 @@ def test_get_records_nonexistent_iterator(dynamodbstreams):
 # not allowed (see test_streams_change_type), and while removing and re-adding
 # a stream is possible, it is very slow. So we create four different fixtures
 # with the four different StreamViewType settings for these four fixtures.
-#
-# It turns out that DynamoDB makes reusing the same table in different tests
-# very difficult, because when we request a "LATEST" iterator we sometimes
-# miss the immediately following write (this issue doesn't happen in
-# ALternator, just in DynamoDB - presumably LATEST adds some time slack?)
-# So all the fixtures we create below have scope="function", meaning that a
-# separate table is created for each of the tests using these fixtures. This
-# slows the tests down a bit, but not by much (about 0.05 seconds per test).
-# It is still worthwhile to use a fixture rather than to create a table
-# explicitly - it is convenient, safe (the table gets deleted automatically)
-# and if in the future we can work around the DynamoDB problem, we can return
-# these fixtures to module scope.
 
 @contextmanager
 def create_table_ss(dynamodb, dynamodbstreams, type):
@@ -524,43 +512,43 @@ def create_table_s_no_ck(dynamodb, dynamodbstreams, type):
     yield table, arn
     table.delete()
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_sss_new_and_old_images_lsi(dynamodb, dynamodbstreams):
     yield from create_table_sss_lsi(dynamodb, dynamodbstreams, 'NEW_AND_OLD_IMAGES')
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_keys_only(dynamodb, dynamodbstreams):
     with create_table_ss(dynamodb, dynamodbstreams, 'KEYS_ONLY') as stream:
         yield stream
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_new_image(dynamodb, dynamodbstreams):
     with create_table_ss(dynamodb, dynamodbstreams, 'NEW_IMAGE') as stream:
         yield stream
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_old_image(dynamodb, dynamodbstreams):
     with create_table_ss(dynamodb, dynamodbstreams, 'OLD_IMAGE') as stream:
         yield stream
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_new_and_old_images(dynamodb, dynamodbstreams):
     with create_table_ss(dynamodb, dynamodbstreams, 'NEW_AND_OLD_IMAGES') as stream:
         yield stream
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_s_no_ck_keys_only(dynamodb, dynamodbstreams):
     yield from create_table_s_no_ck(dynamodb, dynamodbstreams, 'KEYS_ONLY')
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_s_no_ck_new_image(dynamodb, dynamodbstreams):
     yield from create_table_s_no_ck(dynamodb, dynamodbstreams, 'NEW_IMAGE')
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_s_no_ck_old_image(dynamodb, dynamodbstreams):
     yield from create_table_s_no_ck(dynamodb, dynamodbstreams, 'OLD_IMAGE')
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_s_no_ck_new_and_old_images(dynamodb, dynamodbstreams):
     yield from create_table_s_no_ck(dynamodb, dynamodbstreams, 'NEW_AND_OLD_IMAGES')
 
@@ -626,13 +614,30 @@ def list_shards(dynamodbstreams, arn):
 
 # Utility function for getting shard iterators starting at "LATEST" for
 # all the shards of the given stream arn.
+# On DynamoDB (but not Alternator), LATEST has a time slack: it may point to
+# a position slightly before the true end of the stream, so writes from a
+# previous test that reused the same table can appear to be "in the future"
+# relative to the returned iterators and therefore show up unexpectedly in
+# the current test's reads.  To work around this we drain any already-pending
+# records from the iterators before returning them, so the caller is
+# guaranteed to see only events written *after* this call returns.
 def latest_iterators(dynamodbstreams, arn):
     iterators = []
     for shard_id in list_shards(dynamodbstreams, arn):
         iterators.append(dynamodbstreams.get_shard_iterator(StreamArn=arn,
             ShardId=shard_id, ShardIteratorType='LATEST')['ShardIterator'])
     assert len(set(iterators)) == len(iterators)
-    return iterators
+    # Drain any records that are already visible at the LATEST position.
+    # We keep fetching until no more records are returned, which means that
+    # the stream is caught up. This drain loop is not necessary on Alternator,
+    # and needlessly slows the test down.
+    if not dynamodbstreams._endpoint.host.endswith('.amazonaws.com'):
+        return iterators
+    while True:
+        events = []
+        iterators = fetch_more(dynamodbstreams, iterators, events)
+        if events == []:
+            return iterators
 
 # Similar to latest_iterators(), just also returns the shard id which produced
 # each iterator.
@@ -641,7 +646,16 @@ def shards_and_latest_iterators(dynamodbstreams, arn):
     for shard_id in list_shards(dynamodbstreams, arn):
         shards_and_iterators.append((shard_id, dynamodbstreams.get_shard_iterator(StreamArn=arn,
             ShardId=shard_id, ShardIteratorType='LATEST')['ShardIterator']))
-    return shards_and_iterators
+    # Drain pre-existing records from the iterators, for the same reason as
+    # explained in latest_iterators() above.
+    if not dynamodbstreams._endpoint.host.endswith('.amazonaws.com'):
+        return shards_and_iterators
+    while True:
+        events = []
+        new_iters = fetch_more(dynamodbstreams, [it for _, it in shards_and_iterators], events)
+        shards_and_iterators = list(zip([sh for sh, _ in shards_and_iterators], new_iters))
+        if events == []:
+            return shards_and_iterators
 
 # Utility function for fetching more content from the stream (given its
 # array of iterators) into an "output" array. Call repeatedly to get more
@@ -806,9 +820,11 @@ def fetch_and_compare_events(dynamodb, dynamodbstreams, iterators, expected_even
 # function "updatefunc" which is supposed to do some updates to the table
 # and also return an expected_events list. do_test() then fetches the streams
 # data and compares it to the expected_events using compare_events().
-def do_test(test_table_ss_stream, dynamodb, dynamodbstreams, updatefunc, mode, p = random_string(), c = random_string()):
+def do_test(test_table_ss_stream, dynamodb, dynamodbstreams, updatefunc, mode):
     table, arn = test_table_ss_stream
     iterators = latest_iterators(dynamodbstreams, arn)
+    p = random_string()
+    c = random_string()
     expected_events = updatefunc(table, p, c)
     fetch_and_compare_events(dynamodb, dynamodbstreams, iterators, expected_events, mode)
 
@@ -956,7 +972,7 @@ def test_streams_updateitem_old_image_empty_item(test_table_ss_old_image, dynamo
 # columns they are only included in the preimage if they change.
 # Currently fails in Alternator because the item's key is missing in
 # OldImage (#6935) and the LSI key is also missing (#7030).
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_table_ss_old_image_and_lsi(dynamodb, dynamodbstreams):
     table = create_test_table(dynamodb,
         Tags=TAGS,
@@ -1357,49 +1373,48 @@ def test_streams_after_sequence_number(test_table_ss_keys_only, dynamodbstreams)
 
 # Test the "TRIM_HORIZON" iterator, which can be used to re-read *all* the
 # previously-read events of the stream shard again.
-# NOTE: This test relies on the test_table_ss_keys_only fixture giving us a
-# brand new stream, with no old events saved from other tests. If we ever
-# change this, we should change this test to use a different fixture.
-def test_streams_trim_horizon(test_table_ss_keys_only, dynamodbstreams):
-    table, arn = test_table_ss_keys_only
-    shards_and_iterators = shards_and_latest_iterators(dynamodbstreams, arn)
-    # Do two UpdateItem operations to the same key, that are expected to leave
-    # two events in the stream.
-    p = random_string()
-    c = random_string()
-    table.update_item(Key={'p': p, 'c': c},
-        UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 3})
-    table.update_item(Key={'p': p, 'c': c},
-        UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 5})
-    # Eventually, *one* of the stream shards will return the two events:
-    timeout = time.time() + 15
-    while time.time() < timeout:
-        for (shard_id, iter) in shards_and_iterators:
-            response = dynamodbstreams.get_records(ShardIterator=iter)
-            if 'Records' in response and len(response['Records']) == 2:
-                assert response['Records'][0]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
-                assert response['Records'][1]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
-                sequence_number_1 = response['Records'][0]['dynamodb']['SequenceNumber']
-                sequence_number_2 = response['Records'][1]['dynamodb']['SequenceNumber']
-                # If we use the TRIM_HORIZON iterator, we should receive the
-                # same two events again, in the same order.
-                # Note that we assume that the fixture gave us a brand new
-                # stream, with no old events saved from other tests. If we
-                # couldn't assume this, this test would need to become much
-                # more complex, and would need to read from this shard until
-                # we find the two events we are looking for.
-                iter = dynamodbstreams.get_shard_iterator(StreamArn=arn,
-                    ShardId=shard_id, ShardIteratorType='TRIM_HORIZON')['ShardIterator']
+def test_streams_trim_horizon(dynamodb, dynamodbstreams):
+    # This test needs a brand-new stream, without old data from other
+    # tests, so we can't reuse the test_table_ss_keys_only fixture.
+    with create_table_ss(dynamodb, dynamodbstreams, 'KEYS_ONLY') as (table, arn):
+        shards_and_iterators = shards_and_latest_iterators(dynamodbstreams, arn)
+        # Do two UpdateItem operations to the same key, that are expected to leave
+        # two events in the stream.
+        p = random_string()
+        c = random_string()
+        table.update_item(Key={'p': p, 'c': c},
+            UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 3})
+        table.update_item(Key={'p': p, 'c': c},
+            UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 5})
+        # Eventually, *one* of the stream shards will return the two events:
+        timeout = time.time() + 15
+        while time.time() < timeout:
+            for (shard_id, iter) in shards_and_iterators:
                 response = dynamodbstreams.get_records(ShardIterator=iter)
-                assert 'Records' in response
-                assert len(response['Records']) == 2
-                assert response['Records'][0]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
-                assert response['Records'][1]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
-                assert response['Records'][0]['dynamodb']['SequenceNumber'] == sequence_number_1
-                assert response['Records'][1]['dynamodb']['SequenceNumber'] == sequence_number_2
-                return
-        time.sleep(0.5)
-    pytest.fail("timed out")
+                if 'Records' in response and len(response['Records']) == 2:
+                    assert response['Records'][0]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
+                    assert response['Records'][1]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
+                    sequence_number_1 = response['Records'][0]['dynamodb']['SequenceNumber']
+                    sequence_number_2 = response['Records'][1]['dynamodb']['SequenceNumber']
+                    # If we use the TRIM_HORIZON iterator, we should receive the
+                    # same two events again, in the same order.
+                    # Note that we assume that the fixture gave us a brand new
+                    # stream, with no old events saved from other tests. If we
+                    # couldn't assume this, this test would need to become much
+                    # more complex, and would need to read from this shard until
+                    # we find the two events we are looking for.
+                    iter = dynamodbstreams.get_shard_iterator(StreamArn=arn,
+                        ShardId=shard_id, ShardIteratorType='TRIM_HORIZON')['ShardIterator']
+                    response = dynamodbstreams.get_records(ShardIterator=iter)
+                    assert 'Records' in response
+                    assert len(response['Records']) == 2
+                    assert response['Records'][0]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
+                    assert response['Records'][1]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
+                    assert response['Records'][0]['dynamodb']['SequenceNumber'] == sequence_number_1
+                    assert response['Records'][1]['dynamodb']['SequenceNumber'] == sequence_number_2
+                    return
+            time.sleep(0.5)
+        pytest.fail("timed out")
 
 # Test the StartingSequenceNumber information returned by DescribeStream.
 # The DynamoDB documentation explains that StartingSequenceNumber is
@@ -1414,45 +1429,47 @@ def test_streams_trim_horizon(test_table_ss_keys_only, dynamodbstreams):
 # that the important thing is that reading a shard starting at
 # StartingSequenceNumber will result in reading all the available items -
 # similar to how TRIM_HORIZON works. This is what the following test verifies.
-def test_streams_starting_sequence_number(test_table_ss_keys_only, dynamodbstreams):
-    table, arn = test_table_ss_keys_only
-    # Do two UpdateItem operations to the same key, that are expected to leave
-    # two events in the stream.
-    p = random_string()
-    c = random_string()
-    table.update_item(Key={'p': p, 'c': c},
-        UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 3})
-    table.update_item(Key={'p': p, 'c': c},
-        UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 5})
-    # Get for all the stream shards the iterator starting at the shard's
-    # StartingSequenceNumber:
-    response = dynamodbstreams.describe_stream(StreamArn=arn)
-    shards = response['StreamDescription']['Shards']
-    while 'LastEvaluatedShardId' in response['StreamDescription']:
-        response = dynamodbstreams.describe_stream(StreamArn=arn,
-            ExclusiveStartShardId=response['StreamDescription']['LastEvaluatedShardId'])
-        shards.extend(response['StreamDescription']['Shards'])
-    iterators = []
-    for shard in shards:
-        shard_id = shard['ShardId']
-        start = shard['SequenceNumberRange']['StartingSequenceNumber']
-        assert start.isdecimal()
-        iterators.append(dynamodbstreams.get_shard_iterator(StreamArn=arn,
-            ShardId=shard_id, ShardIteratorType='AT_SEQUENCE_NUMBER',
-            SequenceNumber=start)['ShardIterator'])
+def test_streams_starting_sequence_number(dynamodb, dynamodbstreams):
+    # This test needs a brand-new stream, without old data from other
+    # tests, so we can't reuse the test_table_ss_keys_only fixture.
+    with create_table_ss(dynamodb, dynamodbstreams, 'KEYS_ONLY') as (table, arn):
+        # Do two UpdateItem operations to the same key, that are expected to leave
+        # two events in the stream.
+        p = random_string()
+        c = random_string()
+        table.update_item(Key={'p': p, 'c': c},
+            UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 3})
+        table.update_item(Key={'p': p, 'c': c},
+            UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 5})
+        # Get for all the stream shards the iterator starting at the shard's
+        # StartingSequenceNumber:
+        response = dynamodbstreams.describe_stream(StreamArn=arn)
+        shards = response['StreamDescription']['Shards']
+        while 'LastEvaluatedShardId' in response['StreamDescription']:
+            response = dynamodbstreams.describe_stream(StreamArn=arn,
+                ExclusiveStartShardId=response['StreamDescription']['LastEvaluatedShardId'])
+            shards.extend(response['StreamDescription']['Shards'])
+        iterators = []
+        for shard in shards:
+            shard_id = shard['ShardId']
+            start = shard['SequenceNumberRange']['StartingSequenceNumber']
+            assert start.isdecimal()
+            iterators.append(dynamodbstreams.get_shard_iterator(StreamArn=arn,
+                ShardId=shard_id, ShardIteratorType='AT_SEQUENCE_NUMBER',
+                SequenceNumber=start)['ShardIterator'])
 
-    # Eventually, *one* of the stream shards will return the two events:
-    timeout = time.time() + 15
-    while time.time() < timeout:
-        for iter in iterators:
-            response = dynamodbstreams.get_records(ShardIterator=iter)
-            if 'Records' in response and len(response['Records']) == 2:
-                assert response['Records'][0]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
-                assert response['Records'][1]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
-                return
-        time.sleep(0.5)
+        # Eventually, *one* of the stream shards will return the two events:
+        timeout = time.time() + 15
+        while time.time() < timeout:
+            for iter in iterators:
+                response = dynamodbstreams.get_records(ShardIterator=iter)
+                if 'Records' in response and len(response['Records']) == 2:
+                    assert response['Records'][0]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
+                    assert response['Records'][1]['dynamodb']['Keys'] == {'p': {'S': p}, 'c': {'S': c}}
+                    return
+            time.sleep(0.5)
 
-    pytest.fail("timed out")
+        pytest.fail("timed out")
 
 # Above we tested some specific operations in small tests aimed to reproduce
 # a specific bug, in the following tests we do a all the different operations,
@@ -1746,50 +1763,49 @@ def test_stream_specification(test_table_stream_with_result, dynamodbstreams):
 # that the right answer is that NextShardIterator should be *missing*
 # (reproduces issue #7237).
 @pytest.mark.xfail(reason="disabled stream is deleted - issue #7239")
-def test_streams_closed_read(test_table_ss_keys_only, dynamodbstreams):
-    table, arn = test_table_ss_keys_only
-    shards_and_iterators = shards_and_latest_iterators(dynamodbstreams, arn)
-    # Do an UpdateItem operation that is expected to leave one event in the
-    # stream.
-    table.update_item(Key={'p': random_string(), 'c': random_string()},
-        UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 5})
-    # Disable streaming for this table. Note that the test_table_ss_keys_only
-    # fixture has "function" scope so it is fine to ruin table, it will not
-    # be used in other tests.
-    disable_stream(dynamodbstreams, table)
+def test_streams_closed_read(dynamodb, dynamodbstreams):
+    # This test can't use the shared table test_table_ss_keys_only,
+    # because it wants to disable streaming, so let's create a new table:
+    with create_table_ss(dynamodb, dynamodbstreams, 'KEYS_ONLY') as (table, arn):
+        shards_and_iterators = shards_and_latest_iterators(dynamodbstreams, arn)
+        # Do an UpdateItem operation that is expected to leave one event in the
+        # stream.
+        table.update_item(Key={'p': random_string(), 'c': random_string()},
+            UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 5})
+        disable_stream(dynamodbstreams, table)
 
-    # Even after streaming is disabled for the table, we can still read
-    # from the earlier stream (it is guaranteed to work for 24 hours).
-    # The iterators we got earlier should still be fully usable, and
-    # eventually *one* of the stream shards will return one event:
-    timeout = time.time() + 15
-    while time.time() < timeout:
-        for (shard_id, iter) in shards_and_iterators:
-            response = dynamodbstreams.get_records(ShardIterator=iter)
-            if 'Records' in response and response['Records'] != []:
-                # Found the shard with the data! Test that it only has
-                # one event. NextShardIterator should either be missing now,
-                # indicating that it is a closed shard (DynamoDB does this),
-                # or, it may (and currently does in Alternator) return another
-                # and reading from *that* iterator should then tell us that
-                # we reached the end of the shard (i.e., zero results and
-                # missing NextShardIterator).
-                assert len(response['Records']) == 1
-                if 'NextShardIterator' in response:
-                    response = dynamodbstreams.get_records(ShardIterator=response['NextShardIterator'])
-                    assert len(response['Records']) == 0
-                    assert not 'NextShardIterator' in response
-                # Until now we verified that we can read the closed shard
-                # using an old iterator. Let's test now that the closed
-                # shard id is also still valid, and a new iterator can be
-                # created for it, and the old data can be read from it:
-                iter = dynamodbstreams.get_shard_iterator(StreamArn=arn,
-                    ShardId=shard_id, ShardIteratorType='TRIM_HORIZON')['ShardIterator']
+        # Even after streaming is disabled for the table, we can still read
+        # from the earlier stream (it is guaranteed to work for 24 hours).
+        # The iterators we got earlier should still be fully usable, and
+        # eventually *one* of the stream shards will return one event:
+        timeout = time.time() + 15
+        while time.time() < timeout:
+            for (shard_id, iter) in shards_and_iterators:
                 response = dynamodbstreams.get_records(ShardIterator=iter)
-                assert len(response['Records']) == 1
-                return
-        time.sleep(0.5)
-    pytest.fail("timed out")
+                if 'Records' in response and response['Records'] != []:
+                    # Found the shard with the data! Test that it only has
+                    # one event. NextShardIterator should either be missing now,
+                    # indicating that it is a closed shard (DynamoDB does this),
+                    # or, it may (and currently does in Alternator) return another
+                    # and reading from *that* iterator should then tell us that
+                    # we reached the end of the shard (i.e., zero results and
+                    # missing NextShardIterator).
+                    assert len(response['Records']) == 1
+                    if 'NextShardIterator' in response:
+                        response = dynamodbstreams.get_records(ShardIterator=response['NextShardIterator'])
+                        assert len(response['Records']) == 0
+                        assert not 'NextShardIterator' in response
+                    # Until now we verified that we can read the closed shard
+                    # using an old iterator. Let's test now that the closed
+                    # shard id is also still valid, and a new iterator can be
+                    # created for it, and the old data can be read from it:
+                    iter = dynamodbstreams.get_shard_iterator(StreamArn=arn,
+                        ShardId=shard_id, ShardIteratorType='TRIM_HORIZON')['ShardIterator']
+                    response = dynamodbstreams.get_records(ShardIterator=iter)
+                    assert len(response['Records']) == 1
+                    return
+            time.sleep(0.5)
+        pytest.fail("timed out")
 
 # In the above test (test_streams_closed_read) we used a disabled stream as
 # a means to generate a closed shard, and tested the behavior of that closed
@@ -1800,84 +1816,83 @@ def test_streams_closed_read(test_table_ss_keys_only, dynamodbstreams):
 # stream's shards should give an indication that they are all closed - but
 # all these shards should still be readable.
 @pytest.mark.xfail(reason="disabled stream is deleted - issue #7239")
-def test_streams_disabled_stream(test_table_ss_keys_only, dynamodbstreams):
-    table, arn = test_table_ss_keys_only
-    iterators = latest_iterators(dynamodbstreams, arn)
-    # Do an UpdateItem operation that is expected to leave one event in the
-    # stream.
-    table.update_item(Key={'p': random_string(), 'c': random_string()},
-        UpdateExpression='SET x = :x', ExpressionAttributeValues={':x': 5})
+def test_streams_disabled_stream(dynamodb, dynamodbstreams):
+    # This test can't use the shared table test_table_ss_keys_only,
+    # because it wants to disable streaming, so let's create a new table:
+    with create_table_ss(dynamodb, dynamodbstreams, 'KEYS_ONLY') as (table, arn):
+        iterators = latest_iterators(dynamodbstreams, arn)
+        # Do an UpdateItem operation that is expected to leave one event in the
+        # stream.
+        table.update_item(Key={'p': random_string(), 'c': random_string()},
+            UpdateExpression='SET x = :x', ExpressionAttributeValues={':x': 5})
 
-    # Wait for this one update to become available in the stream before we
-    # disable the stream. Otherwise, theoretically (although unlikely in
-    # practice) we may disable the stream before the update was saved to it.
-    timeout = time.time() + 15
-    found = False
-    while time.time() < timeout and not found:
-        for iter in iterators:
-            response = dynamodbstreams.get_records(ShardIterator=iter)
-            if 'Records' in response and len(response['Records']) > 0:
-                found = True
-                break
-        time.sleep(0.5)
-    assert found
+        # Wait for this one update to become available in the stream before we
+        # disable the stream. Otherwise, theoretically (although unlikely in
+        # practice) we may disable the stream before the update was saved to it.
+        timeout = time.time() + 15
+        found = False
+        while time.time() < timeout and not found:
+            for iter in iterators:
+                response = dynamodbstreams.get_records(ShardIterator=iter)
+                if 'Records' in response and len(response['Records']) > 0:
+                    found = True
+                    break
+            time.sleep(0.5)
+        assert found
 
-    # Disable streaming for this table. Note that the test_table_ss_keys_only
-    # fixture has "function" scope so it is fine to ruin table, it will not
-    # be used in other tests.
-    disable_stream(dynamodbstreams, table)
+        disable_stream(dynamodbstreams, table)
 
-    # Check that the stream ARN which we previously got for the disabled
-    # stream is still listed by ListStreams
-    arns = [stream['StreamArn'] for stream in dynamodbstreams.list_streams(TableName=table.name)['Streams']]
-    assert arn in arns
+        # Check that the stream ARN which we previously got for the disabled
+        # stream is still listed by ListStreams
+        arns = [stream['StreamArn'] for stream in dynamodbstreams.list_streams(TableName=table.name)['Streams']]
+        assert arn in arns
 
-    # DescribeStream on the disabled stream still works and lists its shards.
-    # All these shards are listed as being closed (i.e., should have
-    # EndingSequenceNumber). The basic details of the stream (e.g., the view
-    # type) are available and the status of the stream is DISABLED.
-    response = dynamodbstreams.describe_stream(StreamArn=arn)['StreamDescription']
-    assert response['StreamStatus'] == 'DISABLED'
-    assert response['StreamViewType'] == 'KEYS_ONLY'
-    assert response['TableName'] == table.name
-    shards_info = response['Shards']
-    while 'LastEvaluatedShardId' in response:
-        response = dynamodbstreams.describe_stream(StreamArn=arn, ExclusiveStartShardId=response['LastEvaluatedShardId'])['StreamDescription']
+        # DescribeStream on the disabled stream still works and lists its shards.
+        # All these shards are listed as being closed (i.e., should have
+        # EndingSequenceNumber). The basic details of the stream (e.g., the view
+        # type) are available and the status of the stream is DISABLED.
+        response = dynamodbstreams.describe_stream(StreamArn=arn)['StreamDescription']
         assert response['StreamStatus'] == 'DISABLED'
         assert response['StreamViewType'] == 'KEYS_ONLY'
         assert response['TableName'] == table.name
-        shards_info.extend(response['Shards'])
-    print('Number of shards in stream: {}'.format(len(shards_info)))
-    for shard in shards_info:
-        assert 'EndingSequenceNumber' in shard['SequenceNumberRange']
-        assert shard['SequenceNumberRange']['EndingSequenceNumber'].isdecimal()
+        shards_info = response['Shards']
+        while 'LastEvaluatedShardId' in response:
+            response = dynamodbstreams.describe_stream(StreamArn=arn, ExclusiveStartShardId=response['LastEvaluatedShardId'])['StreamDescription']
+            assert response['StreamStatus'] == 'DISABLED'
+            assert response['StreamViewType'] == 'KEYS_ONLY'
+            assert response['TableName'] == table.name
+            shards_info.extend(response['Shards'])
+        print('Number of shards in stream: {}'.format(len(shards_info)))
+        for shard in shards_info:
+            assert 'EndingSequenceNumber' in shard['SequenceNumberRange']
+            assert shard['SequenceNumberRange']['EndingSequenceNumber'].isdecimal()
 
-    # We can get TRIM_HORIZON iterators for all these shards, to read all
-    # the old data they still have (this data should be saved for 24 hours
-    # after the stream was disabled)
-    iterators = []
-    for shard in shards_info:
-        iterators.append(dynamodbstreams.get_shard_iterator(StreamArn=arn,
-            ShardId=shard['ShardId'], ShardIteratorType='TRIM_HORIZON')['ShardIterator'])
+        # We can get TRIM_HORIZON iterators for all these shards, to read all
+        # the old data they still have (this data should be saved for 24 hours
+        # after the stream was disabled)
+        iterators = []
+        for shard in shards_info:
+            iterators.append(dynamodbstreams.get_shard_iterator(StreamArn=arn,
+                ShardId=shard['ShardId'], ShardIteratorType='TRIM_HORIZON')['ShardIterator'])
 
-    # We can read the one change we did in one of these iterators. The data
-    # should be available immediately - no need for retries with timeout.
-    nrecords = 0
-    for iter in iterators:
-        response = dynamodbstreams.get_records(ShardIterator=iter)
-        if 'Records' in response:
-            nrecords += len(response['Records'])
-        # The shard is closed, so NextShardIterator should either be missing
-        # now,  indicating that it is a closed shard (DynamoDB does this),
-        # or, it may (and currently does in Alternator) return an iterator
-        # and reading from *that* iterator should then tell us that
-        # we reached the end of the shard (i.e., zero results and
-        # missing NextShardIterator).
-        if 'NextShardIterator' in response:
-            response = dynamodbstreams.get_records(ShardIterator=response['NextShardIterator'])
-            assert len(response['Records']) == 0
-            assert not 'NextShardIterator' in response
-    assert nrecords == 1
+        # We can read the one change we did in one of these iterators. The data
+        # should be available immediately - no need for retries with timeout.
+        nrecords = 0
+        for iter in iterators:
+            response = dynamodbstreams.get_records(ShardIterator=iter)
+            if 'Records' in response:
+                nrecords += len(response['Records'])
+            # The shard is closed, so NextShardIterator should either be missing
+            # now,  indicating that it is a closed shard (DynamoDB does this),
+            # or, it may (and currently does in Alternator) return an iterator
+            # and reading from *that* iterator should then tell us that
+            # we reached the end of the shard (i.e., zero results and
+            # missing NextShardIterator).
+            if 'NextShardIterator' in response:
+                response = dynamodbstreams.get_records(ShardIterator=response['NextShardIterator'])
+                assert len(response['Records']) == 0
+                assert not 'NextShardIterator' in response
+        assert nrecords == 1
 
 # When streams are enabled for a table, we get a unique ARN which should be
 # unique but not change unless streams are eventually disabled for this table.
