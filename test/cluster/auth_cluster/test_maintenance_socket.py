@@ -257,3 +257,63 @@ async def test_no_default_superuser_maintenance_socket_ops(manager: ManagerClien
     admin_session.cluster.shutdown()
     session.cluster.shutdown()
 
+
+@pytest.mark.asyncio
+async def test_maintenance_socket_grant_revoke(manager: ManagerClient):
+    """
+    Test that GRANT, REVOKE, and REVOKE ALL via the maintenance socket work correctly.
+
+    The maintenance socket uses maintenance_socket_authorizer, which extends
+    CassandraAuthorizer so that authorization-altering statements (GRANT, REVOKE)
+    are persisted, while the maintenance socket user itself always has full access.
+    """
+    config = {
+        **auth_config,
+        "auth_superuser_name": "",
+        "auth_superuser_salted_password": "",
+    }
+
+    logger.info("Starting server without default superuser")
+    server = await manager.server_add(config=config, connect_driver=False)
+
+    logger.info("Connecting via maintenance socket")
+    socket_path = await manager.server_get_maintenance_socket_path(server.server_id)
+    session = await get_ready_maintenance_session(socket_path)
+
+    session.execute("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}")
+    session.execute("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
+    session.execute("CREATE ROLE role1 WITH PASSWORD = 'pass' AND LOGIN = true")
+
+    # GRANT SELECT via maintenance socket, verify it is persisted
+    logger.info("Testing GRANT via maintenance socket")
+    session.execute("GRANT SELECT ON ks.t TO role1")
+
+    rows = list(session.execute("LIST ALL PERMISSIONS OF role1"))
+    assert len(rows) == 1
+    assert rows[0].permission == "SELECT"
+
+    role1_session = await connect_with_credentials(server.ip_addr, "role1", "pass")
+    role1_session.execute("SELECT * FROM ks.t")
+
+    # REVOKE SELECT via maintenance socket
+    logger.info("Testing REVOKE via maintenance socket")
+    session.execute("REVOKE SELECT ON ks.t FROM role1")
+
+    rows = list(session.execute("LIST ALL PERMISSIONS OF role1"))
+    assert len(rows) == 0
+
+    # GRANT multiple permissions, then REVOKE ALL
+    logger.info("Testing REVOKE ALL via maintenance socket")
+    session.execute("GRANT SELECT ON ks.t TO role1")
+    session.execute("GRANT MODIFY ON ks.t TO role1")
+
+    rows = list(session.execute("LIST ALL PERMISSIONS OF role1"))
+    assert len(rows) == 2
+
+    session.execute("REVOKE ALL ON ks.t FROM role1")
+
+    rows = list(session.execute("LIST ALL PERMISSIONS OF role1"))
+    assert len(rows) == 0
+
+    role1_session.cluster.shutdown()
+    session.cluster.shutdown()

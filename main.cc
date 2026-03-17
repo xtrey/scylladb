@@ -19,8 +19,6 @@
 #include "gms/inet_address.hh"
 #include "auth/allow_all_authenticator.hh"
 #include "auth/allow_all_authorizer.hh"
-#include "auth/maintenance_socket_authenticator.hh"
-#include "auth/maintenance_socket_role_manager.hh"
 #include <seastar/core/future.hh>
 #include <seastar/core/signal.hh>
 #include <seastar/core/timer.hh>
@@ -2102,7 +2100,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             if (cfg->maintenance_socket() != "ignore") {
                 checkpoint(stop_signal, "starting maintenance auth service");
                 maintenance_auth_service.start(std::ref(qp), std::ref(group0_client),
-                        auth::make_authorizer_factory(auth::allow_all_authorizer_name, qp),
+                        auth::make_maintenance_socket_authorizer_factory(qp),
                         auth::make_maintenance_socket_authenticator_factory(qp, group0_client, mm, auth_cache),
                         auth::make_maintenance_socket_role_manager_factory(qp, group0_client, mm, auth_cache),
                         maintenance_socket_enabled::yes, std::ref(auth_cache)).get();
