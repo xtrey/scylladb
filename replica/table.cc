@@ -4037,7 +4037,7 @@ future<table::snapshot_details> table::get_snapshot_details(fs::path snapshot_di
         auto sd = co_await io_check(file_stat, snapshot_directory, name, follow_symlink::no);
         auto size = sd.allocated_size;
 
-        // The manifest and schema.sql files are the only files expected to be in this directory not belonging to the SSTable.
+        // The manifest and schema.cql files are the only files expected to be in this directory not belonging to the SSTable.
         //
         // All the others should just generate an exception: there is something wrong, so don't blindly
         // add it to the size.
