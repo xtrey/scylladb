@@ -4029,6 +4029,8 @@ future<table::snapshot_details> table::get_snapshot_details(fs::path snapshot_di
     }
 
     auto lister = directory_lister(snapshot_directory, snapshot_dir, lister::dir_entry_types::of<directory_entry_type::regular>());
+    std::exception_ptr ex;
+    try {
     while (auto de = co_await lister.get()) {
         const auto& name = de->name;
         future<stat_data> (&file_stat)(file& directory, std::string_view name, follow_symlink) noexcept = seastar::file_stat;
@@ -4076,6 +4078,13 @@ future<table::snapshot_details> table::get_snapshot_details(fs::path snapshot_di
                 !co_await exists_in_dir(data_directory, datadir, name)) {
             details.live += size;
         }
+    }
+    } catch (...) {
+        ex = std::current_exception();
+    }
+    co_await lister.close();
+    if (ex) {
+        co_await coroutine::return_exception_ptr(std::move(ex));
     }
 
     co_return details;
