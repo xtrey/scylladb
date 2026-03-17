@@ -5,7 +5,6 @@
 #
 
 import pytest
-
 from test import TEST_RUNNER
 from test.pylib.report_plugin import ReportPlugin
 
