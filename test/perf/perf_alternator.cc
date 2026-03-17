@@ -10,6 +10,7 @@
 #include <seastar/core/abort_source.hh>
 #include <signal.h>
 #include <seastar/core/future.hh>
+#include <seastar/core/sleep.hh>
 #include <seastar/core/thread.hh>
 #include <seastar/core/app-template.hh>
 #include <seastar/http/client.hh>
@@ -74,6 +75,24 @@ static future<> make_request(http::experimental::client& cli, sstring operation,
             });
         });
     });
+}
+
+static void wait_for_alternator(const test_config& c, abort_source& as) {
+    for (int attempt = 0; attempt < 3000; ++attempt) {
+        as.check();
+        try {
+            auto cli = get_client(c);
+            auto close = defer([&] { cli.close().get(); });
+            make_request(cli, "ListTables", "{}").get();
+            return;
+        } catch (...) {
+        }
+        sleep_abortable(std::chrono::milliseconds(100), as).get();
+        if (attempt >= 100 && attempt % 10 == 0) {
+            std::cout << fmt::format("Retrying connect to alternator port (attempt {})", attempt + 1) << std::endl;
+        }
+    }
+    throw std::runtime_error("Timed out waiting for alternator port to become ready");
 }
 
 static void delete_alternator_table(http::experimental::client& cli) {
@@ -370,6 +389,8 @@ auto make_client_pool(const test_config& c) {
 
 void workload_main(const test_config& c, sharded<abort_source>* as) {
     std::cout << "Running test with config: " << c << std::endl;
+
+    wait_for_alternator(c, as->local());
 
     auto cli = get_client(c);
     auto finally = defer([&] {
