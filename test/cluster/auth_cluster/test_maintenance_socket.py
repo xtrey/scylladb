@@ -16,9 +16,20 @@ from test.pylib.util import wait_for
 import logging
 import pytest
 import time
+from collections.abc import Generator
 from test.cluster.auth_cluster import extra_scylla_config_options as auth_config
 
 logger = logging.getLogger(__name__)
+
+CqlClusters = list[Cluster]
+
+@pytest.fixture
+def cql_clusters() -> Generator[CqlClusters, None, None]:
+    """Tracks CQL driver Cluster objects for automatic shutdown after test completion."""
+    clusters: CqlClusters = []
+    yield clusters
+    for c in reversed(clusters):
+        c.shutdown()
 
 
 async def get_ready_maintenance_session(socket_path: str, timeout: int = 60):
@@ -84,7 +95,7 @@ async def connect_with_credentials(ip: str, username: str, password: str, timeou
 
 
 @pytest.mark.asyncio
-async def test_maintenance_socket(manager: ManagerClient):
+async def test_maintenance_socket(manager: ManagerClient, cql_clusters: CqlClusters):
     """
     Test that when connecting to the maintenance socket, the user has superuser permissions,
     even if the authentication is enabled on the regular port.
@@ -95,17 +106,17 @@ async def test_maintenance_socket(manager: ManagerClient):
 
     logger.info("Verifying unauthenticated connection is rejected")
     cluster = Cluster([server.ip_addr])
+    cql_clusters.append(cluster)
     try:
         cluster.connect()
         pytest.fail("Client should not be able to connect if auth provider is not specified")
     except NoHostAvailable:
         pass
-    finally:
-        cluster.shutdown()
 
     logger.info("Connecting as superuser to set up roles and keyspaces")
     superuser_cluster = cluster_con([server.ip_addr],
                                     auth_provider=PlainTextAuthProvider(username="cassandra", password="cassandra"))
+    cql_clusters.append(superuser_cluster)
     session = superuser_cluster.connect()
 
     session.execute("CREATE ROLE john WITH PASSWORD = 'password' AND LOGIN = true;")
@@ -117,6 +128,7 @@ async def test_maintenance_socket(manager: ManagerClient):
 
     logger.info("Verifying user 'john' cannot access ks2.t1")
     john_cluster = cluster_con([server.ip_addr], auth_provider=PlainTextAuthProvider(username="john", password="password"))
+    cql_clusters.append(john_cluster)
     john_session = john_cluster.connect()
     try:
         john_session.execute("SELECT * FROM ks2.t1")
@@ -127,6 +139,7 @@ async def test_maintenance_socket(manager: ManagerClient):
 
     logger.info("Connecting via maintenance socket")
     maintenance_cluster = cluster_con([UnixSocketEndPoint(socket)], load_balancing_policy=WhiteListRoundRobinPolicy([UnixSocketEndPoint(socket)]))
+    cql_clusters.append(maintenance_cluster)
     maintenance_session = maintenance_cluster.connect()
 
     logger.info("Verifying maintenance session has superuser permissions")
@@ -136,13 +149,9 @@ async def test_maintenance_socket(manager: ManagerClient):
     maintenance_session.execute("CREATE KEYSPACE ks3 WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1};")
     maintenance_session.execute("CREATE TABLE ks1.t2 (pk int PRIMARY KEY, val int);")
 
-    maintenance_cluster.shutdown()
-    john_cluster.shutdown()
-    superuser_cluster.shutdown()
-
 
 @pytest.mark.asyncio
-async def test_no_default_superuser_exists_by_default(manager: ManagerClient):
+async def test_no_default_superuser_exists_by_default(manager: ManagerClient, cql_clusters: CqlClusters):
     """
     Test that no 'cassandra' user exists when no default superuser is configured.
     """
@@ -157,17 +166,16 @@ async def test_no_default_superuser_exists_by_default(manager: ManagerClient):
 
     logger.info("Verifying default credentials are rejected")
     cluster = Cluster([server.ip_addr], auth_provider=PlainTextAuthProvider(username="cassandra", password="cassandra"))
+    cql_clusters.append(cluster)
     try:
         cluster.connect()
         pytest.fail("Should not be able to connect with default credentials when they are not seeded")
     except Exception:
         pass
-    finally:
-        cluster.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_no_default_superuser_maintenance_socket_ops(manager: ManagerClient):
+async def test_no_default_superuser_maintenance_socket_ops(manager: ManagerClient, cql_clusters: CqlClusters):
     """
     Test that we can manage user roles via the maintenance socket.
     """
@@ -183,6 +191,7 @@ async def test_no_default_superuser_maintenance_socket_ops(manager: ManagerClien
     logger.info("Connecting via maintenance socket")
     socket_path = await manager.server_get_maintenance_socket_path(server.server_id)
     session = await get_ready_maintenance_session(socket_path)
+    cql_clusters.append(session.cluster)
 
     logger.info("Verifying system.roles is empty before operations")
     rows = list(session.execute("SELECT role, is_superuser FROM system.roles"))
@@ -205,6 +214,7 @@ async def test_no_default_superuser_maintenance_socket_ops(manager: ManagerClien
 
     logger.info("Verifying the new role can log in via the normal CQL port")
     admin_session = await connect_with_credentials(server.ip_addr, new_role, new_role_password)
+    cql_clusters.append(admin_session.cluster)
 
     logger.info("Verifying superuser can create a keyspace")
     admin_session.execute("CREATE KEYSPACE ks1 WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}")
@@ -222,14 +232,14 @@ async def test_no_default_superuser_maintenance_socket_ops(manager: ManagerClien
     async def check_superuser_revoked():
         c = cluster_con([server.ip_addr],
                         auth_provider=PlainTextAuthProvider(username=new_role, password=new_role_password))
-        s = c.connect()
         try:
+            s = c.connect()
             s.execute("CREATE KEYSPACE ks2 WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}")
-            c.shutdown()
             return None  # Still cached as superuser, retry
         except Unauthorized:
-            c.shutdown()
             return True
+        finally:
+            c.shutdown()
 
     await wait_for(check_superuser_revoked, time.time() + 60)
 
@@ -254,12 +264,9 @@ async def test_no_default_superuser_maintenance_socket_ops(manager: ManagerClien
 
     await wait_for(check_role_dropped, time.time() + 60)
 
-    admin_session.cluster.shutdown()
-    session.cluster.shutdown()
-
 
 @pytest.mark.asyncio
-async def test_maintenance_socket_grant_revoke(manager: ManagerClient):
+async def test_maintenance_socket_grant_revoke(manager: ManagerClient, cql_clusters: CqlClusters):
     """
     Test that GRANT, REVOKE, and REVOKE ALL via the maintenance socket work correctly.
 
@@ -279,6 +286,7 @@ async def test_maintenance_socket_grant_revoke(manager: ManagerClient):
     logger.info("Connecting via maintenance socket")
     socket_path = await manager.server_get_maintenance_socket_path(server.server_id)
     session = await get_ready_maintenance_session(socket_path)
+    cql_clusters.append(session.cluster)
 
     session.execute("CREATE KEYSPACE ks WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}")
     session.execute("CREATE TABLE ks.t (pk int PRIMARY KEY, v int)")
@@ -293,6 +301,7 @@ async def test_maintenance_socket_grant_revoke(manager: ManagerClient):
     assert rows[0].permission == "SELECT"
 
     role1_session = await connect_with_credentials(server.ip_addr, "role1", "pass")
+    cql_clusters.append(role1_session.cluster)
     role1_session.execute("SELECT * FROM ks.t")
 
     # REVOKE SELECT via maintenance socket
@@ -314,6 +323,3 @@ async def test_maintenance_socket_grant_revoke(manager: ManagerClient):
 
     rows = list(session.execute("LIST ALL PERMISSIONS OF role1"))
     assert len(rows) == 0
-
-    role1_session.cluster.shutdown()
-    session.cluster.shutdown()
