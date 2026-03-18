@@ -392,6 +392,7 @@ private:
         bool running{false};
         shared_future<> completion{make_ready_future<>()};
         abort_source as;
+        int compaction_disabled_counter{0};
     };
     absl::flat_hash_map<compaction_group*, std::unique_ptr<group_compaction_state>> _groups;
 
@@ -418,6 +419,7 @@ private:
 
     void submit(compaction_group&) override;
     future<> stop_ongoing_compactions(compaction_group&) override;
+    future<compaction_reenabler> disable_compaction(replica::compaction_group&) override;
 
     std::vector<log_segment_id> select_segments_for_compaction(const segment_descriptor_hist&);
     future<> do_compact(compaction_group&, abort_source&);
@@ -1304,7 +1306,7 @@ void compaction_manager_impl::submit(compaction_group& cg) {
         state_ptr = std::make_unique<group_compaction_state>();
     }
     auto& state = *state_ptr;
-    if (state.running) {
+    if (state.running || state.compaction_disabled_counter > 0) {
         return;
     }
     state.running = true;
@@ -1327,6 +1329,26 @@ future<> compaction_manager_impl::stop_ongoing_compactions(compaction_group& cg)
     state.as.request_abort();
     co_await state.completion.get_future();
     _groups.erase(it);
+}
+
+future<compaction_reenabler> compaction_manager_impl::disable_compaction(compaction_group& cg) {
+    auto& state_ptr = _groups[&cg];
+    if (!state_ptr) {
+        state_ptr = std::make_unique<group_compaction_state>();
+    }
+    auto& state = *state_ptr;
+
+    ++state.compaction_disabled_counter;
+
+    // Wait for any ongoing compaction to finish before disabling
+    co_await state.completion.get_future();
+
+    co_return compaction_reenabler([this, &cg] {
+        auto it = _groups.find(&cg);
+        if (it != _groups.end()) {
+            --it->second->compaction_disabled_counter;
+        }
+    });
 }
 
 std::vector<log_segment_id> compaction_manager_impl::select_segments_for_compaction(const segment_descriptor_hist& segments) {

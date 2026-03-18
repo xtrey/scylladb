@@ -177,6 +177,20 @@ struct separator_buffer {
     }
 };
 
+class compaction_reenabler {
+    std::function<void()> _release;
+public:
+    compaction_reenabler() = default;
+    explicit compaction_reenabler(std::function<void()> release)
+        : _release(std::move(release)) {}
+    ~compaction_reenabler() { if (_release) _release(); }
+
+    compaction_reenabler(compaction_reenabler&&) = default;
+    compaction_reenabler& operator=(compaction_reenabler&&) = default;
+    compaction_reenabler(const compaction_reenabler&) = delete;
+    compaction_reenabler& operator=(const compaction_reenabler&) = delete;
+};
+
 class compaction_manager {
 public:
     virtual ~compaction_manager() = default;
@@ -188,6 +202,8 @@ public:
     virtual void submit(replica::compaction_group&) = 0;
 
     virtual future<> stop_ongoing_compactions(replica::compaction_group&) = 0;
+
+    virtual future<compaction_reenabler> disable_compaction(replica::compaction_group&) = 0;
 };
 
 }
