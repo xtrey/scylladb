@@ -107,6 +107,7 @@ std::set<std::string_view> feature_service::supported_feature_set() const {
         "CORRECT_IDX_TOKEN_IN_SECONDARY_INDEX"sv,
         "UUID_SSTABLE_IDENTIFIERS"sv,
         "GROUP0_SCHEMA_VERSIONING"sv,
+        "VIEW_BUILD_STATUS_ON_GROUP0"sv,
     };
 
     if (is_test_only_feature_deprecated()) {

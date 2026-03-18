@@ -694,25 +694,6 @@ future<> storage_service::topology_state_load(state_change_hint hint) {
     _topology_state_machine.reload_count++;
     auto& topology = _topology_state_machine._topology;
 
-    // the view_builder is migrated to v2 in view_builder::migrate_to_v2.
-    // it writes a v2 version mutation as topology_change, then we get here
-    // to update the service to start using the v2 table.
-    auto view_builder_version = co_await _sys_ks.local().get_view_builder_version();
-    switch (view_builder_version) {
-        case db::system_keyspace::view_builder_version_t::v1_5:
-            co_await _view_builder.invoke_on_all([] (db::view::view_builder& vb) -> future<> {
-                co_await vb.upgrade_to_v1_5();
-            });
-            break;
-        case db::system_keyspace::view_builder_version_t::v2:
-            co_await _view_builder.invoke_on_all([] (db::view::view_builder& vb) -> future<> {
-                co_await vb.upgrade_to_v2();
-            });
-            break;
-        default:
-            break;
-    }
-
     co_await _feature_service.container().invoke_on_all([&] (gms::feature_service& fs) {
         return fs.enable(topology.enabled_features | std::ranges::to<std::set<std::string_view>>());
     });
@@ -1416,14 +1397,11 @@ future<> storage_service::raft_initialize_discovery_leader(const join_node_reque
 
     insert_join_request_mutations.emplace_back(co_await _sys_ks.local().make_auth_version_mutation(write_timestamp, db::system_keyspace::auth_version_t::v2));
 
+    insert_join_request_mutations.emplace_back(co_await _sys_ks.local().make_view_builder_version_mutation(write_timestamp, db::system_keyspace::view_builder_version_t::v2));
+
     auto sl_driver_mutations = co_await qos::service_level_controller::get_create_driver_service_level_mutations(_sys_ks.local(), write_timestamp);
     for (auto& m : sl_driver_mutations) {
         insert_join_request_mutations.emplace_back(m);
-    }
-
-    if (!utils::get_local_injector().is_enabled("skip_vb_v2_version_mut")) {
-        insert_join_request_mutations.emplace_back(
-                co_await _sys_ks.local().make_view_builder_version_mutation(write_timestamp, db::system_keyspace::view_builder_version_t::v2));
     }
 
     topology_change change{std::move(insert_join_request_mutations)};
@@ -5836,9 +5814,7 @@ void storage_service::init_messaging_service() {
             // apply only for "legacy" snapshot pull RPCs.
             std::vector<table_id> additional_tables;
             if (params.tables.size() > 0 && params.tables[0] != db::system_keyspace::topology()->id()) {
-                if (ss._feature_service.view_build_status_on_group0) {
-                    additional_tables.push_back(db::system_keyspace::view_build_status_v2()->id());
-                }
+                additional_tables.push_back(db::system_keyspace::view_build_status_v2()->id());
                 if (ss._feature_service.compression_dicts) {
                     additional_tables.push_back(db::system_keyspace::dicts()->id());
                 }
