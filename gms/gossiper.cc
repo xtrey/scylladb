@@ -766,7 +766,7 @@ future<> gossiper::remove_endpoint(locator::host_id endpoint, permit_id pid) {
 
     if (was_alive) {
         try {
-            logger.info("InetAddress {}/{} is now DOWN, status = {}", state->get_host_id(), ip, get_gossip_status(*state));
+            logger.info("InetAddress {}/{} is now DOWN, status = {}", host_id, ip, get_node_status(host_id));
             co_await do_on_dead_notifications(ip, std::move(state), pid);
         } catch (...) {
             logger.warn("Fail to call on_dead callback: {}", std::current_exception());
@@ -1629,7 +1629,7 @@ future<> gossiper::real_mark_alive(locator::host_id host_id) {
 
     auto addr = es->get_ip();
 
-    logger.info("InetAddress {}/{} is now UP, status = {}", host_id, addr, get_gossip_status(*es));
+    logger.info("InetAddress {}/{} is now UP, status = {}", host_id, addr, get_node_status(host_id));
 
     co_await _subscribers.for_each([addr, host_id, es, pid = permit.id()] (shared_ptr<i_endpoint_state_change_subscriber> subscriber) -> future<> {
         co_await subscriber->on_alive(addr, host_id, es, pid);
@@ -1645,7 +1645,7 @@ future<> gossiper::mark_dead(locator::host_id addr, endpoint_state_ptr state, pe
         data.live.erase(addr);
         data.unreachable[addr] = now();
     });
-    logger.info("InetAddress {} is now DOWN, status = {}", addr, get_gossip_status(*state));
+    logger.info("InetAddress {} is now DOWN, status = {}", addr, get_node_status(addr));
     co_await do_on_dead_notifications(state->get_ip(), std::move(state), pid);
 }
 
@@ -1657,12 +1657,12 @@ future<> gossiper::handle_major_state_change(endpoint_state eps, permit_id pid, 
 
     if (!is_left(eps) && !shadow_round) {
         if (_endpoint_state_map.contains(ep))  {
-            logger.info("Node {} has restarted, now UP, status = {}", ep, get_gossip_status(eps));
+            logger.info("Node {} has restarted, now UP, status = {}", ep, get_node_status(ep));
         } else {
-            logger.debug("Node {} is now part of the cluster, status = {}", ep, get_gossip_status(eps));
+            logger.debug("Node {} is now part of the cluster, status = {}", ep, get_node_status(ep));
         }
     }
-    logger.trace("Adding endpoint state for {}, status = {}", ep, get_gossip_status(eps));
+    logger.trace("Adding endpoint state for {}, status = {}", ep, get_node_status(ep));
     co_await replicate(eps, pid);
 
     if (shadow_round) {
@@ -1683,7 +1683,7 @@ future<> gossiper::handle_major_state_change(endpoint_state eps, permit_id pid, 
     if (!is_left(*ep_state)) {
         mark_alive(ep_state);
     } else {
-        logger.debug("Not marking {} alive due to dead state {}", ep, get_gossip_status(eps));
+        logger.debug("Not marking {} alive due to dead state {}", ep, get_node_status(ep));
         co_await mark_dead(ep, ep_state, pid);
     }
 
@@ -2319,6 +2319,24 @@ std::string_view gossiper::get_gossip_status(const endpoint_state& ep_state) con
 
 std::string_view gossiper::get_gossip_status(const locator::host_id& endpoint) const noexcept {
     return do_get_gossip_status(get_application_state_ptr(endpoint, application_state::STATUS));
+}
+
+std::string gossiper::get_node_status(const locator::host_id& endpoint) const noexcept {
+    if (this_shard_id() != 0) {
+        on_internal_error(logger, "get_node_status should only be called on shard 0");
+    }
+    if (is_shutdown(endpoint)) {
+        return "shutdown";
+    }
+    auto n = _topo_sm._topology.find(raft::server_id{endpoint.uuid()});
+    if (!n) {
+        if (_topo_sm._topology.left_nodes.contains(raft::server_id{endpoint.uuid()})) {
+            return "left";
+        }
+        return "unknown";
+    } else {
+        return fmt::format("{}", n->second.state);
+    }
 }
 
 void gossiper::check_snitch_name_matches(sstring local_snitch_name) const {

@@ -589,6 +589,7 @@ private:
     gossip_config _gcfg;
     condition_variable _failure_detector_loop_cv;
     locator::token_metadata_ptr get_token_metadata_ptr() const noexcept;
+    std::string get_node_status(const locator::host_id& endpoint) const noexcept;
 private:
     seastar::metrics::metric_groups _metrics;
 public:
