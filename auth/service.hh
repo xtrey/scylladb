@@ -434,6 +434,11 @@ authenticator_factory make_maintenance_socket_authenticator_factory(
         sharded<::service::migration_manager>& mm,
         sharded<cache>& cache);
 
+/// Creates a factory for the maintenance socket authorizer.
+/// This authorizer is not config-selectable and is only used for the maintenance socket.
+/// It grants all permissions unconditionally while delegating grant/revoke to the default authorizer.
+authorizer_factory make_maintenance_socket_authorizer_factory(sharded<cql3::query_processor>& qp);
+
 /// Creates a factory for the maintenance socket role manager.
 /// This role manager is not config-selectable and is only used for the maintenance socket.
 role_manager_factory make_maintenance_socket_role_manager_factory(

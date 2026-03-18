@@ -30,6 +30,7 @@
 #include "auth/default_authorizer.hh"
 #include "auth/ldap_role_manager.hh"
 #include "auth/maintenance_socket_authenticator.hh"
+#include "auth/maintenance_socket_authorizer.hh"
 #include "auth/maintenance_socket_role_manager.hh"
 #include "auth/password_authenticator.hh"
 #include "auth/role_or_anonymous.hh"
@@ -863,6 +864,12 @@ authenticator_factory make_maintenance_socket_authenticator_factory(
         sharded<cache>& auth_cache) {
     return [&qp, &g0, &mm, &auth_cache] {
         return std::make_unique<maintenance_socket_authenticator>(qp.local(), g0, mm.local(), auth_cache.local());
+    };
+}
+
+authorizer_factory make_maintenance_socket_authorizer_factory(sharded<cql3::query_processor>& qp) {
+    return [&qp] {
+        return std::make_unique<maintenance_socket_authorizer>(qp.local());
     };
 }
 
