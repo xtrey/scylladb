@@ -4010,6 +4010,9 @@ future<std::unordered_map<sstring, table::snapshot_details>> table::get_snapshot
                 auto& sd = all_snapshots.at(snapshot_name);
                 sd.total += details.total;
                 sd.live += details.live;
+                utils::get_local_injector().inject("get_snapshot_details", [&] (auto& handler) -> future<> {
+                    throw std::runtime_error("Injected exception in get_snapshot_details");
+                }).get();
             }
         }
         return all_snapshots;
@@ -4036,6 +4039,10 @@ future<table::snapshot_details> table::get_snapshot_details(fs::path snapshot_di
             future<stat_data> (&file_stat)(file& directory, std::string_view name, follow_symlink) noexcept = seastar::file_stat;
             auto sd = co_await io_check(file_stat, snapshot_directory, name, follow_symlink::no);
             auto size = sd.allocated_size;
+
+            utils::get_local_injector().inject("per-snapshot-get_snapshot_details", [&] (auto& handler) -> future<> {
+                throw std::runtime_error("Injected exception in per-snapshot-get_snapshot_details");
+            }).get();
 
             // The manifest and schema.cql files are the only files expected to be in this directory not belonging to the SSTable.
             //
