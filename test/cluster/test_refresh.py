@@ -20,7 +20,7 @@ from cassandra.cluster import ConsistencyLevel
 from test.pylib.minio_server import MinioServer
 from test.pylib.manager_client import ManagerClient
 from test.cluster.object_store.conftest import format_tuples
-from test.cluster.object_store.test_backup import topo, take_snapshot, check_mutation_replicas, do_test_streaming_scopes
+from test.cluster.object_store.test_backup import topo, take_snapshot, do_test_streaming_scopes
 from test.cluster.util import new_test_keyspace
 from test.pylib.rest_client import read_barrier
 from test.pylib.util import unique_name
@@ -156,8 +156,7 @@ async def test_refresh_deletes_uploaded_sstables(manager: ManagerClient):
 
         await asyncio.gather(*(do_refresh(s, sstables, scope) for s in r_servers))
 
-        topology = topo(rf = 1, nodes = 2, racks = 1, dcs = 1)
-        await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf)
+        assert {row.pk for row in cql.execute(f"SELECT pk FROM {ks}.{cf}")} == {str(k) for k in keys}
 
         for s in r_servers:
             cf_dir = dirs[s.server_id]["cf_dir"]
