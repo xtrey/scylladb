@@ -101,61 +101,63 @@ async def test_refresh_deletes_uploaded_sstables(manager: ManagerClient):
 
     ks = 'ks'
     cf = 'cf'
-    _, keys, _ = await create_dataset(manager, ks, cf, topology, logger)
 
-    _, sstables = await take_snapshot(ks, servers, manager, logger)
+    if True:
+        _, keys, _ = await create_dataset(manager, ks, cf, topology, logger)
 
-    dirs = defaultdict(dict)
+        _, sstables = await take_snapshot(ks, servers, manager, logger)
 
-    logger.info(f'Move sstables to tmp dir')
-    tmpdir = f'tmpbackup-{str(uuid.uuid4())}'
-    for s in servers:
-        workdir = await manager.server_get_workdir(s.server_id)
-        cf_dir = os.listdir(f'{workdir}/data/{ks}')[0]
-        cf_dir = os.path.join(f'{workdir}/data/{ks}', cf_dir)
-        tmpbackup = os.path.join(workdir, f'../{tmpdir}')
-        dirs[s.server_id]["workdir"] = workdir
-        dirs[s.server_id]["cf_dir"] = cf_dir
-        dirs[s.server_id]["tmpbackup"] = tmpbackup
-        os.makedirs(tmpbackup, exist_ok=True)
+        dirs = defaultdict(dict)
 
-        snapshots_dir = os.path.join(cf_dir, 'snapshots')
-        snapshots_dir = os.path.join(snapshots_dir, os.listdir(snapshots_dir)[0])
-        exclude_list = ['manifest.json', 'schema.cql']
+        logger.info(f'Move sstables to tmp dir')
+        tmpdir = f'tmpbackup-{str(uuid.uuid4())}'
+        for s in servers:
+            workdir = await manager.server_get_workdir(s.server_id)
+            cf_dir = os.listdir(f'{workdir}/data/{ks}')[0]
+            cf_dir = os.path.join(f'{workdir}/data/{ks}', cf_dir)
+            tmpbackup = os.path.join(workdir, f'../{tmpdir}')
+            dirs[s.server_id]["workdir"] = workdir
+            dirs[s.server_id]["cf_dir"] = cf_dir
+            dirs[s.server_id]["tmpbackup"] = tmpbackup
+            os.makedirs(tmpbackup, exist_ok=True)
 
-        for item in os.listdir(snapshots_dir):
-            src_path = os.path.join(snapshots_dir, item)
-            dst_path = os.path.join(tmpbackup, item)
-            if item not in exclude_list:
-                shutil.copy2(src_path, dst_path)
+            snapshots_dir = os.path.join(cf_dir, 'snapshots')
+            snapshots_dir = os.path.join(snapshots_dir, os.listdir(snapshots_dir)[0])
+            exclude_list = ['manifest.json', 'schema.cql']
 
-    logger.info(f'Clear data by truncating')
-    cql.execute(f'TRUNCATE TABLE {ks}.{cf};')
+            for item in os.listdir(snapshots_dir):
+                src_path = os.path.join(snapshots_dir, item)
+                dst_path = os.path.join(tmpbackup, item)
+                if item not in exclude_list:
+                    shutil.copy2(src_path, dst_path)
 
-    logger.info(f'Copy sstables to upload dir (with shuffling)')
-    shuffled = list(range(len(servers)))
-    random.shuffle(shuffled)
-    for i, s in enumerate(servers):
-        other = servers[shuffled[i]]
-        cf_dir = dirs[other.server_id]["cf_dir"]
-        tmpbackup = dirs[s.server_id]["tmpbackup"]
-        shutil.copytree(tmpbackup, os.path.join(cf_dir, 'upload'), dirs_exist_ok=True)
+        logger.info(f'Clear data by truncating')
+        cql.execute(f'TRUNCATE TABLE {ks}.{cf};')
 
-    logger.info(f'Refresh')
-    async def do_refresh(s, toc_names, scope):
-        logger.info(f'Refresh {s.ip_addr} with {toc_names}, scope={scope}')
-        await manager.api.load_new_sstables(s.ip_addr, ks, cf, scope=scope, load_and_stream=True)
+        logger.info(f'Copy sstables to upload dir (with shuffling)')
+        shuffled = list(range(len(servers)))
+        random.shuffle(shuffled)
+        for i, s in enumerate(servers):
+            other = servers[shuffled[i]]
+            cf_dir = dirs[other.server_id]["cf_dir"]
+            tmpbackup = dirs[s.server_id]["tmpbackup"]
+            shutil.copytree(tmpbackup, os.path.join(cf_dir, 'upload'), dirs_exist_ok=True)
 
-    scope = 'rack'
-    r_servers = servers
+        logger.info(f'Refresh')
+        async def do_refresh(s, toc_names, scope):
+            logger.info(f'Refresh {s.ip_addr} with {toc_names}, scope={scope}')
+            await manager.api.load_new_sstables(s.ip_addr, ks, cf, scope=scope, load_and_stream=True)
 
-    await asyncio.gather(*(do_refresh(s, sstables, scope) for s in r_servers))
+        scope = 'rack'
+        r_servers = servers
 
-    await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf)
+        await asyncio.gather(*(do_refresh(s, sstables, scope) for s in r_servers))
 
-    for s in r_servers:
-        cf_dir = dirs[s.server_id]["cf_dir"]
-        files = os.listdir(os.path.join(cf_dir, 'upload'))
-        assert files == [], f'Upload dir not empty on server {s.server_id}: {files}'
+        await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf)
 
-    shutil.rmtree(tmpbackup)
+        for s in r_servers:
+            cf_dir = dirs[s.server_id]["cf_dir"]
+            files = os.listdir(os.path.join(cf_dir, 'upload'))
+            assert files == [], f'Upload dir not empty on server {s.server_id}: {files}'
+
+        shutil.rmtree(tmpbackup)
