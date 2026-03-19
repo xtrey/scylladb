@@ -20,9 +20,11 @@
 #include <seastar/json/json_elements.hh>
 
 #include "dht/decorated_key.hh"
+#include "readers/mutation_reader.hh"
 #include "replica/database.hh"
 #include "replica/data_dictionary_impl.hh"
 #include "replica/compaction_group.hh"
+#include "replica/logstor/compaction.hh"
 #include "replica/query_state.hh"
 #include "sstables/shared_sstable.hh"
 #include "sstables/sstable_set.hh"
@@ -797,6 +799,7 @@ class tablet_storage_group_manager final : public storage_group_manager {
     std::optional<utils::phased_barrier::operation> _pending_merge_fiber_work;
     // Holds compaction reenabler which disables compaction temporarily during tablet merge
     std::vector<background_merge_guard> _compaction_reenablers_for_merging;
+    std::vector<logstor::compaction_reenabler> _compaction_reenablers_for_logstor_merging;
 private:
     const schema_ptr& schema() const {
         return _t.schema();
@@ -2340,6 +2343,15 @@ compaction_group::merge_sstables_from(compaction_group& group) {
 }
 
 future<>
+compaction_group::merge_logstor_segments_from(compaction_group& group) {
+    if (!_t.uses_logstor()) {
+        co_return;
+    }
+    auto permit = co_await _t.get_sstable_list_permit();
+    co_await _logstor_segments->merge(*group._logstor_segments);
+}
+
+future<>
 compaction_group::update_sstable_sets_on_compaction_completion(compaction::compaction_completion_desc desc) {
     // Build a new list of _sstables: We remove from the existing list the
     // tables we compacted (by now, there might be more sstables flushed
@@ -3341,6 +3353,7 @@ future<> tablet_storage_group_manager::merge_completion_fiber() {
             auto cf_name = schema()->cf_name();
             // Enable compaction after merge is done.
             auto cres = std::exchange(_compaction_reenablers_for_merging, {});
+            auto logstor_cres = std::exchange(_compaction_reenablers_for_logstor_merging, {});
             co_await for_each_storage_group_gently([ks_name, cf_name] (storage_group& sg) -> future<> {
                 auto main_group = sg.main_compaction_group();
                 tlogger.debug("Merge compaction groups for table={}.{} group_id={} range={} started",
@@ -3359,6 +3372,7 @@ future<> tablet_storage_group_manager::merge_completion_fiber() {
                         co_await sleep(std::chrono::seconds(60));
                     }
                     co_await main_group->merge_sstables_from(*group);
+                    co_await main_group->merge_logstor_segments_from(*group);
                 }
                 co_await sg.remove_empty_merging_groups();
                 tlogger.debug("Merge compaction groups for table={}.{} group_id={} range={} finished",
@@ -3403,6 +3417,9 @@ void tablet_storage_group_manager::handle_tablet_merge_completion(locator::effec
         for (auto& view : new_cg->all_views()) {
             auto cre = _t.get_compaction_manager().stop_and_disable_compaction_no_wait(*view, "tablet merging");
             _compaction_reenablers_for_merging.push_back(background_merge_guard{std::move(cre), old_erm});
+        }
+        if (_t.uses_logstor()) {
+            _compaction_reenablers_for_logstor_merging.push_back(_t.get_logstor_compaction_manager().disable_compaction_no_wait(*new_cg));
         }
         auto new_sg = make_lw_shared<storage_group>(std::move(new_cg));
 

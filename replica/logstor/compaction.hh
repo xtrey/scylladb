@@ -11,6 +11,7 @@
 #include "utils/chunked_vector.hh"
 #include "write_buffer.hh"
 #include "utils/log_heap.hh"
+#include <seastar/coroutine/maybe_yield.hh>
 
 namespace replica::logstor {
 
@@ -67,6 +68,18 @@ using segment_descriptor_hist = log_heap<segment_descriptor, segment_descriptor_
 struct segment_set {
     segment_descriptor_hist _segments;
     size_t _segment_count{0};
+
+    future<> merge(segment_set& other) {
+        while (!other._segments.empty()) {
+            auto& desc = other._segments.one_of_largest();
+            other._segments.erase(desc);
+            --other._segment_count;
+            desc.owner = this;
+            _segments.push(desc);
+            ++_segment_count;
+            co_await coroutine::maybe_yield();
+        }
+    }
 
     void add_segment(segment_descriptor& desc) {
         if (desc.owner) {
@@ -204,6 +217,7 @@ public:
     virtual future<> stop_ongoing_compactions(replica::compaction_group&) = 0;
 
     virtual future<compaction_reenabler> disable_compaction(replica::compaction_group&) = 0;
+    virtual compaction_reenabler disable_compaction_no_wait(replica::compaction_group&) = 0;
 };
 
 }

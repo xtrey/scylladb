@@ -420,6 +420,7 @@ private:
     void submit(compaction_group&) override;
     future<> stop_ongoing_compactions(compaction_group&) override;
     future<compaction_reenabler> disable_compaction(replica::compaction_group&) override;
+    compaction_reenabler disable_compaction_no_wait(replica::compaction_group&) override;
 
     std::vector<log_segment_id> select_segments_for_compaction(const segment_descriptor_hist&);
     future<> do_compact(compaction_group&, abort_source&);
@@ -1344,6 +1345,23 @@ future<compaction_reenabler> compaction_manager_impl::disable_compaction(compact
     co_await state.completion.get_future();
 
     co_return compaction_reenabler([this, &cg] {
+        auto it = _groups.find(&cg);
+        if (it != _groups.end()) {
+            --it->second->compaction_disabled_counter;
+        }
+    });
+}
+
+compaction_reenabler compaction_manager_impl::disable_compaction_no_wait(compaction_group& cg) {
+    auto& state_ptr = _groups[&cg];
+    if (!state_ptr) {
+        state_ptr = std::make_unique<group_compaction_state>();
+    }
+    auto& state = *state_ptr;
+
+    ++state.compaction_disabled_counter;
+
+    return compaction_reenabler([this, &cg] {
         auto it = _groups.find(&cg);
         if (it != _groups.end()) {
             --it->second->compaction_disabled_counter;

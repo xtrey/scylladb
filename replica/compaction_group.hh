@@ -219,6 +219,9 @@ public:
     // Merges all sstables from another group into this one.
     future<> merge_sstables_from(compaction_group& group);
 
+    // Merges all logstor segments from another group into this one.
+    future<> merge_logstor_segments_from(compaction_group& group);
+
     const lw_shared_ptr<sstables::sstable_set>& main_sstables() const noexcept;
     sstables::sstable_set make_main_sstable_set() const;
     void set_main_sstables(lw_shared_ptr<sstables::sstable_set> new_main_sstables);
