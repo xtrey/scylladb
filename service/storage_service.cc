@@ -20,7 +20,6 @@
 #include "raft/raft.hh"
 #include "auth/cache.hh"
 #include <ranges>
-#include <seastar/core/shard_id.hh>
 #include <seastar/core/sleep.hh>
 #include "service/qos/raft_service_level_distributed_data_accessor.hh"
 #include "service/qos/service_level_controller.hh"
@@ -119,11 +118,9 @@
 #include "service/task_manager_module.hh"
 #include "service/topology_mutation.hh"
 #include "cql3/query_processor.hh"
-#include "service/qos/service_level_controller.hh"
 #include <csignal>
 #include "utils/labels.hh"
 #include "view_info.hh"
-#include "raft/raft.hh"
 #include "debug.hh"
 
 #include <boost/algorithm/string/split.hpp>

@@ -35,7 +35,6 @@
 #include <seastar/core/gate.hh>
 #include "replica/database_fwd.hh"
 #include "streaming/stream_reason.hh"
-#include <seastar/core/sharded.hh>
 #include "service/migration_listener.hh"
 #include <seastar/core/metrics_registration.hh>
 #include <seastar/core/shared_ptr.hh>
@@ -56,7 +55,6 @@
 class node_ops_cmd_request;
 class node_ops_cmd_response;
 class node_ops_info;
-enum class node_ops_cmd : uint32_t;
 class repair_service;
 class protocol_server;
 
@@ -177,7 +175,6 @@ class storage_service : public service::migration_listener, public gms::i_endpoi
 private:
     using token = dht::token;
     using token_range_endpoints = dht::token_range_endpoints;
-    using endpoint_details = dht::endpoint_details;
     using boot_strapper = dht::boot_strapper;
     using token_metadata = locator::token_metadata;
     using shared_token_metadata = locator::shared_token_metadata;
@@ -214,7 +211,6 @@ private:
 
     sstring _operation_in_progress;
     seastar::metrics::metric_groups _metrics;
-    using client_shutdown_hook = noncopyable_function<void()>;
     std::vector<protocol_server*> _protocol_servers;
     std::vector<std::any> _listeners;
     named_gate _async_gate;
@@ -731,9 +727,6 @@ public:
     future<> removenode(locator::host_id host_id, locator::host_id_or_endpoint_list ignore_nodes);
     future<> mark_excluded(const std::vector<locator::host_id>&);
     future<node_ops_cmd_response> node_ops_cmd_handler(gms::inet_address coordinator, std::optional<locator::host_id> coordinator_host_id, node_ops_cmd_request req);
-    void node_ops_cmd_check(gms::inet_address coordinator, const node_ops_cmd_request& req);
-    future<> node_ops_cmd_heartbeat_updater(node_ops_cmd cmd, node_ops_id uuid, std::list<gms::inet_address> nodes, lw_shared_ptr<bool> heartbeat_updater_done);
-    void on_node_ops_registered(node_ops_id);
 
     future<mode> get_operation_mode();
 
