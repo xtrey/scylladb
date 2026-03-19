@@ -2143,7 +2143,7 @@ future<> gossiper::do_stop_gossiping() {
         logger.info("Announcing shutdown");
         co_await add_local_application_state(application_state::STATUS, versioned_value::shutdown(true));
         auto live_endpoints = _live_endpoints;
-        for (locator::host_id id : live_endpoints) {
+        co_await coroutine::parallel_for_each(live_endpoints, [this, &local_generation] (locator::host_id id) -> future<> {
             logger.info("Sending a GossipShutdown to {} with generation {}", id, local_generation);
             try {
                 co_await ser::gossip_rpc_verbs::send_gossip_shutdown(&_messaging, id, get_broadcast_address(), local_generation.value());
@@ -2151,7 +2151,7 @@ future<> gossiper::do_stop_gossiping() {
             } catch (...) {
                 logger.warn("Fail to send GossipShutdown to {}: {}", id, std::current_exception());
             }
-        }
+        });
         co_await sleep(std::chrono::milliseconds(_gcfg.shutdown_announce_ms));
     } else {
         logger.warn("No local state or state is in silent shutdown, not announcing shutdown");
