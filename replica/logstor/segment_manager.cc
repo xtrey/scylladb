@@ -1763,7 +1763,7 @@ future<> segment_manager_impl::add_segment_to_compaction_group(replica::database
     } else {
         auto tid = std::get<table_id>(*segment_table);
         auto& t = db.find_column_family(tid);
-        if (t.add_logstor_segment(desc, *first_token, *last_token)) {
+        if (t.add_logstor_segment(seg_id, desc, *first_token, *last_token)) {
             // all record belong to a single compaction group and the segment was added to the compaction group
             logstor_logger.debug("Add segment {} with {} record with tokens [{},{}] to table", seg_id, live_record_count, *first_token, *last_token);
         } else {

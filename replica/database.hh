@@ -17,6 +17,7 @@
 #include <seastar/core/when_all.hh>
 #include "replica/global_table_ptr.hh"
 #include "replica/logstor/compaction.hh"
+#include "replica/logstor/types.hh"
 #include "types/user.hh"
 #include "utils/assert.hh"
 #include "utils/hash.hh"
@@ -616,7 +617,7 @@ public:
                                           sstables::offstrategy offstrategy = sstables::offstrategy::no);
     future<> add_sstables_and_update_cache(const std::vector<sstables::shared_sstable>& ssts);
 
-    bool add_logstor_segment(logstor::segment_descriptor&, dht::token first_token, dht::token last_token);
+    bool add_logstor_segment(logstor::log_segment_id, logstor::segment_descriptor&, dht::token first_token, dht::token last_token);
 
     logstor::separator_buffer& get_logstor_separator_buffer(dht::token token, size_t write_size);
 
@@ -734,6 +735,8 @@ private:
     compaction_group& compaction_group_for_key(partition_key_view key, const schema_ptr& s) const;
     // Select a compaction group from a given sstable based on its token range.
     compaction_group& compaction_group_for_sstable(const sstables::shared_sstable& sst) const;
+    // Select a compaction group from a given logstor segment based on its token range.
+    compaction_group& compaction_group_for_logstor_segment(logstor::log_segment_id, dht::token first_token, dht::token last_token) const;
     // Safely iterate through compaction groups, while performing async operations on them.
     future<> parallel_foreach_compaction_group(std::function<future<>(compaction_group&)> action);
     void for_each_compaction_group(std::function<void(compaction_group&)> action);
