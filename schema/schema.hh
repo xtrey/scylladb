@@ -175,6 +175,21 @@ public:
     bool operator==(const speculative_retry& other) const = default;
 };
 
+enum class storage_engine_type {
+    normal,
+    logstor,
+};
+
+inline sstring storage_engine_type_to_sstring(storage_engine_type t) {
+    switch (t) {
+    case storage_engine_type::normal:
+        return "normal";
+    case storage_engine_type::logstor:
+        return "logstor";
+    }
+    throw std::invalid_argument(format("unknown storage engine type: {:d}\n", uint8_t(t)));
+}
+
 using index_options_map = std::unordered_map<sstring, sstring>;
 
 enum class index_metadata_kind {
@@ -561,6 +576,7 @@ public:
         compaction::compaction_strategy_type compaction_strategy = compaction::compaction_strategy_type::incremental;
         std::map<sstring, sstring> compaction_strategy_options;
         bool compaction_enabled = true;
+        storage_engine_type storage_engine = storage_engine_type::normal;
         ::caching_options caching_options;
         std::optional<std::map<sstring, sstring>> tablet_options;
 
@@ -774,6 +790,14 @@ public:
 
     bool compaction_enabled() const {
         return _raw._props.compaction_enabled;
+    }
+
+    storage_engine_type storage_engine() const {
+        return _raw._props.storage_engine;
+    }
+
+    bool logstor_enabled() const {
+        return _raw._props.storage_engine == storage_engine_type::logstor;
     }
 
     const cdc::options& cdc_options() const {

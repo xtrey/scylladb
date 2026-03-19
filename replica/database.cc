@@ -76,6 +76,7 @@
 #include "locator/abstract_replication_strategy.hh"
 #include "timeout_config.hh"
 #include "tombstone_gc.hh"
+#include "logstor/logstor.hh"
 #include "service/qos/service_level_controller.hh"
 
 #include "replica/data_dictionary_impl.hh"
@@ -393,6 +394,13 @@ database::database(const db::config& cfg, database_config dbcfg, service::migrat
     // Allow system tables a pool of 10 MB memory to write, but never block on other regions.
     , _system_dirty_memory_manager(*this, 10 << 20, cfg.unspooled_dirty_soft_limit(), default_scheduling_group())
     , _dirty_memory_manager(*this, dbcfg.available_memory * 0.50, cfg.unspooled_dirty_soft_limit(), dbcfg.statement_scheduling_group)
+    , _dirty_memory_threshold_controller([this] {
+        if (_logstor) {
+            size_t logstor_memory_usage = get_logstor_memory_usage();
+            size_t available_memory = _dbcfg.available_memory > logstor_memory_usage ? _dbcfg.available_memory - logstor_memory_usage : 0;
+            _dirty_memory_manager.update_threshold(available_memory * 0.50);
+        }
+    })
     , _dbcfg(dbcfg)
     , _memtable_controller(make_flush_controller(_cfg, _dbcfg, [this, limit = float(_dirty_memory_manager.throttle_threshold())] {
         auto backlog = (_dirty_memory_manager.unspooled_dirty_memory()) / limit;
@@ -906,6 +914,50 @@ database::init_commitlog() {
     });
 }
 
+future<>
+database::init_logstor() {
+    dblog.info("Initializing logstor");
+
+    auto cfg = logstor::logstor_config{
+        .segment_manager_cfg = {
+            .base_dir = std::filesystem::path(_cfg.logstor_directory()),
+            .file_size = _cfg.logstor_file_size_in_mb() * 1024ull * 1024ull,
+            .disk_size = _cfg.logstor_disk_size_in_mb() * 1024ull * 1024ull,
+            .compaction_sg = _dbcfg.compaction_scheduling_group,
+            .compaction_static_shares = _cfg.compaction_static_shares,
+            .separator_sg = _dbcfg.memtable_scheduling_group,
+            .separator_delay_limit_ms = _cfg.logstor_separator_delay_limit_ms(),
+            .max_separator_memory = _cfg.logstor_separator_max_memory_in_mb() * 1024ull * 1024ull,
+        },
+        .flush_sg = _dbcfg.commitlog_scheduling_group,
+    };
+    _logstor = std::make_unique<logstor::logstor>(std::move(cfg));
+
+    _logstor->set_trigger_compaction_hook([this] {
+        trigger_logstor_compaction(false);
+    });
+
+    _logstor->set_trigger_separator_flush_hook([this] (size_t seq_num) {
+        (void)flush_logstor_separator(seq_num);
+    });
+
+    dblog.info("logstor initialized");
+    co_return;
+}
+
+future<>
+database::recover_logstor() {
+    if (!_logstor) {
+        co_return;
+    }
+
+    co_await _logstor->do_recovery(*this);
+
+    co_await _logstor->start();
+
+    _dirty_memory_threshold_controller.arm_periodic(std::chrono::seconds(5));
+}
+
 future<> database::modify_keyspace_on_all_shards(sharded<database>& sharded_db, std::function<future<>(replica::database&)> func) {
     // Run func first on shard 0
     // to allow "seeding" of the effective_replication_map
@@ -1126,6 +1178,17 @@ void database::add_column_family(keyspace& ks, schema_ptr schema, column_family:
     if (is_new) {
         cf->mark_ready_for_writes(commitlog_for(schema));
         cf->set_truncation_time(db_clock::time_point::min());
+    }
+
+    if (schema->logstor_enabled()) {
+        if (!_cfg.enable_logstor()) {
+            throw std::runtime_error(fmt::format("The table {}.{} is using logstor storage but logstor is not enabled in the configuration", schema->ks_name(), schema->cf_name()));
+        }
+        if (!_logstor) {
+            on_internal_error(dblog, "The table is using logstor but logstor is not initialized");
+        }
+        cf->init_logstor(_logstor.get());
+        dblog.info0("Table {}.{} is using logstor storage", schema->ks_name(), schema->cf_name());
     }
 
     auto uuid = schema->id();
@@ -2163,7 +2226,7 @@ static std::exception_ptr wrap_commitlog_add_error(const schema_ptr& s, const fr
 
 future<> database::apply_with_commitlog(column_family& cf, const mutation& m, db::timeout_clock::time_point timeout) {
     db::rp_handle h;
-    if (cf.commitlog() != nullptr && cf.durable_writes()) {
+    if (cf.commitlog() != nullptr && cf.durable_writes() && !cf.uses_logstor()) {
         auto fm = freeze(m);
         std::exception_ptr ex;
         try {
@@ -2211,6 +2274,10 @@ future<> database::do_apply_many(const utils::chunked_vector<frozen_mutation>& m
     for (size_t i = 0; i < muts.size(); ++i) {
         auto s = local_schema_registry().get(muts[i].schema_version());
         auto&& cf = find_column_family(muts[i].column_family_id());
+
+        if (cf.uses_logstor()) {
+            continue;
+        }
 
         if (!cl) {
             cl = cf.commitlog();
@@ -2309,7 +2376,7 @@ future<> database::do_apply(schema_ptr s, const frozen_mutation& m, tracing::tra
     // frames.
     db::rp_handle h;
     auto cl = cf.commitlog();
-    if (cl != nullptr && cf.durable_writes()) {
+    if (cl != nullptr && cf.durable_writes() && !cf.uses_logstor()) {
         std::exception_ptr ex;
         try {
             commitlog_entry_writer cew(s, m, sync);
@@ -2633,6 +2700,9 @@ future<> database::start(sharded<qos::service_level_controller>& sl_controller, 
         _compaction_manager.enable();
     }
     co_await init_commitlog();
+    if (_cfg.enable_logstor()) {
+        co_await init_logstor();
+    }
 }
 
 future<> database::shutdown() {
@@ -2672,6 +2742,11 @@ future<> database::stop() {
         dblog.info("Shutting down commitlog");
         co_await _commitlog->shutdown();
         dblog.info("Shutting down commitlog complete");
+    }
+    if (_logstor) {
+        dblog.info("Shutting down logstor");
+        co_await _logstor->stop();
+        dblog.info("Shutting down logstor complete");
     }
     if (_schema_commitlog) {
         dblog.info("Shutting down schema commitlog");
@@ -2807,6 +2882,53 @@ future<> database::drop_cache_for_keyspace_on_all_shards(sharded<database>& shar
     });
 }
 
+future<> database::trigger_logstor_compaction_on_all_shards(sharded<database>& sharded_db, bool major) {
+    return sharded_db.invoke_on_all([major] (replica::database& db) {
+        return db.trigger_logstor_compaction(major);
+    });
+}
+
+void database::trigger_logstor_compaction(bool major) {
+    _tables_metadata.for_each_table([&] (table_id id, const lw_shared_ptr<table> tp) {
+        if (tp->uses_logstor()) {
+            tp->trigger_logstor_compaction();
+        }
+    });
+}
+
+future<> database::flush_logstor_separator_on_all_shards(sharded<database>& sharded_db) {
+    return sharded_db.invoke_on_all([] (replica::database& db) {
+        return db.flush_logstor_separator();
+    });
+}
+
+future<> database::flush_logstor_separator(std::optional<size_t> seq_num) {
+    return _tables_metadata.parallel_for_each_table([seq_num] (table_id, lw_shared_ptr<table> table) {
+        return table->flush_separator(seq_num);
+    });
+}
+
+future<logstor::table_segment_stats> database::get_logstor_table_segment_stats(table_id table) const {
+    return find_column_family(table).get_logstor_segment_stats();
+}
+
+size_t database::get_logstor_memory_usage() const {
+    if (!_logstor) {
+        return 0;
+    }
+    size_t m = 0;
+
+    m += _logstor->get_memory_usage();
+
+    get_tables_metadata().for_each_table([&m] (table_id, lw_shared_ptr<replica::table> table) {
+        if (table->uses_logstor()) {
+            m += table->get_logstor_memory_usage();
+        }
+    });
+
+    return m;
+}
+
 future<> database::snapshot_table_on_all_shards(sharded<database>& sharded_db, table_id uuid, sstring tag, db::snapshot_options opts) {
     if (!opts.skip_flush) {
         co_await flush_table_on_all_shards(sharded_db, uuid);
@@ -2927,6 +3049,7 @@ future<> database::truncate_table_on_all_shards(sharded<database>& sharded_db, s
         co_await coroutine::parallel_for_each(views, [&] (lw_shared_ptr<replica::table> v) -> future<> {
             co_await flush_or_clear(*v);
         });
+        co_await cf.flush_separator();
         // Since writes could be appended to active memtable between getting low_mark above
         // and flush, the low_mark has to be adjusted to account for those writes, where
         // memtable was flushed with a higher replay position than the one obtained above.
@@ -2967,6 +3090,8 @@ future<> database::truncate(db::system_keyspace& sys_ks, column_family& cf, std:
 
     dblog.debug("Discarding sstable data for truncated CF + indexes");
     // TODO: notify truncation
+
+    co_await cf.discard_logstor_segments();
 
     db::replay_position rp = co_await cf.discard_sstables(truncated_at);
     // TODO: indexes.

@@ -59,6 +59,8 @@ const sstring cf_prop_defs::COMPACTION_ENABLED_KEY = "enabled";
 
 const sstring cf_prop_defs::KW_TABLETS = "tablets";
 
+const sstring cf_prop_defs::KW_STORAGE_ENGINE = "storage_engine";
+
 schema::extensions_map cf_prop_defs::make_schema_extensions(const db::extensions& exts) const {
     schema::extensions_map er;
     for (auto& p : exts.schema_extensions()) {
@@ -106,6 +108,7 @@ void cf_prop_defs::validate(const data_dictionary::database db, sstring ks_name,
         KW_BF_FP_CHANCE, KW_MEMTABLE_FLUSH_PERIOD, KW_COMPACTION,
         KW_COMPRESSION, KW_CRC_CHECK_CHANCE,  KW_ID, KW_PAXOSGRACESECONDS,
         KW_SYNCHRONOUS_UPDATES, KW_TABLETS,
+        KW_STORAGE_ENGINE,
     });
     static std::set<sstring> obsolete_keywords({
         sstring("index_interval"),
@@ -195,6 +198,20 @@ void cf_prop_defs::validate(const data_dictionary::database db, sstring ks_name,
             throw exceptions::configuration_exception("tablet options cannot be used until all nodes in the cluster enable this feature");
         }
         db::tablet_options::validate(*tablet_options_map);
+    }
+
+    if (has_property(KW_STORAGE_ENGINE)) {
+        auto storage_engine = get_string(KW_STORAGE_ENGINE, "");
+        if (storage_engine == "logstor") {
+            if (!db.features().logstor) {
+                throw exceptions::configuration_exception(format("The experimental feature 'logstor' must be enabled in order to use the 'logstor' storage engine."));
+            }
+            if (!db.get_config().enable_logstor()) {
+                throw exceptions::configuration_exception(format("The configuration option 'enable_logstor' must be set to true in the configuration in order to use the 'logstor' storage engine."));
+            }
+        } else {
+            throw exceptions::configuration_exception(format("Illegal value for '{}'", KW_STORAGE_ENGINE));
+        }
     }
 }
 
@@ -395,6 +412,13 @@ void cf_prop_defs::apply_to_builder(schema_builder& builder, schema::extensions_
 
     if (auto tablet_options_opt = get_map(KW_TABLETS)) {
         builder.set_tablet_options(std::move(*tablet_options_opt));
+    }
+
+    if (has_property(KW_STORAGE_ENGINE)) {
+        auto storage_engine = get_string(KW_STORAGE_ENGINE, "");
+        if (storage_engine == "logstor") {
+            builder.set_logstor();
+        }
     }
 }
 

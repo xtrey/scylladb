@@ -269,6 +269,11 @@ public:
         enable_schema_commitlog();
     }
 
+    schema_builder& set_logstor() {
+        _raw._props.storage_engine = storage_engine_type::logstor;
+        return *this;
+    }
+
     class default_names {
     public:
         default_names(const schema_builder&);

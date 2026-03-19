@@ -16,6 +16,7 @@
 #include <seastar/core/execution_stage.hh>
 #include <seastar/core/when_all.hh>
 #include "replica/global_table_ptr.hh"
+#include "replica/logstor/compaction.hh"
 #include "types/user.hh"
 #include "utils/assert.hh"
 #include "utils/hash.hh"
@@ -35,6 +36,7 @@
 #include <seastar/core/gate.hh>
 #include "db/commitlog/replay_position.hh"
 #include "db/commitlog/commitlog_types.hh"
+#include "logstor/logstor.hh"
 #include "schema/schema_fwd.hh"
 #include "db/view/view.hh"
 #include "db/snapshot-ctl.hh"
@@ -544,6 +546,9 @@ private:
     utils::phased_barrier _flush_barrier;
     std::vector<view_ptr> _views;
 
+    logstor::logstor* _logstor = nullptr;
+    std::unique_ptr<logstor::primary_index> _logstor_index;
+
     std::unique_ptr<cell_locker> _counter_cell_locks; // Memory-intensive; allocate only when needed.
 
     // Labels used to identify writes and reads for this table in the rate_limiter structure.
@@ -610,6 +615,10 @@ public:
     future<> add_sstable_and_update_cache(sstables::shared_sstable sst,
                                           sstables::offstrategy offstrategy = sstables::offstrategy::no);
     future<> add_sstables_and_update_cache(const std::vector<sstables::shared_sstable>& ssts);
+
+    bool add_logstor_segment(logstor::segment_descriptor&, dht::token first_token, dht::token last_token);
+
+    logstor::separator_buffer& get_logstor_separator_buffer(dht::token token, size_t write_size);
 
     // Restricted to new sstables produced by external processes such as repair.
     // The sstable might undergo split if table is in split mode.
@@ -833,6 +842,21 @@ public:
     // to issue disk operations safely.
     void mark_ready_for_writes(db::commitlog* cl);
 
+    void init_logstor(logstor::logstor* ls);
+
+    bool uses_logstor() const {
+        return _logstor != nullptr;
+    }
+
+    logstor::primary_index& logstor_index() noexcept {
+        return *_logstor_index;
+    }
+    const logstor::primary_index& logstor_index() const noexcept {
+        return *_logstor_index;
+    }
+
+    size_t get_logstor_memory_usage() const;
+
     // Creates a mutation reader which covers all data sources for this column family.
     // Caller needs to ensure that column_family remains live (FIXME: relax this).
     // Note: for data queries use query() instead.
@@ -857,6 +881,14 @@ public:
         auto& full_slice = schema->full_slice();
         return make_mutation_reader(std::move(schema), std::move(permit), range, full_slice);
     }
+
+    mutation_reader make_logstor_mutation_reader(schema_ptr s,
+            reader_permit permit,
+            const dht::partition_range& pr,
+            const query::partition_slice& slice,
+            tracing::trace_state_ptr trace_state,
+            streamed_mutation::forwarding fwd,
+            mutation_reader::forwarding fwd_mr) const;
 
     // The streaming mutation reader differs from the regular mutation reader in that:
     //  - Reflects all writes accepted by replica prior to creation of the
@@ -1047,6 +1079,7 @@ public:
     bool needs_flush() const;
     future<> clear(); // discards memtable(s) without flushing them to disk.
     future<db::replay_position> discard_sstables(db_clock::time_point);
+    future<> discard_logstor_segments();
 
     bool can_flush() const;
 
@@ -1098,6 +1131,7 @@ public:
     void start_compaction();
     void trigger_compaction();
     void try_trigger_compaction(compaction_group& cg) noexcept;
+    void trigger_logstor_compaction();
     // Triggers offstrategy compaction, if needed, in the background.
     void trigger_offstrategy_compaction();
     // Performs offstrategy compaction, if needed, returning
@@ -1125,6 +1159,22 @@ public:
     compaction::compaction_manager& get_compaction_manager() noexcept {
         return _compaction_manager;
     }
+
+    logstor::segment_manager& get_logstor_segment_manager() noexcept {
+        return _logstor->get_segment_manager();
+    }
+
+    const logstor::segment_manager& get_logstor_segment_manager() const noexcept {
+        return _logstor->get_segment_manager();
+    }
+
+    logstor::compaction_manager& get_logstor_compaction_manager() noexcept {
+        return _logstor->get_compaction_manager();
+    }
+
+    future<> flush_separator(std::optional<size_t> seq_num = std::nullopt);
+
+    future<logstor::table_segment_stats> get_logstor_segment_stats() const;
 
     table_stats& get_stats() const {
         return _stats;
@@ -1613,6 +1663,8 @@ private:
     dirty_memory_manager _system_dirty_memory_manager;
     dirty_memory_manager _dirty_memory_manager;
 
+    timer<lowres_clock> _dirty_memory_threshold_controller;
+
     database_config _dbcfg;
     flush_controller _memtable_controller;
     drain_progress _drain_progress {};
@@ -1655,6 +1707,8 @@ private:
     bool _enable_autocompaction_toggle = false;
     querier_cache _querier_cache;
 
+    std::unique_ptr<logstor::logstor> _logstor;
+
     std::unique_ptr<db::large_data_handler> _large_data_handler;
     std::unique_ptr<db::large_data_handler> _nop_large_data_handler;
 
@@ -1696,6 +1750,8 @@ public:
     std::shared_ptr<data_dictionary::user_types_storage> as_user_types_storage() const noexcept;
     const data_dictionary::user_types_storage& user_types() const noexcept;
     future<> init_commitlog();
+    future<> init_logstor();
+    future<> recover_logstor();
     const gms::feature_service& features() const { return _feat; }
     future<> apply_in_memory(const frozen_mutation& m, schema_ptr m_schema, db::rp_handle&&, db::timeout_clock::time_point timeout);
     future<> apply_in_memory(const mutation& m, column_family& cf, db::rp_handle&&, db::timeout_clock::time_point timeout);
@@ -1995,6 +2051,13 @@ public:
     future<> flush_all_tables();
     // a wrapper around flush_all_tables, allowing the caller to express intent more clearly
     future<> flush_commitlog() { return flush_all_tables(); }
+
+    static future<> trigger_logstor_compaction_on_all_shards(sharded<database>& sharded_db, bool major);
+    void trigger_logstor_compaction(bool major);
+    static future<> flush_logstor_separator_on_all_shards(sharded<database>& sharded_db);
+    future<> flush_logstor_separator(std::optional<size_t> seq_num = std::nullopt);
+    future<logstor::table_segment_stats> get_logstor_table_segment_stats(table_id table) const;
+    size_t get_logstor_memory_usage() const;
 
     static future<db_clock::time_point> get_all_tables_flushed_at(sharded<database>& sharded_db);
 
