@@ -91,7 +91,9 @@ class Scheduler:
                  max_test_memory: float = 5e9,
                  test_memory_fraction: float = 8.0,
                  debug_test_memory_multiplier: float = 1.5,
-                 cpus_per_test_job: float = 1.5,
+                 debug_cpus_per_test_job=1.5,
+                 non_debug_cpus_per_test_job: float =1.0,
+                 non_debug_max_test_memory: float = 4e9
                  ):
         sys_mem = int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
         test_mem = min(sys_mem / test_memory_fraction, max_test_memory)
@@ -102,8 +104,16 @@ class Scheduler:
             max_system_memory_reserve,
         ))
         available_mem = max(0, sys_mem - system_memory_reserve)
-
-        self.cpus_per_test_job = cpus_per_test_job
+        is_debug = "debug" in modes
+        test_mem = min(
+            sys_mem / test_memory_fraction,
+            max_test_memory if is_debug else non_debug_max_test_memory,
+        )
+        if is_debug:
+            test_mem *= debug_test_memory_multiplier
+        self.cpus_per_test_job = (
+            debug_cpus_per_test_job if is_debug else non_debug_cpus_per_test_job
+        )
         self.default_num_jobs_mem = max(1, int(available_mem // test_mem))
 
     def get_number_of_jobs(self, nr_cpus: int) -> int:
