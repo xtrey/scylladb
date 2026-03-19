@@ -1086,6 +1086,10 @@ future<> compaction_group::split(compaction::compaction_type_options::split opt,
         co_await cm.perform_offstrategy(*view, tablet_split_task_info);
         co_await cm.perform_split_compaction(*view, opt, tablet_split_task_info);
     }
+
+    if (_t.uses_logstor()) {
+        co_await get_logstor_compaction_manager().split_compaction(_t, *this, opt.classifier);
+    }
 }
 
 future<> compaction_group::discard_logstor_segments() {
@@ -1135,6 +1139,7 @@ future<> storage_group::split(compaction::compaction_type_options::split opt, ta
         }
         auto holder = cg->async_gate().hold();
         co_await cg->flush();
+        co_await cg->flush_separator();
         co_await cg->split(opt, tablet_split_task_info);
     }
 }

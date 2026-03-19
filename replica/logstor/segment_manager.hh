@@ -16,6 +16,7 @@
 #include <seastar/core/queue.hh>
 #include <seastar/core/shared_ptr.hh>
 #include "bytes_fwd.hh"
+#include "mutation_writer/token_group_based_splitting_writer.hh"
 #include "replica/logstor/write_buffer.hh"
 #include "types.hh"
 #include "utils/updateable_value.hh"
@@ -23,6 +24,7 @@
 namespace replica {
 
 class database;
+class table;
 
 namespace logstor {
 

@@ -12,6 +12,11 @@
 #include "write_buffer.hh"
 #include "utils/log_heap.hh"
 #include <seastar/coroutine/maybe_yield.hh>
+#include "mutation_writer/token_group_based_splitting_writer.hh"
+
+namespace replica {
+class table;
+} // namespace replica
 
 namespace replica::logstor {
 
@@ -218,6 +223,8 @@ public:
 
     virtual future<compaction_reenabler> disable_compaction(replica::compaction_group&) = 0;
     virtual compaction_reenabler disable_compaction_no_wait(replica::compaction_group&) = 0;
+
+    virtual future<> split_compaction(replica::table&, replica::compaction_group&, mutation_writer::classify_by_token_group) = 0;
 };
 
-}
+} // namespace replica::logstor
