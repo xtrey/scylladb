@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 #include "write_buffer.hh"
+#include "dht/token.hh"
 #include "segment_manager.hh"
 #include "bytes_fwd.hh"
 #include "logstor.hh"
@@ -33,12 +34,12 @@ void log_record_writer::write(ostream& out) const {
 
 // write_buffer
 
-write_buffer::write_buffer(size_t buffer_size, bool with_record_copy)
+write_buffer::write_buffer(size_t buffer_size, segment_kind kind)
         : _buffer_size(buffer_size)
         , _buffer(seastar::allocate_aligned_buffer<char>(buffer_size, 4096))
-        , _with_record_copy(with_record_copy)
+        , _segment_kind(kind)
 {
-    if (_with_record_copy) {
+    if (with_record_copy()) {
         _records_copy.reserve(_buffer_size / 100);
     }
     reset();
@@ -47,9 +48,14 @@ write_buffer::write_buffer(size_t buffer_size, bool with_record_copy)
 void write_buffer::reset() {
     _stream = seastar::simple_memory_output_stream(_buffer.get(), _buffer_size);
     _header_stream = _stream.write_substream(buffer_header_size);
+    if (with_segment_header()) {
+        _segment_header_stream = _stream.write_substream(segment_header_size);
+    }
     _buffer_header = {};
     _net_data_size = 0;
     _record_count = 0;
+    _min_token = std::nullopt;
+    _max_token = std::nullopt;
     _written = {};
     _records_copy.clear();
     _write_gate = {};
@@ -62,7 +68,7 @@ future<> write_buffer::close() {
 }
 
 size_t write_buffer::get_max_write_size() const noexcept {
-    return _buffer_size - (buffer_header_size + record_header_size);
+    return _buffer_size - (header_size() + record_header_size);
 }
 
 bool write_buffer::can_fit(size_t data_size) const noexcept {
@@ -73,7 +79,7 @@ bool write_buffer::can_fit(size_t data_size) const noexcept {
 }
 
 bool write_buffer::has_data() const noexcept {
-    return offset_in_buffer() > buffer_header_size;
+    return offset_in_buffer() > header_size();
 }
 
 future<log_location_with_holder> write_buffer::write(log_record_writer writer, compaction_group* cg, seastar::gate::holder cg_holder) {
@@ -95,6 +101,12 @@ future<log_location_with_holder> write_buffer::write(log_record_writer writer, c
 
     _net_data_size += data_size;
     _record_count++;
+    if (!_min_token || writer.record().key.dk.token() < *_min_token) {
+        _min_token = writer.record().key.dk.token();
+    }
+    if (!_max_token || writer.record().key.dk.token() > *_max_token) {
+        _max_token = writer.record().key.dk.token();
+    }
 
     // Add padding to align record
     pad_to_alignment(record_alignment);
@@ -107,7 +119,7 @@ future<log_location_with_holder> write_buffer::write(log_record_writer writer, c
         };
     };
 
-    if (_with_record_copy) {
+    if (with_record_copy()) {
         _records_copy.push_back(record_in_buffer {
             .writer = std::move(writer),
             .offset_in_buffer = data_offset_in_buffer,
@@ -138,14 +150,26 @@ void write_buffer::pad_to_alignment(size_t alignment) {
 }
 
 void write_buffer::finalize(size_t alignment) {
-    _buffer_header.data_size = static_cast<uint32_t>(offset_in_buffer() - buffer_header_size);
+    _buffer_header.data_size = static_cast<uint32_t>(offset_in_buffer() - header_size());
     pad_to_alignment(alignment);
 }
 
-void write_buffer::write_header(segment_generation seg_gen) {
+void write_buffer::write_header(segment_generation seg_gen, std::optional<table_id> table) {
     _buffer_header.magic = buffer_header_magic;
     _buffer_header.seg_gen = seg_gen;
+    _buffer_header.kind = _segment_kind;
+
     ser::serialize<buffer_header>(_header_stream, _buffer_header);
+
+    if (_segment_kind == segment_kind::full) {
+        segment_header seg_hdr {
+            .table = table.value(),
+            .first_token = _min_token.value_or(dht::minimum_token()),
+            .last_token = _max_token.value_or(dht::minimum_token()),
+        };
+
+        ser::serialize<segment_header>(_segment_header_stream, seg_hdr);
+    }
 }
 
 future<> write_buffer::complete_writes(log_location base_location) {
@@ -161,7 +185,7 @@ future<> write_buffer::abort_writes(std::exception_ptr ex) {
 }
 
 std::vector<write_buffer::record_in_buffer>& write_buffer::records() {
-    if (!_with_record_copy) {
+    if (!with_record_copy()) {
         on_internal_error(logstor_logger, "requesting records but the write buffer has no record copy enabled");
     }
     return _records_copy;
@@ -185,7 +209,7 @@ buffered_writer::buffered_writer(segment_manager& sm, seastar::scheduling_group 
         , _flush_sg(flush_sg) {
     _ring.reserve(ring_size);
     for (size_t i = 0; i < ring_size; ++i) {
-        _ring.emplace_back(_sm.get_segment_size(), true);
+        _ring.emplace_back(_sm.get_segment_size(), segment_kind::mixed);
     }
 }
 

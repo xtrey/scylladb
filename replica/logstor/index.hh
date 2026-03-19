@@ -124,11 +124,11 @@ public:
         return false;
     }
 
-    std::pair<bool, std::optional<index_entry>> insert_if_newer(const primary_index_key& key, index_entry new_entry) {
+    std::pair<bool, std::optional<index_entry>> insert_if_newer(const primary_index_key& key, index_entry new_entry, bool prefer_on_tie) {
         partitions_type::bound_hint hint;
         auto i = _partitions.lower_bound(key.dk, dht::ring_position_comparator(*_schema), hint);
         if (hint.match) {
-            if (i->_e.generation < new_entry.generation) {
+            if (i->_e.generation < new_entry.generation || (i->_e.generation == new_entry.generation && prefer_on_tie)) {
                 auto old_entry = i->_e;
                 i->_e = std::move(new_entry);
                 return {true, std::make_optional(old_entry)};
