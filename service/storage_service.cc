@@ -1892,12 +1892,8 @@ std::optional<db::system_keyspace::peer_info> storage_service::get_peer_info_for
 
     auto set_field = [&]<typename T> (std::optional<T>& field,
             const gms::versioned_value& value,
-            std::string_view name,
-            bool managed_by_raft)
+            std::string_view name)
     {
-        if (managed_by_raft) {
-            return;
-        }
         try {
             field = T(value.value());
         } catch (...) {
@@ -1906,31 +1902,17 @@ std::optional<db::system_keyspace::peer_info> storage_service::get_peer_info_for
         }
     };
 
+    // Fields managed by raft are skipped here
     for (const auto& [state, value] : app_state_map) {
         switch (state) {
-        case application_state::DC:
-            set_field(get_peer_info().data_center, value, "data_center", true);
-            break;
         case application_state::INTERNAL_IP:
-            set_field(get_peer_info().preferred_ip, value, "preferred_ip", false);
-            break;
-        case application_state::RACK:
-            set_field(get_peer_info().rack, value, "rack", true);
-            break;
-        case application_state::RELEASE_VERSION:
-            set_field(get_peer_info().release_version, value, "release_version", true);
+            set_field(get_peer_info().preferred_ip, value, "preferred_ip");
             break;
         case application_state::RPC_ADDRESS:
-            set_field(get_peer_info().rpc_address, value, "rpc_address", false);
+            set_field(get_peer_info().rpc_address, value, "rpc_address");
             break;
         case application_state::SCHEMA:
-            set_field(get_peer_info().schema_version, value, "schema_version", false);
-            break;
-        case application_state::TOKENS:
-            // tokens are updated separately
-            break;
-        case application_state::SUPPORTED_FEATURES:
-            set_field(get_peer_info().supported_features, value, "supported_features", true);
+            set_field(get_peer_info().schema_version, value, "schema_version");
             break;
         default:
             break;
