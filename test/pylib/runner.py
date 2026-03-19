@@ -383,7 +383,7 @@ def pytest_runtest_makereport(item, call):
         rep = outcome.get_result()
         # we only look at actual failing test calls, not setup/teardown
         pytest_tests_logs = pathlib.Path(_pytest_config.getoption("--tmpdir")).absolute() / PYTEST_TESTS_LOGS_FOLDER
-        if rep.failed or _pytest_config.getoption("--save-log-on-success"):
+        if rep.failed or (_pytest_config.getoption("--save-log-on-success") and rep.when == "teardown"):
             mode = "a" if os.path.exists(pytest_tests_logs) else "w"
             with open(pytest_tests_logs/ f"{item._nodeid.replace("::", "-").replace("/", "-")}-{rep.when}-{HOST_ID}.log",mode) as f:
                 f.write(rep.longreprtext + "\n")
