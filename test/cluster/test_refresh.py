@@ -152,13 +152,12 @@ async def test_refresh_deletes_uploaded_sstables(manager: ManagerClient):
             await manager.api.load_new_sstables(s.ip_addr, ks, cf, scope=scope, load_and_stream=True)
 
         scope = 'rack'
-        r_servers = servers
 
-        await asyncio.gather(*(do_refresh(s, sstables, scope) for s in r_servers))
+        await asyncio.gather(*(do_refresh(s, sstables, scope) for s in servers))
 
         assert {row.pk for row in cql.execute(f"SELECT pk FROM {ks}.{cf}")} == {str(k) for k in keys}
 
-        for s in r_servers:
+        for s in servers:
             cf_dir = dirs[s.server_id]["cf_dir"]
             files = os.listdir(os.path.join(cf_dir, 'upload'))
             assert files == [], f'Upload dir not empty on server {s.server_id}: {files}'
