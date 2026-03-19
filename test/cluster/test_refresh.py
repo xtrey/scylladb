@@ -108,7 +108,7 @@ async def test_refresh_deletes_uploaded_sstables(manager: ManagerClient):
         keys = range(256)
         await asyncio.gather(*(cql.run_async(insert_stmt, (str(k), k)) for k in keys))
 
-        _, sstables = await take_snapshot(ks, servers, manager, logger)
+        await take_snapshot(ks, servers, manager, logger)
 
         dirs = defaultdict(dict)
 
@@ -147,13 +147,7 @@ async def test_refresh_deletes_uploaded_sstables(manager: ManagerClient):
             shutil.copytree(tmpbackup, os.path.join(cf_dir, 'upload'), dirs_exist_ok=True)
 
         logger.info(f'Refresh')
-        async def do_refresh(s, toc_names, scope):
-            logger.info(f'Refresh {s.ip_addr} with {toc_names}, scope={scope}')
-            await manager.api.load_new_sstables(s.ip_addr, ks, cf, scope=scope, load_and_stream=True)
-
-        scope = 'rack'
-
-        await asyncio.gather(*(do_refresh(s, sstables, scope) for s in servers))
+        await asyncio.gather(*(manager.api.load_new_sstables(s.ip_addr, ks, cf, scope='rack', load_and_stream=True) for s in servers))
 
         assert {row.pk for row in cql.execute(f"SELECT pk FROM {ks}.{cf}")} == {str(k) for k in keys}
 
