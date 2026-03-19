@@ -16,10 +16,12 @@ import shutil
 import uuid
 from collections import defaultdict
 
+from cassandra.cluster import ConsistencyLevel
 from test.pylib.minio_server import MinioServer
 from test.pylib.manager_client import ManagerClient
 from test.cluster.object_store.conftest import format_tuples
-from test.cluster.object_store.test_backup import topo, take_snapshot, create_dataset, check_mutation_replicas, do_test_streaming_scopes
+from test.cluster.object_store.test_backup import topo, take_snapshot, check_mutation_replicas, do_test_streaming_scopes
+from test.cluster.util import new_test_keyspace
 from test.pylib.rest_client import read_barrier
 from test.pylib.util import unique_name
 
@@ -91,19 +93,20 @@ async def test_refresh_deletes_uploaded_sstables(manager: ManagerClient):
     Check that refreshing a cluster deletes the sstable files from the upload directory after loading
     '''
 
-    topology = topo(rf = 1, nodes = 2, racks = 1, dcs = 1)
-
     servers = await manager.servers_add(2)
 
     cql = manager.get_cql()
 
     await manager.disable_tablet_balancing()
 
-    ks = 'ks'
     cf = 'cf'
 
-    if True:
-        _, keys, _ = await create_dataset(manager, ks, cf, topology, logger)
+    async with new_test_keyspace(manager, "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}") as ks:
+        await cql.run_async(f"CREATE TABLE {ks}.{cf} (pk text primary key, value int)")
+        insert_stmt = cql.prepare(f"INSERT INTO {ks}.{cf} (pk, value) VALUES (?, ?)")
+        insert_stmt.consistency_level = ConsistencyLevel.ALL
+        keys = range(256)
+        await asyncio.gather(*(cql.run_async(insert_stmt, (str(k), k)) for k in keys))
 
         _, sstables = await take_snapshot(ks, servers, manager, logger)
 
@@ -153,6 +156,7 @@ async def test_refresh_deletes_uploaded_sstables(manager: ManagerClient):
 
         await asyncio.gather(*(do_refresh(s, sstables, scope) for s in r_servers))
 
+        topology = topo(rf = 1, nodes = 2, racks = 1, dcs = 1)
         await check_mutation_replicas(cql, manager, servers, keys, topology, logger, ks, cf)
 
         for s in r_servers:
