@@ -20,7 +20,6 @@ from test.pylib.minio_server import MinioServer
 from test.pylib.manager_client import ManagerClient
 from test.cluster.object_store.conftest import format_tuples
 from test.cluster.object_store.test_backup import topo, create_cluster, take_snapshot, create_dataset, check_mutation_replicas, do_test_streaming_scopes
-from test.cluster.util import wait_for_cql_and_get_hosts
 from test.pylib.rest_client import read_barrier
 from test.pylib.util import unique_name
 
