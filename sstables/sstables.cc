@@ -2531,6 +2531,7 @@ future<> sstable::write_components(
     return seastar::async([this, mr = std::move(mr), estimated_partitions, schema = std::move(schema), cfg, stats] () mutable {
         auto close_mr = deferred_close(mr);
         auto wr = get_writer(*schema, estimated_partitions, cfg, stats);
+        utils::get_local_injector().inject("write_components_writer_created", utils::wait_for_message(std::chrono::seconds(30))).get();
         mr.consume_in_thread(std::move(wr));
     }).finally([this] {
         assert_large_data_handler_is_running();
