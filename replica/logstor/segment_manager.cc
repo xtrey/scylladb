@@ -462,15 +462,17 @@ enum class write_source {
     normal_write,
     compaction,
     separator,
+    streaming,
 };
 
-static constexpr size_t write_source_count = 3;
+static constexpr size_t write_source_count = 4;
 
 static sstring write_source_to_string(write_source src) {
     switch (src) {
         case write_source::normal_write: return "normal_write";
         case write_source::compaction: return "compaction";
         case write_source::separator: return "separator";
+        case write_source::streaming: return "streaming";
     }
     return "unknown";
 }
@@ -660,6 +662,7 @@ public:
     future<> for_each_record(const std::vector<log_segment_id>&,
                             std::function<future<>(log_location, log_record)>);
 
+    future<> load_segment(replica::database&, log_segment_id);
     future<> recover_segment(replica::database&, log_segment_id);
     future<std::optional<segment_header>> read_segment_header(log_segment_id);
     future<> add_segment_to_compaction_group(replica::database&, segment_descriptor&);
@@ -705,6 +708,9 @@ public:
     future<> await_pending_writes() {
         return _writes_phaser.advance_and_await();
     }
+
+    future<seastar::input_stream<char>> create_segment_input_stream(log_segment_id segment_id, const seastar::file_input_stream_options& opts);
+    future<std::unique_ptr<segment_stream_sink>> create_segment_output_stream(replica::database&);
 
 private:
 
@@ -772,6 +778,7 @@ private:
 
     friend class compaction_manager_impl;
     friend struct compaction_buffer;
+    friend class segment_stream_sink_impl;
 };
 
 segment_manager_impl::segment_manager_impl(segment_manager_config config)
@@ -2069,6 +2076,84 @@ size_t segment_manager::get_memory_usage() const {
 
 future<> segment_manager::await_pending_writes() {
     return _impl->await_pending_writes();
+}
+
+class segment_data_sink_impl : public data_sink_impl {
+    seg_ptr _segment;
+public:
+    segment_data_sink_impl(seg_ptr segment)
+        : _segment(std::move(segment))
+    {}
+
+    virtual future<> put(std::span<temporary_buffer<char>> data) override {
+        for (auto& buf : data) {
+            co_await _segment->append(bytes_view((const int8_t*)buf.get(), buf.size()));
+        }
+    }
+
+    virtual future<> close() override {
+        co_return;
+    }
+
+    virtual size_t buffer_size() const noexcept override {
+        return 128 * 1024;
+    }
+};
+
+future<seastar::input_stream<char>> segment_manager_impl::create_segment_input_stream(log_segment_id segment_id, const seastar::file_input_stream_options& opts) {
+    auto [file_id, file_offset] = segment_id_to_file_location(segment_id);
+    auto file = co_await _file_mgr.get_file_for_read(file_id);
+    auto stream = make_file_input_stream(std::move(file), file_offset, _cfg.segment_size, opts);
+    co_return std::move(stream);
+}
+
+class segment_stream_sink_impl : public segment_stream_sink {
+    segment_manager_impl& _sm;
+    replica::database& _db;
+    seg_ptr _seg;
+public:
+    segment_stream_sink_impl(segment_manager_impl& sm, replica::database& db, seg_ptr seg)
+        : _sm(sm), _db(db), _seg(std::move(seg))
+    {}
+public:
+    log_segment_id segment_id() const noexcept override {
+        return _seg->id();
+    }
+    future<output_stream<char>> output() override {
+        auto sink = std::make_unique<segment_data_sink_impl>(_seg);
+        auto stream = output_stream<char>(data_sink(std::move(sink)));
+        co_return std::move(stream);
+    }
+    future<> close() override {
+        co_await _seg->stop();
+        co_await _sm.load_segment(_db, _seg->id());
+    }
+    future<> abort() override {
+        _sm.free_segment(_seg->id());
+        co_return;
+    }
+};
+
+future<> segment_manager_impl::load_segment(replica::database& db, log_segment_id seg_id) {
+    // read the segment and populate the index
+    co_await recover_segment(db, seg_id);
+
+    auto& desc = get_segment_descriptor(seg_id);
+    co_await add_segment_to_compaction_group(db, desc);
+}
+
+future<std::unique_ptr<segment_stream_sink>> segment_manager_impl::create_segment_output_stream(replica::database& db) {
+    auto seg = co_await _segment_pool.get_segment(write_source::streaming);
+    _stats.segments_in_use++;
+    co_return std::make_unique<segment_stream_sink_impl>(*this, db, std::move(seg));
+}
+
+future<seastar::input_stream<char>> segment_manager::create_segment_input_stream(log_segment_id segment_id, const seastar::file_input_stream_options& opts) {
+    return _impl->create_segment_input_stream(segment_id, opts);
+}
+
+future<std::unique_ptr<segment_stream_sink>> segment_manager::create_segment_output_stream(replica::database& db) {
+    return _impl->create_segment_output_stream(db);
 }
 
 }

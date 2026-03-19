@@ -77,6 +77,15 @@ struct table_segment_stats {
     }
 };
 
+class segment_stream_sink {
+public:
+    virtual ~segment_stream_sink() = default;
+    virtual log_segment_id segment_id() const noexcept = 0;
+    virtual future<output_stream<char>> output() = 0;
+    virtual future<> close() = 0;
+    virtual future<> abort() = 0;
+};
+
 class segment_manager_impl;
 class log_index;
 
@@ -118,6 +127,13 @@ public:
     size_t get_memory_usage() const;
 
     future<> await_pending_writes();
+
+    // Create an input stream to read a segment (for sending to remote node)
+    future<seastar::input_stream<char>> create_segment_input_stream(log_segment_id segment_id, const seastar::file_input_stream_options& opts);
+
+    // Create an output stream to write a segment (for receiving from remote node)
+    // Allocates a new local segment and returns an output stream for writing to the segment.
+    future<std::unique_ptr<segment_stream_sink>> create_segment_output_stream(replica::database&);
 
     friend class segment_manager_impl;
 
