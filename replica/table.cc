@@ -822,9 +822,8 @@ private:
         return tablet_map().get_tablet_id(t).value();
     }
 
-    std::pair<size_t, locator::tablet_range_side> storage_group_of(dht::token t) const {
-        auto [id, side] = tablet_map().get_tablet_id_and_range_side(t);
-        auto idx = id.value();
+    size_t storage_group_of(dht::token t) const {
+        auto idx = tablet_id_for_token(t);
 #ifndef SCYLLA_BUILD_MODE_RELEASE
         if (idx >= tablet_count()) {
             on_fatal_internal_error(tlogger, format("storage_group_of: index out of range: idx={} size_log2={} size={} token={}",
@@ -836,7 +835,7 @@ private:
                                                     idx, sg.token_range(), t));
         }
 #endif
-        return { idx, side };
+        return idx;
     }
 
     repair_classifier_func make_repair_sstable_classifier_func() const {
@@ -911,7 +910,7 @@ public:
         return log2ceil(tablet_map().tablet_count());
     }
     storage_group& storage_group_for_token(dht::token token) const override {
-        return storage_group_for_id(storage_group_of(token).first);
+        return storage_group_for_id(storage_group_of(token));
     }
 
     locator::combined_load_stats table_load_stats() const override;
@@ -959,9 +958,20 @@ size_t storage_group::to_idx(locator::tablet_range_side side) const {
     return size_t(side);
 }
 
-compaction_group_ptr& storage_group::select_compaction_group(locator::tablet_range_side side) noexcept {
+compaction_group_ptr& storage_group::select_compaction_group(dht::token token, const locator::tablet_map& tmap) noexcept {
     if (splitting_mode()) {
-        return _split_ready_groups[to_idx(side)];
+        return _split_ready_groups[to_idx(tmap.get_tablet_range_side(token))];
+    }
+    return _main_cg;
+}
+
+compaction_group_ptr& storage_group::select_compaction_group(dht::token first, dht::token last, const locator::tablet_map& tmap) noexcept {
+    if (splitting_mode()) {
+        auto first_side = tmap.get_tablet_range_side(first);
+        auto last_side = tmap.get_tablet_range_side(last);
+        if (first_side == last_side) {
+            return _split_ready_groups[to_idx(first_side)];
+        }
     }
     return _main_cg;
 }
@@ -1222,9 +1232,9 @@ storage_group& table::storage_group_for_id(size_t i) const {
 }
 
 compaction_group& tablet_storage_group_manager::compaction_group_for_token(dht::token token) const {
-    auto [idx, range_side] = storage_group_of(token);
+    auto idx = storage_group_of(token);
     auto& sg = storage_group_for_id(idx);
-    return *sg.select_compaction_group(range_side);
+    return *sg.select_compaction_group(token, tablet_map());
 }
 
 compaction_group& table::compaction_group_for_token(dht::token token) const {
@@ -1265,8 +1275,8 @@ compaction_group& table::compaction_group_for_key(partition_key_view key, const 
 }
 
 compaction_group& tablet_storage_group_manager::compaction_group_for_sstable(const sstables::shared_sstable& sst) const {
-    auto [first_id, first_range_side] = storage_group_of(sst->get_first_decorated_key().token());
-    auto [last_id, last_range_side] = storage_group_of(sst->get_last_decorated_key().token());
+    auto first_id = storage_group_of(sst->get_first_decorated_key().token());
+    auto last_id = storage_group_of(sst->get_last_decorated_key().token());
 
     auto sstable_desc = [] (const sstables::shared_sstable& sst) {
         auto& identifier_opt = sst->sstable_identifier();
@@ -1289,12 +1299,10 @@ compaction_group& tablet_storage_group_manager::compaction_group_for_sstable(con
 
     try {
         auto& sg = storage_group_for_id(first_id);
-
-        if (first_range_side != last_range_side) {
-            return *sg.main_compaction_group();
-        }
-
-        return *sg.select_compaction_group(first_range_side);
+        return *sg.select_compaction_group(
+                sst->get_first_decorated_key().token(),
+                sst->get_last_decorated_key().token(),
+                tablet_map());
     } catch (std::out_of_range& e) {
         on_internal_error(tlogger, format("Unable to load SSTable {} of tablet {}, due to {}",
                                           sstable_desc(sst),
