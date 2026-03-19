@@ -219,6 +219,8 @@ public:
         return s;
     }
 
+    static void write_empty_header(ostream& out, segment_generation seg_gen);
+
 private:
 
     const char* data() const noexcept { return _buffer.get(); }

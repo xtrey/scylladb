@@ -5406,6 +5406,11 @@ future<> compaction_group::cleanup() {
     co_await _t._cache.invalidate(std::move(updater), p_range);
     _t._cache.refresh_snapshot();
 
+    if (_t.uses_logstor()) {
+        co_await _t.logstor_index().erase(p_range);
+        co_await discard_logstor_segments();
+    }
+
     co_await _t.delete_sstables_atomically(permit, _sstables_compacted_but_not_deleted);
     // Clearing sstables_compacted_but_not_deleted only on success allows a retry caused
     // by a failure during deletion to still find the sstables, despite they were removed

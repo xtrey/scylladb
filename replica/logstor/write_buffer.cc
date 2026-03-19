@@ -172,6 +172,18 @@ void write_buffer::write_header(segment_generation seg_gen, std::optional<table_
     }
 }
 
+void write_buffer::write_empty_header(ostream& out, segment_generation seg_gen) {
+    buffer_header hdr;
+    hdr.magic = buffer_header_magic;
+    hdr.data_size = 0;
+    hdr.seg_gen = seg_gen;
+    hdr.kind = segment_kind::mixed;
+    hdr.reserved1 = 0;
+    hdr.reserved2 = 0;
+
+    ser::serialize<buffer_header>(out, hdr);
+}
+
 future<> write_buffer::complete_writes(log_location base_location) {
     _written.set_value(base_location);
     co_await close();

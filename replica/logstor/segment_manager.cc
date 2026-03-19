@@ -1153,17 +1153,38 @@ void segment_manager_impl::free_segment(log_segment_id segment_id) noexcept {
 future<> segment_manager_impl::discard_segments(segment_set& ss) {
     auto holder = _async_gate.hold();
 
+    std::vector<log_segment_id> segments;
+    segments.reserve(ss.segment_count());
     while (!ss._segments.empty()) {
         co_await coroutine::maybe_yield();
         auto& desc = ss._segments.one_of_largest();
         auto seg_id = desc_to_segment_id(desc);
+        ss.remove_segment(desc);
 
         // the index should be cleared before discarding segments, so no data should be reachable
         desc.reset(_cfg.segment_size);
 
-        ss.remove_segment(desc);
-        free_segment(seg_id);
+        segments.push_back(seg_id);
     }
+
+    co_await max_concurrent_for_each(segments, 32, [this] (log_segment_id seg_id) -> future<> {
+        // Write a valid empty segment header with the next generation.
+        // This marks the segment as discarded while preserving the generation counter.
+        auto next_gen = get_segment_descriptor(seg_id).seg_gen;
+        ++next_gen;
+        auto buf = allocate_aligned_buffer<char>(block_alignment, 4096);
+        std::memset(buf.get(), 0, block_alignment);
+        simple_memory_output_stream out(buf.get(), write_buffer::buffer_header_size);
+        write_buffer::write_empty_header(out, next_gen);
+
+        auto [file_id, file_offset] = segment_id_to_file_location(seg_id);
+        auto file = co_await _file_mgr.get_file_for_write(file_id);
+        co_await file.dma_write(file_offset, buf.get(), block_alignment);
+
+        logstor_logger.trace("Discard segment {} next gen {}", seg_id, next_gen);
+
+        free_segment(seg_id);
+    });
 }
 
 future<> segment_manager_impl::for_each_record(log_segment_id segment_id,

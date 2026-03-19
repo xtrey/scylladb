@@ -9,6 +9,7 @@
 
 #include "dht/decorated_key.hh"
 #include "dht/ring_position.hh"
+#include <seastar/coroutine/maybe_yield.hh>
 #include "types.hh"
 #include "utils/bptree.hh"
 #include "utils/double-decker.hh"
@@ -150,6 +151,19 @@ public:
             return true;
         }
         return false;
+    }
+
+    future<> erase(const dht::partition_range& pr) {
+        dht::ring_position_comparator cmp(*_schema);
+        auto it = _partitions.lower_bound(dht::ring_position_view::for_range_start(pr), cmp);
+        auto end_it = _partitions.lower_bound(dht::ring_position_view::for_range_end(pr), cmp);
+        while (it != end_it) {
+            auto prev = it;
+            ++it;
+            prev.erase(dht::raw_token_less_comparator{});
+            --_key_count;
+            co_await coroutine::maybe_yield();
+        }
     }
 
     auto begin() const noexcept { return _partitions.begin(); }
