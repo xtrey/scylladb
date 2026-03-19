@@ -1132,7 +1132,6 @@ public:
 
     friend class mc::writer;
     friend class index_reader;
-    friend class promoted_index;
     friend class sstables_manager;
     template <typename DataConsumeRowsContext>
     friend future<std::unique_ptr<DataConsumeRowsContext>>
