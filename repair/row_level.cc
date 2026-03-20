@@ -3658,7 +3658,7 @@ repair_service::repair_service(sharded<service::topology_state_machine>& tsm,
 
 future<> repair_service::start(utils::disk_space_monitor* dsm) {
     if (dsm && (this_shard_id() == 0)) {
-        _out_of_space_subscription = dsm->subscribe(_db.local().get_config().critical_disk_utilization_level, [this] (auto threshold_reached) {
+        _out_of_space_subscription = dsm->subscribe(_config.critical_disk_utilization_level, [this] (auto threshold_reached) {
             if (threshold_reached) {
                 return container().invoke_on_all([] (repair_service& rs) { return rs.drain(); });
             }
