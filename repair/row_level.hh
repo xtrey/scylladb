@@ -109,6 +109,11 @@ struct repair_task_progress {
 };
 
 class repair_service : public seastar::peering_sharded_service<repair_service> {
+public:
+    struct config {
+    };
+
+private:
     sharded<service::topology_state_machine>& _tsm;
     sharded<gms::gossiper>& _gossiper;
     netw::messaging_service& _messaging;
@@ -162,6 +167,9 @@ class repair_service : public seastar::peering_sharded_service<repair_service> {
             sstring keyspace, std::vector<sstring> cfs,
             std::unordered_set<locator::host_id> ignore_nodes);
 
+    config _config;
+    static config default_config() { return {}; }
+
 public:
     std::unordered_map<locator::global_tablet_id, std::vector<seastar::rwlock::holder>> _repair_compaction_locks;
 
@@ -177,11 +185,14 @@ public:
             sharded<db::view::view_building_worker>& vbw,
             tasks::task_manager& tm,
             service::migration_manager& mm,
-            size_t max_repair_memory
+            size_t max_repair_memory,
+            repair_service::config cfg = default_config()
             );
     ~repair_service();
     future<> start(utils::disk_space_monitor* dsm);
     future<> stop();
+
+    const config& get_config() const noexcept { return _config; }
 
     // shutdown() stops all ongoing repairs started on this node (and
     // prevents any further repairs from being started). It returns a future

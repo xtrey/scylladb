@@ -3631,7 +3631,8 @@ repair_service::repair_service(sharded<service::topology_state_machine>& tsm,
         sharded<db::view::view_building_worker>& vbw,
         tasks::task_manager& tm,
         service::migration_manager& mm,
-        size_t max_repair_memory)
+        size_t max_repair_memory,
+        config cfg)
     : _tsm(tsm)
     , _gossiper(gossiper)
     , _messaging(ms)
@@ -3646,6 +3647,7 @@ repair_service::repair_service(sharded<service::topology_state_machine>& tsm,
     , _node_ops_metrics(_repair_module)
     , _max_repair_memory(max_repair_memory)
     , _memory_sem(max_repair_memory)
+    , _config(std::move(cfg))
 {
     tm.register_module("repair", _repair_module);
     if (this_shard_id() == 0) {
