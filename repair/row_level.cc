@@ -2625,7 +2625,7 @@ future<repair_flush_hints_batchlog_response> repair_service::repair_flush_hints_
     auto permit = co_await seastar::get_units(_flush_hints_batchlog_sem, 1);
     bool updated = false;
     auto now = gc_clock::now();
-    auto cache_time = std::chrono::milliseconds(get_db().local().get_config().repair_hints_batchlog_flush_cache_time_in_ms());
+    auto cache_time = std::chrono::milliseconds(_config.repair_hints_batchlog_flush_cache_time_in_ms());
     auto cache_disabled = cache_time == std::chrono::milliseconds(0);
     auto flush_time = now;
     db::all_batches_replayed all_replayed = db::all_batches_replayed::yes;
