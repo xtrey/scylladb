@@ -64,15 +64,15 @@ pytestmark = [
         "prepared-statements",
     ],
 )
-def test_scylla_commands(gdb_cmd, command):
-    result = execute_gdb_command(gdb_cmd, command)
+def test_scylla_commands(gdb_session, command):
+    result = execute_gdb_command(gdb_session, command)
     assert result.returncode == 0, (
         f"GDB command {command} failed. stdout: {result.stdout} stderr: {result.stderr}"
     )
 
 
-def test_nonexistent_scylla_command(gdb_cmd):
+def test_nonexistent_scylla_command(gdb_session):
     """Verifies that running unknown command will produce correct error message"""
-    result = execute_gdb_command(gdb_cmd, "nonexistent_command")
+    result = execute_gdb_command(gdb_session, "nonexistent_command")
     assert result.returncode == 1
-    assert  "Undefined scylla command: \"nonexistent_command\"" in result.stderr
+    assert "Undefined scylla command: \"nonexistent_command\"" in result.stderr

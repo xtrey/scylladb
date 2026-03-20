@@ -25,9 +25,9 @@ pytestmark = [
 
 
 @pytest.fixture(scope="module")
-def sstable(gdb_cmd):
+def sstable(gdb_session):
     """Finds sstable"""
-    result = execute_gdb_command(gdb_cmd, full_command="python get_sstables()").stdout
+    result = execute_gdb_command(gdb_session, full_command="python get_sstables()").stdout
     match = re.search(r"(\(sstables::sstable \*\) 0x)([0-9a-f]+)", result)
     sstable_pointer = match.group(0).strip() if match else None
 
@@ -41,10 +41,10 @@ def sstable(gdb_cmd):
         "sstable-index-cache",
     ],
 )
-def test_sstable(gdb_cmd, command, sstable):
+def test_sstable(gdb_session, command, sstable):
     assert sstable, "No sstable was found"
 
-    result = execute_gdb_command(gdb_cmd, f"{command} {sstable}")
+    result = execute_gdb_command(gdb_session, f"{command} {sstable}")
     assert result.returncode == 0, (
         f"GDB command {command} failed. stdout: {result.stdout} stderr: {result.stderr}"
     )

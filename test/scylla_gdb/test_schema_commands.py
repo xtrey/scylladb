@@ -25,12 +25,12 @@ pytestmark = [
 
 
 @pytest.fixture(scope="module")
-def schema(gdb_cmd):
+def schema(gdb_session):
     """
     Returns pointer to schema of the first table it finds
     Even without any user tables, we will always have system tables.
     """
-    result = execute_gdb_command(gdb_cmd, full_command="python get_schema()").stdout
+    result = execute_gdb_command(gdb_session, full_command="python get_schema()").stdout
     match = re.search(r"schema=\s*(0x[0-9a-fA-F]+)", result)
     schema_pointer = match.group(1) if match else None
 
@@ -45,21 +45,21 @@ def schema(gdb_cmd):
         "schema (const schema *)",  # `schema` requires type-casted pointer
     ],
 )
-def test_schema(gdb_cmd, command, schema):
+def test_schema(gdb_session, command, schema):
     assert schema, "Failed to find schema of any table"
 
-    result = execute_gdb_command(gdb_cmd, f"{command} {schema}")
+    result = execute_gdb_command(gdb_session, f"{command} {schema}")
     assert result.returncode == 0, (
         f"GDB command {command} failed. stdout: {result.stdout} stderr: {result.stderr}"
     )
 
 
-def test_generate_object_graph(gdb_cmd, schema, request):
+def test_generate_object_graph(gdb_session, schema, request):
     assert schema, "Failed to find schema of any table"
 
     tmpdir = request.config.getoption("--tmpdir")
     result = execute_gdb_command(
-        gdb_cmd, f"generate-object-graph -o {tmpdir}/og.dot -d 2 -t 10 {schema}"
+        gdb_session, f"generate-object-graph -o {tmpdir}/og.dot -d 2 -t 10 {schema}"
     )
     assert result.returncode == 0, (
         f"GDB command `generate-object-graph` failed. stdout: {result.stdout} stderr: {result.stderr}"
