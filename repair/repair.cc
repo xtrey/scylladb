@@ -6,7 +6,6 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-#include "db/config.hh"
 #include "repair.hh"
 #include "gms/gossip_address_map.hh"
 #include "locator/abstract_replication_strategy.hh"
