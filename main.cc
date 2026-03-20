@@ -1809,6 +1809,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             auto max_memory_repair = memory::stats().total_memory() * 0.1;
             auto repair_config = sharded_parameter([&] {
                 return repair_service::config{
+                    .enable_small_table_optimization_for_rbno = cfg->enable_small_table_optimization_for_rbno,
                 };
             });
             repair.start(std::ref(tsm), std::ref(gossiper), std::ref(messaging), std::ref(db), std::ref(proxy), std::ref(bm), std::ref(sys_ks), std::ref(view_builder), std::ref(view_building_worker), std::ref(task_manager), std::ref(mm), max_memory_repair, std::move(repair_config)).get();

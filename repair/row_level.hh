@@ -111,6 +111,7 @@ struct repair_task_progress {
 class repair_service : public seastar::peering_sharded_service<repair_service> {
 public:
     struct config {
+        utils::updateable_value<bool> enable_small_table_optimization_for_rbno = utils::updateable_value<bool>(true);
     };
 
 private:
