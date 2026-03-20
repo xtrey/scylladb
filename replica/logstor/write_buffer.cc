@@ -182,25 +182,18 @@ size_t write_buffer::estimate_required_segments(size_t net_data_size, size_t rec
 
 buffered_writer::buffered_writer(segment_manager& sm, seastar::scheduling_group flush_sg)
         : _sm(sm)
-        , _available_buffers(num_flushing_buffers)
         , _flush_sg(flush_sg) {
-
-    _buffers.reserve(num_flushing_buffers + 1);
-    for (size_t i = 0; i < num_flushing_buffers + 1; ++i) {
-        _buffers.emplace_back(_sm.get_segment_size(), true);
-    }
-
-    _active_buffer = active_buffer {
-        .buf = &_buffers[0],
-    };
-
-    for (size_t i = 1; i < num_flushing_buffers + 1; ++i) {
-        _available_buffers.push(&_buffers[i]);
+    _ring.reserve(ring_size);
+    for (size_t i = 0; i < ring_size; ++i) {
+        _ring.emplace_back(_sm.get_segment_size(), true);
     }
 }
 
 future<> buffered_writer::start() {
     logstor_logger.info("Starting write buffer");
+    _consumer = with_gate(_async_gate, [this] {
+        return consumer_loop();
+    });
     co_return;
 }
 
@@ -210,7 +203,14 @@ future<> buffered_writer::stop() {
     }
     logstor_logger.info("Stopping write buffer");
 
+    // Wake the consumer so it can observe the closing gate and exit.
+    _tail_can_advance.broadcast();
+    // Wake any writer blocked waiting for a free ring slot.
+    _head_can_advance.broadcast();
+
     co_await _async_gate.close();
+    co_await std::move(_consumer);
+
     logstor_logger.info("Write buffer stopped");
 }
 
@@ -219,52 +219,66 @@ future<log_location_with_holder> buffered_writer::write(log_record record, compa
 
     log_record_writer writer(std::move(record));
 
-    if (writer.size() > _active_buffer.buf->get_max_write_size()) {
-        throw std::runtime_error(fmt::format("Write size {} exceeds buffer size {}", writer.size(), _active_buffer.buf->get_max_write_size()));
+    if (writer.size() > head_buf().get_max_write_size()) {
+        throw std::runtime_error(fmt::format("Write size {} exceeds buffer size {}", writer.size(), head_buf().get_max_write_size()));
     }
 
-    // Check if write fits in current buffer
-    while (!_active_buffer.buf->can_fit(writer)) {
-        co_await _buffer_switched.wait();
+    // Wait until the head buffer can fit this write.
+    while (!head_buf().can_fit(writer)) {
+        // Capture the current head before waiting.  Multiple concurrent writers
+        // can all reach this point; only the first one to proceed actually
+        // advances _head — the rest see _head != current_head and simply
+        // re-check the (already advanced) head buffer.
+        auto current_head = _head;
+        while (ring_full() && !_async_gate.is_closed()) {
+            co_await _head_can_advance.wait();
+        }
+        _async_gate.check();
+        if (_head == current_head) {
+            ++_head;
+            // Wake other writers that are also waiting for a new head buffer.
+            _head_can_advance.broadcast();
+        }
     }
 
-    // Write to buffer at current position
-    auto fut = _active_buffer.buf->write(std::move(writer), cg, std::move(cg_holder));
+    auto fut = head_buf().write(std::move(writer), cg, std::move(cg_holder));
 
-    // Trigger flush for the active buffer if not in progress
-    if (!std::exchange(_active_buffer.flush_requested, true)) {
-        (void)with_gate(_async_gate, [this] {
-            return switch_buffer().then([this] (write_buffer* old_buf) mutable {
-                return with_scheduling_group(_flush_sg, [this, old_buf] mutable {
-                    return flush(old_buf);
-                });
-            });
-        });
-    }
+    // Wake the consumer: there is now data at the tail.
+    _tail_can_advance.broadcast();
 
     co_return co_await std::move(fut);
 }
 
-future<write_buffer*> buffered_writer::switch_buffer() {
-    // Wait for and get the next available buffer
-    auto new_buf = co_await _available_buffers.pop_eventually();
+future<> buffered_writer::consumer_loop() {
+    while (true) {
+        // Wait for something to flush at the tail.
+        while (!_async_gate.is_closed() && !tail_buf().has_data()) {
+            co_await _tail_can_advance.wait();
+        }
 
-    auto next_active_buffer = active_buffer {
-        .buf = std::move(new_buf),
-    };
+        if (!tail_buf().has_data()) {
+            // Gate is closing and tail is empty — we are done.
+            break;
+        }
 
-    auto old_active_buffer = std::exchange(_active_buffer, std::move(next_active_buffer));
-    _buffer_switched.broadcast();
+        // If head == tail, the head buffer is still being written to.  Seal it
+        // by advancing the head to give writers a fresh slot.
+        if (_head == _tail) {
+            ++_head;
+            // Wake writers that may be waiting for a new head slot.
+            _head_can_advance.broadcast();
+        }
 
-    co_return std::move(old_active_buffer.buf);
-}
+        co_await with_scheduling_group(_flush_sg, [this] {
+            return _sm.write(tail_buf());
+        });
 
-future<> buffered_writer::flush(write_buffer* buf) {
-    co_await _sm.write(*buf);
+        tail_buf().reset();
+        ++_tail;
 
-    // Return the flushed buffer to the available queue
-    buf->reset();
-    _available_buffers.push(std::move(buf));
+        // A slot has been freed: wake any writer waiting to advance the head.
+        _head_can_advance.broadcast();
+    }
 }
 
 }

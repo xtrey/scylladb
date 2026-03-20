@@ -197,24 +197,48 @@ private:
     friend class compaction_manager_impl;
 };
 
-// Manages multiple buffers, a single active buffer and multiple flushing buffers.
-// When switch is requested for the active buffer, it waits for a flushing buffer to
-// become available, and continuing to accumulate writes until then.
+// Manages a fixed-size circular ring of write_buffers.
+//
+// Writers append to the head buffer.  A single consumer coroutine drains the
+// tail.  The head advances when the current head buffer is full (can't fit the
+// next write) or when the consumer seals it.  Writers wait if the ring is full
+// (all buffers are pending flush).
 class buffered_writer {
-    static constexpr size_t num_flushing_buffers = 4;
+    // Number of buffers in the ring.  Must be >= 2 (one head + at least one
+    // that can be in-flight with the consumer).
+    static constexpr size_t ring_size = 5;
 
     segment_manager& _sm;
-
-    struct active_buffer {
-        write_buffer* buf;
-        bool flush_requested{false};
-    } _active_buffer;
-
-    std::vector<write_buffer> _buffers;
-    seastar::queue<write_buffer*> _available_buffers;
-    seastar::gate _async_gate;
-    seastar::condition_variable _buffer_switched;
     seastar::scheduling_group _flush_sg;
+
+    // The ring of buffers, indexed modulo ring_size.
+    std::vector<write_buffer> _ring;
+
+    // Monotonically increasing indices; the actual slot is idx % ring_size.
+    // _head: next slot writers append to.
+    // _tail: next slot the consumer will flush.
+    // Invariant: _head >= _tail && _head - _tail < ring_size.
+    size_t _head{0};
+    size_t _tail{0};
+
+    // Notified when _tail advances (a slot becomes free for the head to move into)
+    // or when the head buffer is switched.
+    seastar::condition_variable _head_can_advance;
+
+    // Notified when data is written to the head buffer (consumer may wake up).
+    seastar::condition_variable _tail_can_advance;
+
+    seastar::gate _async_gate;
+
+    // The single flush-consumer fiber, running for the lifetime of the writer.
+    future<> _consumer{make_ready_future<>()};
+
+    write_buffer& head_buf() noexcept { return _ring[_head % ring_size]; }
+    write_buffer& tail_buf() noexcept { return _ring[_tail % ring_size]; }
+
+    // The ring is full when all ring_size slots are occupied. Advancing the
+    // head further would make the new head slot collide with the tail slot.
+    bool ring_full() const noexcept { return _head - _tail == ring_size - 1; }
 
 public:
     explicit buffered_writer(segment_manager& sm, seastar::scheduling_group flush_sg);
@@ -228,9 +252,8 @@ public:
     future<log_location_with_holder> write(log_record, compaction_group* cg = nullptr, seastar::gate::holder cg_holder = {});
 
 private:
-    future<write_buffer*> switch_buffer();
-    future<> flush(write_buffer*);
-
+    // The flush consumer loop.
+    future<> consumer_loop();
 };
 
 }

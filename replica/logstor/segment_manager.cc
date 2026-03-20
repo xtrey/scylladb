@@ -72,6 +72,8 @@ class writeable_segment : public segment {
 
     uint32_t _current_offset = 0; // next offset for write
 
+    future<> do_write(log_location , bytes_view data);
+
 public:
     using segment::segment;
 
@@ -79,9 +81,9 @@ public:
 
     future<> stop();
 
-    // allocate and write a serialized sequence of records
-    log_location allocate(size_t data_size);
-    future<> write(log_location , bytes_view data);
+    // write a serialized sequence of records.
+    // must not be called concurrently.
+    future<log_location> append(bytes_view data);
 
     bool can_fit(size_t data_size) const noexcept {
         return _current_offset + data_size <= _max_size;
@@ -130,22 +132,25 @@ future<> writeable_segment::stop() {
     co_await _write_gate.close();
 }
 
-log_location writeable_segment::allocate(size_t data_size) {
+future<log_location> writeable_segment::append(bytes_view data) {
+    auto data_size = data.size();
+
     if (!can_fit(data_size)) {
         throw std::runtime_error("Entry too large for remaining segment space");
     }
 
-    auto current_pos = _current_offset;
-    _current_offset += data_size;
-
-    return log_location{
+    log_location loc {
         .segment = _id,
-        .offset = current_pos,
+        .offset = _current_offset,
         .size = static_cast<uint32_t>(data_size)
     };
+
+    co_await do_write(loc, data);
+    _current_offset += data_size;
+    co_return loc;
 }
 
-future<> writeable_segment::write(log_location loc, bytes_view data) {
+future<> writeable_segment::do_write(log_location loc, bytes_view data) {
     const auto alignment = _file.disk_write_dma_alignment();
     const auto total = data.size();
     auto offset = absolute_offset(loc.offset);
@@ -561,6 +566,7 @@ class segment_manager_impl {
     static constexpr size_t segment_pool_size = 128;
 
     seg_ptr _active_segment;
+    seastar::semaphore _active_segment_write_sem{1};
     segment_pool _segment_pool;
     std::optional<shared_future<>> _switch_segment_fut;
     size_t _segment_seq_num{0};
@@ -876,28 +882,29 @@ future<> segment_manager_impl::write(write_buffer& wb) {
         throw std::runtime_error(fmt::format( "Write size {} exceeds segment size {}", data.size(), _cfg.segment_size));
     }
 
-    while (!_active_segment || !_active_segment->can_fit(data.size())) {
-        co_await request_segment_switch();
-    }
-
     {
+        auto sem_units = co_await get_units(_active_segment_write_sem, 1);
+
+        while (!_active_segment || !_active_segment->can_fit(data.size())) {
+            co_await request_segment_switch();
+        }
+
         seg_ptr seg = _active_segment;
         auto seg_holder = seg->hold();
         auto seg_ref = seg->ref();
         auto segment_seq_num = _segment_seq_num;
         auto write_op = _writes_phaser.start();
+        auto& desc = get_segment_descriptor(seg->id());
 
         // if we wrote a record to the segment but failed to write it to the separator, the segment should not be freed.
         auto write_to_separator_failed = defer([seg_ref] mutable {
             seg_ref.set_flush_failure();
         });
 
-        auto loc = seg->allocate(data.size());
-        auto& desc = get_segment_descriptor(loc);
-
         wb.write_header(desc.seg_gen);
 
-        co_await seg->write(loc, data);
+        auto loc = co_await seg->append(data);
+        sem_units.return_all();
 
         desc.on_write(wb.get_net_data_size(), wb.get_record_count());
 
@@ -932,15 +939,14 @@ future<> segment_manager_impl::write_full_segment(write_buffer& wb, compaction_g
     }
 
     seg_ptr seg = co_await _segment_pool.get_segment(source);
+    auto& desc = get_segment_descriptor(seg->id());
+
     _stats.segments_in_use++;
     logstor_logger.trace("Write full segment {} from {}", seg->id(), write_source_to_string(source));
 
-    auto loc = seg->allocate(data.size());
-    auto& desc = get_segment_descriptor(loc);
-
     wb.write_header(desc.seg_gen);
 
-    co_await seg->write(loc, data);
+    auto loc = co_await seg->append(data);
 
     desc.on_write(wb.get_net_data_size(), wb.get_record_count());
 
@@ -1152,13 +1158,13 @@ future<> segment_manager_impl::for_each_record(log_segment_id segment_id,
         }
         auto bh = ser::deserialize_from_buffer(buffer_header_buf, std::type_identity<write_buffer::buffer_header>{});
 
-        // if buffer header is not valid, skip to next block
+        // if the buffer is invalid then skip the rest of the segment - buffer writes are sequential and serialized.
         if (bh.magic != write_buffer::buffer_header_magic) {
-            continue;
+            break;
         }
 
         if (bh.seg_gen != seg_gen) {
-            continue;
+            break;
         }
 
         // TODO crc, torn writes
