@@ -3495,7 +3495,7 @@ public:
                     // To save memory and have less different conditions, we
                     // use the estimation for RBNO repair as well.
 
-                    _estimated_partitions *= _shard_task.db.local().get_config().repair_partition_count_estimation_ratio();
+                    _estimated_partitions *= _shard_task.rs.get_config().repair_partition_count_estimation_ratio();
                 }
 
                 parallel_for_each(master.all_nodes(), coroutine::lambda([&] (repair_node_state& ns) -> future<> {
