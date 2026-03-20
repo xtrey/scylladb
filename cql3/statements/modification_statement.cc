@@ -273,7 +273,10 @@ modification_statement::do_execute(query_processor& qp, service::query_state& qs
     if (guardrail_state == query_processor::write_consistency_guardrail_state::FAIL) {
         co_return coroutine::exception(
                 std::make_exception_ptr(exceptions::invalid_request_exception(
-                        format("Consistency level {} is not allowed for write operations", cl))));
+                        format("Write consistency level {} is forbidden by the current configuration "
+                               "setting of write_consistency_levels_disallowed. Please use a different "
+                               "consistency level, or remove {} from write_consistency_levels_disallowed "
+                               "set in the configuration.", cl, cl))));
     }
 
     _restrictions->validate_primary_key(options);
@@ -281,7 +284,8 @@ modification_statement::do_execute(query_processor& qp, service::query_state& qs
     if (has_conditions()) {
         auto result = co_await execute_with_condition(qp, qs, options);
         if (guardrail_state == query_processor::write_consistency_guardrail_state::WARN) {
-            result->add_warning(format("Write with consistency level {} is warned by guardrail configuration", cl));
+            result->add_warning(format("Using write consistency level {} listed on the "
+                                       "write_consistency_levels_warned is not recommended.", cl));
         }
         co_return result;
     }
@@ -303,7 +307,8 @@ modification_statement::do_execute(query_processor& qp, service::query_state& qs
 
     auto result = seastar::make_shared<cql_transport::messages::result_message::void_message>();
     if (guardrail_state == query_processor::write_consistency_guardrail_state::WARN) {
-        result->add_warning(format("Write with consistency level {} is warned by guardrail configuration", cl));
+        result->add_warning(format("Using write consistency level {} listed on the "
+                                   "write_consistency_levels_warned is not recommended.", cl));
     }
     if (keys_size_one) {
         auto&& table = s->table();
