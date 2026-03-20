@@ -1813,6 +1813,8 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                     .repair_hints_batchlog_flush_cache_time_in_ms = cfg->repair_hints_batchlog_flush_cache_time_in_ms,
                     .repair_partition_count_estimation_ratio = cfg->repair_partition_count_estimation_ratio,
                     .critical_disk_utilization_level = cfg->critical_disk_utilization_level,
+                    .repair_multishard_reader_buffer_hint_size = cfg->repair_multishard_reader_buffer_hint_size,
+                    .repair_multishard_reader_enable_read_ahead = cfg->repair_multishard_reader_enable_read_ahead,
                 };
             });
             repair.start(std::ref(tsm), std::ref(gossiper), std::ref(messaging), std::ref(db), std::ref(proxy), std::ref(bm), std::ref(sys_ks), std::ref(view_builder), std::ref(view_building_worker), std::ref(task_manager), std::ref(mm), max_memory_repair, std::move(repair_config)).get();

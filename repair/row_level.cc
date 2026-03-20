@@ -287,7 +287,9 @@ mutation_reader repair_reader::make_reader(
     const dht::sharder& remote_sharder,
     unsigned remote_shard,
     gc_clock::time_point compaction_time,
-    incremental_repair_meta inc) {
+    incremental_repair_meta inc,
+    uint64_t multishard_reader_buffer_hint_size,
+    bool multishard_reader_enable_read_ahead) {
     switch (strategy) {
         case read_strategy::local: {
             auto ms = mutation_source([&cf, compaction_time] (
@@ -313,12 +315,11 @@ mutation_reader repair_reader::make_reader(
         }
         case read_strategy::multishard_split: {
             std::optional<size_t> multishard_reader_buffer_size;
-            const auto& dbconfig = db.local().get_config();
-            if (dbconfig.repair_multishard_reader_buffer_hint_size()) {
+            if (multishard_reader_buffer_hint_size) {
                 // Setting the repair buffer size as the multishard reader's buffer
                 // size helps avoid extra cross-shard round-trips and possible
                 // evict-recreate cycles.
-                multishard_reader_buffer_size = dbconfig.repair_multishard_reader_buffer_hint_size();
+                multishard_reader_buffer_size = multishard_reader_buffer_hint_size;
             }
             return make_multishard_streaming_reader(db, _schema, _permit, [this] {
                 auto shard_range = _sharder.next();
@@ -326,7 +327,7 @@ mutation_reader repair_reader::make_reader(
                     return std::optional<dht::partition_range>(dht::to_partition_range(*shard_range));
                 }
                 return std::optional<dht::partition_range>();
-            }, compaction_time, multishard_reader_buffer_size, read_ahead(dbconfig.repair_multishard_reader_enable_read_ahead()));
+            }, compaction_time, multishard_reader_buffer_size, read_ahead(multishard_reader_enable_read_ahead));
         }
         case read_strategy::multishard_filter: {
             return make_filtering_reader(make_multishard_streaming_reader(db, _schema, _permit, _range, compaction_time, {}, read_ahead::yes),
@@ -354,14 +355,17 @@ repair_reader::repair_reader(
     uint64_t seed,
     read_strategy strategy,
     gc_clock::time_point compaction_time,
-    incremental_repair_meta inc)
+    incremental_repair_meta inc,
+    uint64_t multishard_reader_buffer_hint_size,
+    bool multishard_reader_enable_read_ahead)
     : _schema(s)
     , _permit(std::move(permit))
     , _range(dht::to_partition_range(range))
     , _sharder(remote_sharder, range, remote_shard)
     , _seed(seed)
     , _local_read_op(strategy == read_strategy::local ? std::optional(cf.read_in_progress()) : std::nullopt)
-    , _reader(make_reader(db, cf, strategy, remote_sharder, remote_shard, compaction_time, inc))
+    , _reader(make_reader(db, cf, strategy, remote_sharder, remote_shard, compaction_time, inc,
+                          multishard_reader_buffer_hint_size, multishard_reader_enable_read_ahead))
 { }
 
 future<mutation_fragment_opt>
@@ -1321,7 +1325,9 @@ private:
                     return read_strategy;
                 }),
                 _compaction_time,
-                _incremental_repair_meta);
+                _incremental_repair_meta,
+                _rs.get_config().repair_multishard_reader_buffer_hint_size(),
+                bool(_rs.get_config().repair_multishard_reader_enable_read_ahead()));
         }
         try {
             while (cur_size < _max_row_buf_size) {
