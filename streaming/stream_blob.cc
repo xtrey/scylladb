@@ -813,6 +813,7 @@ future<stream_files_response> tablet_stream_files_handler(replica::database& db,
     if (files.empty()) {
         co_return resp;
     }
+    co_await utils::get_local_injector().inject("wait_before_tablet_stream_files_after_snapshot", utils::wait_for_message(std::chrono::seconds(60)));
     auto ops_start_time = std::chrono::steady_clock::now();
     auto files_nr = files.size();
     size_t stream_bytes = co_await tablet_stream_files(ms, std::move(files), req.targets, req.table, req.ops_id, req.topo_guard);
