@@ -678,6 +678,9 @@ public:
     future<> put_object(object_name name, ::memory_data_sink_buffers bufs) {
         return _client->put_object(std::move(name), std::move(bufs), abort_source());
     }
+    future<> copy_object(object_name src, object_name dst) const {
+        return _client->copy_object(std::move(src), std::move(dst), abort_source());
+    }
     future<> delete_object(object_name name) const {
         return _client->delete_object(std::move(name));
     }
@@ -884,8 +887,23 @@ future<> object_storage_base::snapshot(const sstable& sst, sstring name) const {
 }
 
 future<> object_storage_base::clone(const sstable& sst, generation_type gen, bool leave_unsealed) const {
-    on_internal_error(sstlog, "Cloning S3 objects not implemented");
-    co_return;
+    sstlog.trace("clone sst: {} generation={} leave_unsealed={}", sst.get_filename(), gen, leave_unsealed);
+
+    // Register the cloned sstable as "creating" in the registry
+    entry_descriptor desc(gen, sst.get_version(), sst.get_format(), component_type::TOC);
+    co_await sst.manager().sstables_registry().create_entry(owner(), status_creating, sst.state(), desc);
+
+    // Copy all component objects from the source to the destination generation.
+    co_await coroutine::parallel_for_each(sst.all_components(), [this, &sst, &gen] (const std::pair<component_type, sstring>& p) -> future<> {
+        co_await copy_object(make_object_name(sst, p.second, sst.generation()), make_object_name(sst, p.second, gen));
+    });
+
+    if (!leave_unsealed) {
+        // Mark the cloned sstable as sealed in the registry
+        co_await sst.manager().sstables_registry().update_entry_status(owner(), gen, status_sealed);
+    }
+
+    sstlog.debug("clone sst: {} generation={}: done", sst.get_filename(), gen);
 }
 
 std::unique_ptr<sstables::storage> make_storage(sstables_manager& manager, const data_dictionary::storage_options& s_opts, sstable_state state) {
