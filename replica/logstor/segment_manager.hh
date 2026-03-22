@@ -12,12 +12,14 @@
 #include <seastar/core/shared_future.hh>
 #include <seastar/core/file.hh>
 #include <seastar/core/rwlock.hh>
+#include <seastar/core/fstream.hh>
 #include <seastar/core/gate.hh>
 #include <seastar/core/queue.hh>
 #include <seastar/core/shared_ptr.hh>
 #include "bytes_fwd.hh"
 #include "mutation_writer/token_group_based_splitting_writer.hh"
 #include "replica/logstor/write_buffer.hh"
+#include "replica/logstor/compaction.hh"
 #include "types.hh"
 #include "utils/updateable_value.hh"
 
@@ -77,6 +79,12 @@ struct table_segment_stats {
     }
 };
 
+struct segment_snapshot {
+    log_segment_id segment_id;
+    segment_ref seg_ref;
+    noncopyable_function<future<seastar::input_stream<char>>(const file_input_stream_options&)> source;
+};
+
 class segment_stream_sink {
 public:
     virtual ~segment_stream_sink() = default;
@@ -128,8 +136,7 @@ public:
 
     future<> await_pending_writes();
 
-    // Create an input stream to read a segment (for sending to remote node)
-    future<seastar::input_stream<char>> create_segment_input_stream(log_segment_id segment_id, const seastar::file_input_stream_options& opts);
+    future<utils::chunked_vector<segment_snapshot>> make_snapshot(compaction_group& cg);
 
     // Create an output stream to write a segment (for receiving from remote node)
     // Allocates a new local segment and returns an output stream for writing to the segment.

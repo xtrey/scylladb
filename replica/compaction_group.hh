@@ -18,6 +18,7 @@
 #include "compaction/compaction_manager.hh"
 #include "locator/tablets.hh"
 #include "replica/logstor/compaction.hh"
+#include "replica/logstor/segment_manager.hh"
 #include "sstables/sstable_set.hh"
 #include "utils/chunked_vector.hh"
 #include <absl/container/flat_hash_map.h>
@@ -309,6 +310,8 @@ public:
         return *_logstor_segments;
     }
 
+    future<utils::chunked_vector<logstor::segment_snapshot>> take_logstor_snapshot();
+
     friend class storage_group;
 };
 
@@ -392,8 +395,11 @@ public:
     // Make an sstable set spanning all sstables in the storage_group
     lw_shared_ptr<const sstables::sstable_set> make_sstable_set() const;
 
+    future<utils::chunked_vector<logstor::segment_snapshot>> take_logstor_snapshot() const;
+
     // Flush all memtables.
     future<> flush() noexcept;
+    future<> flush_separator() noexcept;
     bool can_flush() const;
     bool needs_flush() const;
     api::timestamp_type min_memtable_timestamp() const;

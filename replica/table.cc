@@ -1124,6 +1124,12 @@ logstor::separator_buffer& compaction_group::get_separator_buffer(size_t write_s
     return *_logstor_separator;
 }
 
+future<utils::chunked_vector<logstor::segment_snapshot>> compaction_group::take_logstor_snapshot() {
+    auto compaction_disable_guard = co_await get_logstor_compaction_manager().disable_compaction(*this);
+    auto snp = co_await get_logstor_segment_manager().make_snapshot(*this);
+    co_return std::move(snp);
+}
+
 future<> storage_group::split(compaction::compaction_type_options::split opt, tasks::task_info tablet_split_task_info) {
     if (set_split_mode()) {
         co_return;
@@ -1161,6 +1167,24 @@ lw_shared_ptr<const sstables::sstable_set> storage_group::make_sstable_set() con
         underlying.emplace_back(cg->make_sstable_set());
     }
     return make_lw_shared(sstables::make_compound_sstable_set(schema, std::move(underlying)));
+}
+
+future<utils::chunked_vector<logstor::segment_snapshot>> storage_group::take_logstor_snapshot() const {
+    if (_split_ready_groups.empty() && _merging_groups.empty()) {
+        co_return co_await _main_cg->take_logstor_snapshot();
+    }
+    utils::chunked_vector<logstor::segment_snapshot> snp;
+    for (const auto& cg : _merging_groups) {
+        if (!cg->empty()) {
+            auto cg_snp = co_await cg->take_logstor_snapshot();
+            snp.insert(snp.end(), std::make_move_iterator(cg_snp.begin()), std::make_move_iterator(cg_snp.end()));
+        }
+    }
+    for (const auto& cg : _split_ready_groups) {
+        auto cg_snp = co_await cg->take_logstor_snapshot();
+        snp.insert(snp.end(), std::make_move_iterator(cg_snp.begin()), std::make_move_iterator(cg_snp.end()));
+    }
+    co_return std::move(snp);
 }
 
 lw_shared_ptr<const sstables::sstable_set> table::sstable_set_for_tombstone_gc(const compaction_group& cg) const {
@@ -1471,6 +1495,23 @@ future<utils::chunked_vector<sstables::shared_sstable>> table::take_sstable_set_
         result.push_back(sst);
     });
     co_return result;
+}
+
+future<utils::chunked_vector<logstor::segment_snapshot>> table::take_logstor_snapshot(dht::token_range tr) {
+    utils::chunked_vector<logstor::segment_snapshot> snp;
+    for (auto& sg : storage_groups_for_token_range(tr)) {
+        co_await sg->flush_separator();
+
+        auto deletion_guard = co_await get_sstable_list_permit();
+
+        auto sg_snp = co_await sg->take_logstor_snapshot();
+        snp.insert(snp.end(), std::make_move_iterator(sg_snp.begin()), std::make_move_iterator(sg_snp.end()));
+    }
+    co_return std::move(snp);
+}
+
+future<std::unique_ptr<logstor::segment_stream_sink>> table::create_logstor_segment_sink(replica::database& db) {
+    return get_logstor_segment_manager().create_segment_output_stream(db);
 }
 
 future<utils::chunked_vector<sstables::entry_descriptor>>
@@ -4314,6 +4355,12 @@ future<> compaction_group::flush() noexcept {
 future<> storage_group::flush() noexcept {
     for (auto& cg : compaction_groups_immediate()) {
         co_await cg->flush();
+    }
+}
+
+future<> storage_group::flush_separator() noexcept {
+    for (auto& cg : compaction_groups_immediate()) {
+        co_await cg->flush_separator();
     }
 }
 

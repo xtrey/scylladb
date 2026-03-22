@@ -709,6 +709,8 @@ public:
         return _writes_phaser.advance_and_await();
     }
 
+    future<utils::chunked_vector<segment_snapshot>> make_snapshot(compaction_group&);
+
     future<seastar::input_stream<char>> create_segment_input_stream(log_segment_id segment_id, const seastar::file_input_stream_options& opts);
     future<std::unique_ptr<segment_stream_sink>> create_segment_output_stream(replica::database&);
 
@@ -725,12 +727,18 @@ private:
     void write_to_separator(table&, log_location prev_loc, log_record, segment_ref);
 
     segment_ref make_segment_ref(log_segment_id seg_id) {
+        auto& desc = get_segment_descriptor(seg_id);
+        ++desc.ref_count;
+
         return segment_ref(seg_id,
             [this, seg_id] {
-                return free_segment(seg_id);
+                auto& desc = get_segment_descriptor(seg_id);
+                if (--desc.ref_count == 0) {
+                    return free_segment(seg_id);
+                }
             },
             [seg_id] {
-                logstor_logger.warn("Segment {} has no more references but it can't be freed", seg_id);
+                logstor_logger.warn("Segment {} can't be freed", seg_id);
             }
         );
     }
@@ -1146,6 +1154,9 @@ void segment_manager_impl::free_segment(log_segment_id segment_id) noexcept {
     if (desc.net_data_size(_cfg.segment_size) != 0) {
         on_internal_error(logstor_logger, format("Freeing segment {} that has data", segment_id));
     }
+    if (desc.ref_count != 0) {
+        on_internal_error(logstor_logger, format("Freeing segment {} with non-zero reference count", segment_id));
+    }
     desc.on_free_segment();
 
     // TODO write new generation?
@@ -1167,6 +1178,9 @@ future<> segment_manager_impl::discard_segments(segment_set& ss) {
         auto& desc = ss._segments.one_of_largest();
         auto seg_id = desc_to_segment_id(desc);
         ss.remove_segment(desc);
+        if (desc.ref_count != 0) {
+            on_internal_error(logstor_logger, format("Discarding segment {} with non-zero reference count", seg_id));
+        }
 
         // the index should be cleared before discarding segments, so no data should be reachable
         desc.reset(_cfg.segment_size);
@@ -1574,7 +1588,9 @@ future<> compaction_manager_impl::compact_segments(compaction_group& cg, std::ve
         logstor_logger.trace("Free segment {} by compaction", seg_id);
         auto& desc = _sm.get_segment_descriptor(seg_id);
         ss.remove_segment(desc);
-        _sm.free_segment(seg_id);
+        if (desc.ref_count == 0) {
+            _sm.free_segment(seg_id);
+        }
     }
 
     size_t new_segments = segments.size() > cb.flush_count ? segments.size() - cb.flush_count : 0;
@@ -1676,7 +1692,9 @@ future<> compaction_manager_impl::split_compaction(replica::table& t, compaction
             logstor_logger.trace("Free segment {} by split", seg_id);
             auto& desc = _sm.get_segment_descriptor(seg_id);
             src_segments.remove_segment(desc);
-            _sm.free_segment(seg_id);
+            if (desc.ref_count == 0) {
+                _sm.free_segment(seg_id);
+            }
         }
     }
 }
@@ -2006,6 +2024,26 @@ future<> segment_manager_impl::add_segment_to_compaction_group(replica::database
     }
 }
 
+future<utils::chunked_vector<segment_snapshot>> segment_manager_impl::make_snapshot(compaction_group& cg) {
+    auto& segments = cg.logstor_segments();
+
+    utils::chunked_vector<segment_snapshot> snp;
+    snp.reserve(segments.segment_count());
+    for (auto& desc : segments._segments) {
+        auto seg_id = desc_to_segment_id(desc);
+        snp.push_back(segment_snapshot{
+            .segment_id = seg_id,
+            .seg_ref = make_segment_ref(seg_id),
+            .source = [this, seg_id] (const file_input_stream_options& opts) {
+                return create_segment_input_stream(seg_id, opts);
+            }
+        });
+        co_await coroutine::maybe_yield();
+    }
+
+    co_return std::move(snp);
+}
+
 // segment_manager wrapper
 
 segment_manager::segment_manager(segment_manager_config config)
@@ -2148,8 +2186,8 @@ future<std::unique_ptr<segment_stream_sink>> segment_manager_impl::create_segmen
     co_return std::make_unique<segment_stream_sink_impl>(*this, db, std::move(seg));
 }
 
-future<seastar::input_stream<char>> segment_manager::create_segment_input_stream(log_segment_id segment_id, const seastar::file_input_stream_options& opts) {
-    return _impl->create_segment_input_stream(segment_id, opts);
+future<utils::chunked_vector<segment_snapshot>> segment_manager::make_snapshot(compaction_group& cg) {
+    return _impl->make_snapshot(cg);
 }
 
 future<std::unique_ptr<segment_stream_sink>> segment_manager::create_segment_output_stream(replica::database& db) {

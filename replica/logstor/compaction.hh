@@ -35,6 +35,7 @@ struct segment_descriptor : public log_heap_hook<segment_descriptor_hist_options
     size_t record_count{0};
     segment_generation seg_gen{1};
     segment_set* owner{nullptr}; // non-owning, set when added to a segment_set
+    int ref_count{0};
 
     void reset(size_t segment_size) noexcept {
         free_space = segment_size;
@@ -92,6 +93,7 @@ struct segment_set {
         }
         desc.owner = this;
         _segments.push(desc);
+        ++desc.ref_count;
         ++_segment_count;
     }
 
@@ -105,6 +107,7 @@ struct segment_set {
         }
         _segments.erase(desc);
         desc.owner = nullptr;
+        --desc.ref_count;
         --_segment_count;
     }
 
