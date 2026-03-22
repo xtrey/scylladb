@@ -7382,22 +7382,71 @@ SEASTAR_TEST_CASE(sstable_clone_leaving_unsealed_dest_sstable) {
     return test_env::do_with_async([](test_env& env) { sstable_clone_leaving_unsealed_dest_sstable_fn(env); });
 }
 
+void object_storage_sstable_clone_leaving_unsealed_dest_sstable(test_env& env) {
+    simple_schema ss;
+    auto s = ss.schema();
+    auto pk = ss.make_pkey();
+
+    auto mut1 = mutation(s, pk);
+    mut1.partition().apply_insert(*s, ss.make_ckey(0), ss.new_timestamp());
+    auto sst = make_sstable_containing(env.make_sstable(s), {std::move(mut1)});
+
+    auto table = env.make_table_for_tests(s);
+    auto close_table = deferred_stop(table);
+
+    sstable_generation_generator gen_generator;
+
+    bool leave_unsealed = true;
+    auto d = sst->clone(gen_generator(), leave_unsealed).get();
+
+    auto sst2 = env.make_sstable(s, d.generation, d.version, d.format);
+    {
+        bool checked = false;
+        env.manager()
+            .sstables_registry()
+            .sstables_registry_list(table.schema()->id(),
+                                    [&checked, sst_desc = sst2->get_descriptor(component_type::TOC)](
+                                        sstring status, sstable_state state, entry_descriptor desc) {
+                                        if (desc.generation == sst_desc.generation) {
+                                            checked = true;
+                                            BOOST_REQUIRE_EQUAL(status, "creating");
+                                        }
+                                        return make_ready_future();
+                                    })
+            .get();
+        BOOST_REQUIRE(checked);
+    }
+
+    leave_unsealed = false;
+    d = sst->clone(gen_generator(), leave_unsealed).get();
+
+    auto sst3 = env.make_sstable(s, d.generation, d.version, d.format);
+    {
+        bool checked = false;
+        env.manager()
+            .sstables_registry()
+            .sstables_registry_list(table.schema()->id(),
+                                    [&checked, sst_desc = sst3->get_descriptor(component_type::TOC)](
+                                        sstring status, sstable_state, entry_descriptor desc) {
+                                        if (desc.generation == sst_desc.generation) {
+                                            checked = true;
+                                            BOOST_REQUIRE_EQUAL(status, "sealed");
+                                        }
+                                        return make_ready_future();
+                                    })
+            .get();
+        BOOST_REQUIRE(checked);
+    }
+}
+
 SEASTAR_TEST_CASE(sstable_clone_leaving_unsealed_dest_sstable_s3, *boost::unit_test::precondition(tests::has_scylla_test_env)) {
-    testlog.info("Clone is not supported for S3 storage yet, skipping test");
-    return make_ready_future();
-#if 0
-    return test_env::do_with_async([](test_env& env) { sstable_clone_leaving_unsealed_dest_sstable_fn(env); },
+    return test_env::do_with_async([](test_env& env) { object_storage_sstable_clone_leaving_unsealed_dest_sstable(env); },
                                    test_env_config{.storage = make_test_object_storage_options("S3")});
-#endif
 }
 
 SEASTAR_FIXTURE_TEST_CASE(sstable_clone_leaving_unsealed_dest_sstable_gcs, gcs_fixture, *tests::check_run_test_decorator("ENABLE_GCP_STORAGE_TEST", true)) {
-    testlog.info("Clone is not supported for GCS storage yet, skipping test");
-    return make_ready_future();
-#if 0
-    return test_env::do_with_async([](test_env& env) { sstable_clone_leaving_unsealed_dest_sstable_fn(env); },
+    return test_env::do_with_async([](test_env& env) { object_storage_sstable_clone_leaving_unsealed_dest_sstable(env); },
                                    test_env_config{.storage = make_test_object_storage_options("GS")});
-#endif
 }
 
 void failure_when_adding_new_sstable_fn(test_env& env) {
