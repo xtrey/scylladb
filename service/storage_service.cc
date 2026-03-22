@@ -4702,7 +4702,13 @@ future<> storage_service::stream_tablet(locator::global_tablet_id tablet) {
             }
         });
 
-        if (trinfo->transition != locator::tablet_transition_kind::intranode_migration && _feature_service.file_stream && _db.local().get_config().enable_file_stream()) {
+        auto& table = _db.local().find_column_family(tablet.table);
+        const bool file_stream_enabled = _feature_service.file_stream && _db.local().get_config().enable_file_stream();
+        if (table.uses_logstor() && !file_stream_enabled) {
+            throw std::runtime_error(fmt::format("Table {}.{} uses logstor, which requires file streaming to be enabled", table.schema()->ks_name(), table.schema()->cf_name()));
+        }
+
+        if (file_stream_enabled && (trinfo->transition != locator::tablet_transition_kind::intranode_migration || table.uses_logstor())) {
             co_await utils::get_local_injector().inject("migration_streaming_wait", [] (auto& handler) {
                 rtlogger.info("migration_streaming_wait: start");
                 return handler.wait_for_message(db::timeout_clock::now() + std::chrono::minutes(2));
