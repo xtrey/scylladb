@@ -128,14 +128,6 @@ future<log_location_with_holder> write_buffer::write(log_record_writer writer, c
     });
 }
 
-future<log_location> write_buffer::write_no_holder(log_record_writer writer) {
-    // write and leave the gate immediately after the write.
-    // use carefully when the gate it not needed.
-    return write(std::move(writer)).then_unpack([] (log_location loc, seastar::gate::holder op) {
-        return loc;
-    });
-}
-
 void write_buffer::pad_to_alignment(size_t alignment) {
     auto current_pos = offset_in_buffer();
     auto next_pos = align_up(current_pos, alignment);

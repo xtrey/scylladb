@@ -218,17 +218,6 @@ table::add_memtables_to_reader_list(std::vector<mutation_reader>& readers,
 }
 
 mutation_reader
-table::make_logstor_mutation_reader(schema_ptr s,
-                                   reader_permit permit,
-                                   const dht::partition_range& pr,
-                                   const query::partition_slice& slice,
-                                   tracing::trace_state_ptr trace_state,
-                                   streamed_mutation::forwarding fwd,
-                                   mutation_reader::forwarding fwd_mr) const {
-    return _logstor->make_reader(std::move(s), logstor_index(), std::move(permit), pr, slice, std::move(trace_state));
-}
-
-mutation_reader
 table::make_mutation_reader(schema_ptr s,
                            reader_permit permit,
                            const dht::partition_range& range,
@@ -241,7 +230,7 @@ table::make_mutation_reader(schema_ptr s,
     }
 
     if (_logstor) [[unlikely]] {
-        return make_logstor_mutation_reader(s, std::move(permit), range, slice, std::move(trace_state), fwd, fwd_mr);
+        return _logstor->make_reader(s, logstor_index(), std::move(permit), range, slice, std::move(trace_state));
     }
 
     std::vector<mutation_reader> readers;

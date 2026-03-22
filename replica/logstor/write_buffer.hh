@@ -174,12 +174,6 @@ public:
         return write(std::move(writer), nullptr, {});
     }
 
-    // Write a record to the buffer.
-    // Returns a future that will be resolved with the log location once flushed.
-    // If there are follow-up operations to the write such as index updates then consider
-    // using write_with_holder instead to keep the write buffer open until those operations are complete.
-    future<log_location> write_no_holder(log_record_writer);
-
     static size_t estimate_required_segments(size_t net_data_size, size_t record_count, size_t segment_size);
 
 private:

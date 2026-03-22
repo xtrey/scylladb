@@ -90,6 +90,15 @@ public:
         return std::nullopt;
     }
 
+    bool is_record_alive(const primary_index_key& key, log_location location) {
+        auto it = _partitions.find(key.dk, dht::ring_position_comparator(*_schema));
+        if (it != _partitions.end()) {
+            return it->_e.location == location;
+        } else {
+            return false;
+        }
+    }
+
     std::optional<index_entry> exchange(const primary_index_key& key, index_entry new_entry) {
         partitions_type::bound_hint hint;
         auto i = _partitions.lower_bound(key.dk, dht::ring_position_comparator(*_schema), hint);

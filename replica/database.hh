@@ -882,14 +882,6 @@ public:
         return make_mutation_reader(std::move(schema), std::move(permit), range, full_slice);
     }
 
-    mutation_reader make_logstor_mutation_reader(schema_ptr s,
-            reader_permit permit,
-            const dht::partition_range& pr,
-            const query::partition_slice& slice,
-            tracing::trace_state_ptr trace_state,
-            streamed_mutation::forwarding fwd,
-            mutation_reader::forwarding fwd_mr) const;
-
     // The streaming mutation reader differs from the regular mutation reader in that:
     //  - Reflects all writes accepted by replica prior to creation of the
     //    reader and a _bounded_ amount of writes which arrive later.

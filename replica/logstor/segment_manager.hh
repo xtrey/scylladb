@@ -97,14 +97,11 @@ public:
     future<> start();
     future<> stop();
 
-    future<log_location> write(write_buffer& wb);
+    future<> write(write_buffer& wb);
 
     future<log_record> read(log_location location);
 
     void free_record(log_location location);
-
-    future<> for_each_record(const std::vector<log_segment_id>& segments,
-                            std::function<future<>(log_location, log_record)> callback);
 
     compaction_manager& get_compaction_manager() noexcept;
     const compaction_manager& get_compaction_manager() const noexcept;

@@ -14,6 +14,8 @@
 
 namespace replica::logstor {
 
+extern seastar::logger logstor_logger;
+
 constexpr log_heap_options segment_descriptor_hist_options(4 * 1024, 3, 128 * 1024);
 
 struct segment_set;
@@ -67,6 +69,9 @@ struct segment_set {
     size_t _segment_count{0};
 
     void add_segment(segment_descriptor& desc) {
+        if (desc.owner) {
+            on_internal_error(logstor_logger, "add_segment called for segment that has an owner");
+        }
         desc.owner = this;
         _segments.push(desc);
         ++_segment_count;
@@ -77,6 +82,9 @@ struct segment_set {
     }
 
     void remove_segment(segment_descriptor& desc) {
+        if (desc.owner != this) {
+            on_internal_error(logstor_logger, "remove_segment called not from the owner");
+        }
         _segments.erase(desc);
         desc.owner = nullptr;
         --_segment_count;

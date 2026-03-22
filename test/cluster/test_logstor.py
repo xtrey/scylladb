@@ -370,7 +370,7 @@ async def test_compaction(manager: ManagerClient):
 @pytest.mark.asyncio
 async def test_drop_table(manager: ManagerClient):
     """
-    Test log compaction by creating dead data and verifying space reclamation.
+    Test that DROP TABLE works properly with logstor tables.
     """
     cmdline = ['--logger-log-level', 'logstor=trace']
     cfg = {'enable_logstor': True, 'experimental_features': ['logstor']}
