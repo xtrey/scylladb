@@ -678,7 +678,7 @@ public:
     future<> put_object(object_name name, ::memory_data_sink_buffers bufs) {
         return _client->put_object(std::move(name), std::move(bufs), abort_source());
     }
-    future<> delete_object(object_name name) {
+    future<> delete_object(object_name name) const {
         return _client->delete_object(std::move(name));
     }
     file make_readable_file(object_name name) {
