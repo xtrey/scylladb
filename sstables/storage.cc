@@ -622,6 +622,7 @@ protected:
     static constexpr auto status_removing = "removing";
 
     object_name make_object_name(const sstable& sst, component_type type) const;
+    object_name make_object_name(const sstable& sst, sstring comp, generation_type gen) const;
 
     table_id owner() const {
         if (std::holds_alternative<sstring>(_location)) {
@@ -702,16 +703,22 @@ public:
 };
 
 object_name object_storage_base::make_object_name(const sstable& sst, component_type type) const {
-    if (!sst.generation().is_uuid_based()) {
+    auto comp = sstable_version_constants::get_component_map(sst.get_version()).at(type);
+    return make_object_name(sst, std::move(comp), sst.generation());
+}
+
+object_name object_storage_base::make_object_name(const sstable& sst, sstring comp, generation_type gen) const {
+    if (!gen.is_uuid_based()) {
         throw std::runtime_error(fmt::format("'{}' STORAGE only works with uuid_sstable_identifier enabled", _type));
     }
 
     return std::visit(overloaded_functor {
         [&] (const sstring& prefix) {
-            return object_name(_bucket, prefix, sst.component_basename(type));
+            return object_name(_bucket, prefix,
+                sstable::component_basename(sst.get_schema()->ks_name(), sst.get_schema()->cf_name(), sst.get_version(), gen, sst.get_format(), comp));
         },
-        [&] (const table_id& owner) {
-            return object_name(_bucket, sst.generation(), sstable_version_constants::get_component_map(sst.get_version()).at(type));
+        [&] (const table_id&) {
+            return object_name(_bucket, gen, comp);
         }
     }, _location);
 }
