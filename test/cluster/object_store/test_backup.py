@@ -494,31 +494,6 @@ async def create_cluster(topology, manager, logger, object_storage=None):
 
     return servers,host_ids
 
-async def create_dataset(manager, ks, cf, topology, logger, num_keys=256, min_tablet_count=None, schema=None, consistency_level=ConsistencyLevel.ALL):
-    cql = manager.get_cql()
-    logger.info(f'Create keyspace, {topology=}')
-    keys = range(num_keys)
-    replication_opts = {'class': 'NetworkTopologyStrategy'}
-    replication_opts['replication_factor'] = f'{topology.rf}'
-    replication_opts = format_tuples(replication_opts)
-
-    print(replication_opts)
-
-    cql.execute((f"CREATE KEYSPACE {ks} WITH REPLICATION = {replication_opts};"))
-
-    if schema is None:
-        if min_tablet_count is not None:
-            logger.info(f'Creating schema with min_tablet_count={min_tablet_count}')
-        schema = create_schema(ks, cf, min_tablet_count)
-    cql.execute(schema)
-
-    stmt = cql.prepare(f"INSERT INTO {ks}.{cf} ( pk, value ) VALUES (?, ?)")
-    if consistency_level is not None:
-        stmt.consistency_level = consistency_level
-    await asyncio.gather(*(cql.run_async(stmt, (str(k), k)) for k in keys))
-
-    return schema, keys, replication_opts
-
 async def do_restore_server(manager, logger, ks, cf, s, toc_names, scope, primary_replica_only, prefix, object_storage):
     logger.info(f'Restore {s.ip_addr} with {toc_names}, scope={scope}')
     tid = await manager.api.restore(s.ip_addr, ks, cf, object_storage.address, object_storage.bucket_name, prefix, toc_names, scope, primary_replica_only=primary_replica_only)
