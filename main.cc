@@ -347,6 +347,43 @@ public:
     }
 };
 
+template <typename SchedGroupOrSuper>
+requires std::is_same_v<SchedGroupOrSuper, seastar::scheduling_group> || std::is_same_v<SchedGroupOrSuper, seastar::scheduling_supergroup>
+class io_throughput_updater {
+    std::string_view _name;
+    SchedGroupOrSuper _sg;
+    utils::config_file::named_value<uint32_t>& _value;
+    serialized_action _updater = serialized_action([this] { return update(_value()); });
+    utils::observer<uint32_t> _observer;
+
+    future<> update(uint32_t value) {
+        uint64_t bps = ((uint64_t)(value != 0 ? value : std::numeric_limits<uint32_t>::max())) << 20;
+        return _sg.update_io_bandwidth(bps).then_wrapped([this, value] (auto f) {
+            if (f.failed()) {
+                diaglog.warn("Couldn't update {} bandwidth: {}", _name, f.get_exception());
+            } else if (value != 0) {
+                diaglog.info("Set {} bandwidth to {}MB/s", _name, value);
+            } else {
+                diaglog.info("Set unlimited {} bandwidth", _name);
+            }
+        });
+    }
+
+public:
+    io_throughput_updater(std::string_view name, SchedGroupOrSuper ssg, utils::config_file::named_value<uint32_t>& v)
+            : _name(name)
+            , _sg(ssg)
+            , _value(v)
+            , _observer(_value.observe(_updater.make_observer()))
+    {
+        (void)_updater.trigger_later();
+    }
+
+    ~io_throughput_updater() {
+        _updater.join().get();
+    }
+};
+
 static
 void
 adjust_and_verify_rlimit(bool developer_mode) {
@@ -1216,6 +1253,8 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             });
             cm.invoke_on_all(&compaction::compaction_manager::start, std::ref(*cfg), only_on_shard0(&*disk_space_monitor_shard0)).get();
 
+            auto compaction_throughput_update = io_throughput_updater("compaction", dbcfg.compaction_scheduling_group, cfg->compaction_throughput_mb_per_sec);
+
             checkpoint(stop_signal, "starting storage manager");
             sstables::storage_manager::config stm_cfg;
             stm_cfg.object_storage_clients_memory = std::clamp<size_t>(memory::stats().total_memory() * 0.01, 10 << 20, 100 << 20);
@@ -1836,6 +1875,8 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             auto stop_stream_manager_api = defer_verbose_shutdown("stream manager api", [&ctx] {
                 api::unset_server_stream_manager(ctx).get();
             });
+
+            auto stream_throughput_update = io_throughput_updater("streaming", dbcfg.streaming_scheduling_group, cfg->stream_io_throughput_mb_per_sec);
 
             checkpoint(stop_signal, "starting auth cache");
             auth_cache.start(std::ref(qp), std::ref(stop_signal.as_sharded_abort_source())).get();
