@@ -1608,40 +1608,40 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
 
     auto request_id = utils::UUID_gen::get_time_UUID();
     if (!_group0->maintenance_mode() && !_group0->joined_group0()) {
-    join_node_request_params join_params {
-        .host_id = _group0->load_my_id(),
-        .cluster_name = _db.local().get_config().cluster_name(),
-        .snitch_name = _db.local().get_snitch_name(),
-        .datacenter = _snitch.local()->get_datacenter(),
-        .rack = _snitch.local()->get_rack(),
-        .release_version = version::release(),
-        .num_tokens = _db.local().get_config().join_ring() ? _db.local().get_config().num_tokens() : 0,
-        .tokens_string = _db.local().get_config().join_ring() ? _db.local().get_config().initial_token() : sstring(),
-        .shard_count = smp::count,
-        .ignore_msb =  _db.local().get_config().murmur3_partitioner_ignore_msb_bits(),
-        .supported_features = _feature_service.supported_feature_set() | std::ranges::to<std::vector<sstring>>(),
-        .request_id = request_id,
-    };
+        join_node_request_params join_params {
+            .host_id = _group0->load_my_id(),
+            .cluster_name = _db.local().get_config().cluster_name(),
+            .snitch_name = _db.local().get_snitch_name(),
+            .datacenter = _snitch.local()->get_datacenter(),
+            .rack = _snitch.local()->get_rack(),
+            .release_version = version::release(),
+            .num_tokens = _db.local().get_config().join_ring() ? _db.local().get_config().num_tokens() : 0,
+            .tokens_string = _db.local().get_config().join_ring() ? _db.local().get_config().initial_token() : sstring(),
+            .shard_count = smp::count,
+            .ignore_msb =  _db.local().get_config().murmur3_partitioner_ignore_msb_bits(),
+            .supported_features = _feature_service.supported_feature_set() | std::ranges::to<std::vector<sstring>>(),
+            .request_id = request_id,
+        };
 
-    if (raft_replace_info) {
-        join_params.replaced_id = raft_replace_info->raft_id;
-        join_params.ignore_nodes = utils::split_comma_separated_list(_db.local().get_config().ignore_dead_nodes_for_replace());
-        if (!locator::check_host_ids_contain_only_uuid(join_params.ignore_nodes)) {
-            slogger.warn("Warning: Using IP addresses for '--ignore-dead-nodes-for-replace' is deprecated and will"
-                         " be disabled in a future release. Please use host IDs instead. Provided values: {}",
-                         _db.local().get_config().ignore_dead_nodes_for_replace());
+        if (raft_replace_info) {
+            join_params.replaced_id = raft_replace_info->raft_id;
+            join_params.ignore_nodes = utils::split_comma_separated_list(_db.local().get_config().ignore_dead_nodes_for_replace());
+            if (!locator::check_host_ids_contain_only_uuid(join_params.ignore_nodes)) {
+                slogger.warn("Warning: Using IP addresses for '--ignore-dead-nodes-for-replace' is deprecated and will"
+                            " be disabled in a future release. Please use host IDs instead. Provided values: {}",
+                            _db.local().get_config().ignore_dead_nodes_for_replace());
+            }
         }
-    }
 
-    // We use the legacy handshaker in the Raft-based recovery procedure to join the new group 0 without involving
-    // the topology coordinator. We can assume this node has already been accepted by the topology coordinator once
-    // and joined topology.
-    ::shared_ptr<group0_handshaker> handshaker =
-            !_db.local().get_config().recovery_leader.is_set()
-            ? ::make_shared<join_node_rpc_handshaker>(*this, join_params)
-            : _group0->make_legacy_handshaker(raft::is_voter::no);
-    co_await _group0->setup_group0(_sys_ks.local(), initial_contact_nodes, std::move(handshaker),
-            *this, _qp, _migration_manager.local(), join_params);
+        // We use the legacy handshaker in the Raft-based recovery procedure to join the new group 0 without involving
+        // the topology coordinator. We can assume this node has already been accepted by the topology coordinator once
+        // and joined topology.
+        ::shared_ptr<group0_handshaker> handshaker =
+                !_db.local().get_config().recovery_leader.is_set()
+                ? ::make_shared<join_node_rpc_handshaker>(*this, join_params)
+                : _group0->make_legacy_handshaker(raft::is_voter::no);
+        co_await _group0->setup_group0(_sys_ks.local(), initial_contact_nodes, std::move(handshaker),
+                *this, _qp, _migration_manager.local(), join_params);
     }
 
     raft::server& raft_server = _group0->group0_server();
