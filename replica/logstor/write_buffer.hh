@@ -97,14 +97,17 @@ public:
 
     static constexpr uint32_t buffer_header_magic = 0x4c475342;
     static constexpr size_t record_alignment = 8;
+    static constexpr uint8_t current_version = 1;
 
     struct buffer_header {
         uint32_t magic;
         uint32_t data_size; // size of all records data following the buffer_header
         segment_generation seg_gen;
         segment_kind kind;
-        uint8_t reserved1;
-        uint32_t reserved2;
+        uint8_t version;
+        uint32_t crc;
+
+        uint32_t calculate_crc() const;
     };
     static constexpr size_t buffer_header_size =
         2 * sizeof(uint32_t)
@@ -221,6 +224,8 @@ public:
 
     static void write_empty_header(ostream& out, segment_generation seg_gen);
 
+    static bool validate_header(const buffer_header& bh);
+
 private:
 
     const char* data() const noexcept { return _buffer.get(); }
@@ -315,8 +320,8 @@ struct serializer<replica::logstor::write_buffer::buffer_header> {
         serializer<uint32_t>::write(out, h.data_size);
         serializer<replica::logstor::segment_generation>::write(out, h.seg_gen);
         serializer<uint8_t>::write(out, static_cast<uint8_t>(h.kind));
-        serializer<uint8_t>::write(out, h.reserved1);
-        serializer<uint32_t>::write(out, h.reserved2);
+        serializer<uint8_t>::write(out, h.version);
+        serializer<uint32_t>::write(out, h.crc);
     }
     template <typename Input>
     static replica::logstor::write_buffer::buffer_header read(Input& in) {
@@ -325,8 +330,8 @@ struct serializer<replica::logstor::write_buffer::buffer_header> {
         h.data_size = serializer<uint32_t>::read(in);
         h.seg_gen = serializer<replica::logstor::segment_generation>::read(in);
         h.kind = static_cast<replica::logstor::segment_kind>(serializer<uint8_t>::read(in));
-        h.reserved1 = serializer<uint8_t>::read(in);
-        h.reserved2 = serializer<uint32_t>::read(in);
+        h.version = serializer<uint8_t>::read(in);
+        h.crc = serializer<uint32_t>::read(in);
         return h;
     }
     template <typename Input>

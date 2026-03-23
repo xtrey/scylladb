@@ -19,6 +19,7 @@
 #include "idl/logstor.dist.impl.hh"
 #include <seastar/core/align.hh>
 #include <seastar/core/aligned_buffer.hh>
+#include "utils/crc.hh"
 
 namespace replica::logstor {
 
@@ -87,6 +88,9 @@ future<log_location_with_holder> write_buffer::write(log_record_writer writer, c
 
     if (!can_fit(data_size)) {
         throw std::runtime_error(fmt::format("Write size {} exceeds buffer size {}", data_size, _stream.size()));
+    }
+    if (data_size == 0) {
+        throw std::runtime_error("Cannot write empty record");
     }
 
     auto rh = record_header {
@@ -158,6 +162,9 @@ void write_buffer::write_header(segment_generation seg_gen, std::optional<table_
     _buffer_header.magic = buffer_header_magic;
     _buffer_header.seg_gen = seg_gen;
     _buffer_header.kind = _segment_kind;
+    _buffer_header.version = current_version;
+
+    _buffer_header.crc = _buffer_header.calculate_crc();
 
     ser::serialize<buffer_header>(_header_stream, _buffer_header);
 
@@ -178,10 +185,27 @@ void write_buffer::write_empty_header(ostream& out, segment_generation seg_gen) 
     hdr.data_size = 0;
     hdr.seg_gen = seg_gen;
     hdr.kind = segment_kind::mixed;
-    hdr.reserved1 = 0;
-    hdr.reserved2 = 0;
+    hdr.version = current_version;
+
+    hdr.crc = hdr.calculate_crc();
 
     ser::serialize<buffer_header>(out, hdr);
+}
+
+bool write_buffer::validate_header(const write_buffer::buffer_header& bh) {
+    if (bh.magic != write_buffer::buffer_header_magic) {
+        return false;
+    }
+
+    if (bh.calculate_crc() != bh.crc) {
+        return false;
+    }
+
+    if (bh.version != current_version) {
+        return false;
+    }
+
+    return true;
 }
 
 future<> write_buffer::complete_writes(log_location base_location) {
@@ -212,6 +236,16 @@ size_t write_buffer::estimate_required_segments(size_t net_data_size, size_t rec
 
     return align_up(total_size, segment_size) / segment_size;
 
+}
+
+uint32_t write_buffer::buffer_header::calculate_crc() const {
+    utils::crc32 c;
+    c.process_le(magic);
+    c.process_le(data_size);
+    c.process_le(seg_gen.value());
+    c.process_le(static_cast<uint8_t>(kind));
+    c.process_le(version);
+    return c.get();
 }
 
 // buffered_writer

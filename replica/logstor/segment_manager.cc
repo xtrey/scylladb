@@ -1247,7 +1247,7 @@ future<> segment_manager_impl::for_each_record(log_segment_id segment_id,
         auto bh = ser::deserialize_from_buffer(buffer_header_buf, std::type_identity<write_buffer::buffer_header>{});
 
         // if the buffer is invalid then skip the rest of the segment - buffer writes are sequential and serialized.
-        if (bh.magic != write_buffer::buffer_header_magic) {
+        if (!write_buffer::validate_header(bh)) {
             break;
         }
 
@@ -1280,8 +1280,8 @@ future<> segment_manager_impl::for_each_record(log_segment_id segment_id,
                 break;
             }
             auto rh = ser::deserialize_from_buffer(size_buf, std::type_identity<write_buffer::record_header>{});
-            if (rh.data_size == 0) {
-                // End of records in this block
+            if (rh.data_size == 0 || rh.data_size > _cfg.segment_size) {
+                // invalid record size
                 break;
             }
 
@@ -1961,7 +1961,7 @@ future<std::optional<segment_header>> segment_manager_impl::read_segment_header(
     simple_memory_input_stream bh_stream(header_buf.begin(), write_buffer::buffer_header_size);
     auto bh = ser::deserialize(bh_stream, std::type_identity<write_buffer::buffer_header>{});
 
-    if (bh.magic != write_buffer::buffer_header_magic) {
+    if (!write_buffer::validate_header(bh)) {
         co_return std::nullopt;
     }
 
