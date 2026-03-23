@@ -1606,6 +1606,8 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
 
     SCYLLA_ASSERT(_group0);
 
+    auto request_id = utils::UUID_gen::get_time_UUID();
+    if (!_group0->maintenance_mode() && !_group0->joined_group0()) {
     join_node_request_params join_params {
         .host_id = _group0->load_my_id(),
         .cluster_name = _db.local().get_config().cluster_name(),
@@ -1618,7 +1620,7 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
         .shard_count = smp::count,
         .ignore_msb =  _db.local().get_config().murmur3_partitioner_ignore_msb_bits(),
         .supported_features = _feature_service.supported_feature_set() | std::ranges::to<std::vector<sstring>>(),
-        .request_id = utils::UUID_gen::get_time_UUID(),
+        .request_id = request_id,
     };
 
     if (raft_replace_info) {
@@ -1631,10 +1633,6 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
         }
     }
 
-    // setup_group0 will do nothing if the node has already set up group 0 in setup_group0_if_exist in main.cc, which
-    // happens when the node is restarting and not joining the new group 0 in the Raft-based recovery procedure.
-    // It does not matter which handshaker we choose in this case since it will not be used.
-    //
     // We use the legacy handshaker in the Raft-based recovery procedure to join the new group 0 without involving
     // the topology coordinator. We can assume this node has already been accepted by the topology coordinator once
     // and joined topology.
@@ -1644,6 +1642,7 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
             : _group0->make_legacy_handshaker(raft::is_voter::no);
     co_await _group0->setup_group0(_sys_ks.local(), initial_contact_nodes, std::move(handshaker),
             *this, _qp, _migration_manager.local(), join_params);
+    }
 
     raft::server& raft_server = _group0->group0_server();
 
@@ -1692,7 +1691,7 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
             throw std::runtime_error("Crashed in crash_before_topology_request_completion");
         });
 
-        auto err = co_await wait_for_topology_request_completion(join_params.request_id);
+        auto err = co_await wait_for_topology_request_completion(request_id);
         if (!err.empty()) {
             throw std::runtime_error(fmt::format("{} failed. See earlier errors ({})", raft_replace_info ? "Replace" : "Bootstrap", err));
         }

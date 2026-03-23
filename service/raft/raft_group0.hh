@@ -271,6 +271,10 @@ public:
     seastar::scheduling_group get_scheduling_group() {
         return _sg;
     }
+
+    // Returns true if in maintenance mode
+    bool maintenance_mode();
+
 private:
     static void init_rpc_verbs(raft_group0& shard0_this);
     static future<> uninit_rpc_verbs(netw::messaging_service& ms);
@@ -332,9 +336,6 @@ private:
     // Does not affect non-members. This behavior is only guaranteed if no concurrent membership changes are happening.
     future<> modify_raft_voter_status(const std::unordered_set<raft::server_id>& voters_add, const std::unordered_set<raft::server_id>& voters_del,
             abort_source& as, std::optional<raft_timeout> timeout = std::nullopt);
-
-    // Returns true if in maintenance mode
-    bool maintenance_mode();
 };
 
 } // end of namespace service
