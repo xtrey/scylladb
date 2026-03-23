@@ -352,7 +352,6 @@ public:
     future<generation_type> get_current_generation_number(locator::host_id endpoint) const;
     future<version_type> get_current_heart_beat_version(locator::host_id endpoint) const;
 
-    bool is_safe_for_bootstrap(inet_address endpoint) const;
 private:
     /**
      * Returns true if the chosen target was also a seed. False otherwise

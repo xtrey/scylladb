@@ -1551,9 +1551,7 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
         raft_replace_info = raft_group0::replace_info {
             .raft_id = raft::server_id{ri->host_id.uuid()},
         };
-    } else if (!_sys_ks.local().bootstrap_complete()) {
-        co_await check_for_endpoint_collision(initial_contact_nodes);
-    } else {
+    } else if (_sys_ks.local().bootstrap_complete()) {
         slogger.info("Performing gossip shadow round, initial_contact_nodes={}", initial_contact_nodes);
         co_await _gossiper.do_shadow_round(initial_contact_nodes, gms::gossiper::mandatory::no);
         _gossiper.check_snitch_name_matches(_snitch.local()->get_name());
@@ -2399,27 +2397,6 @@ future<> storage_service::wait_for_group0_stop() {
         _view_building_state_machine.event.broken(make_exception_ptr(abort_requested_exception()));
         co_await when_all(std::move(_raft_state_monitor), std::move(_sstable_vnodes_cleanup_fiber), std::move(_upgrade_to_topology_coordinator_fiber));
     }
-}
-
-future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::inet_address> initial_contact_nodes) {
-    slogger.debug("Starting shadow gossip round to check for endpoint collision");
-
-    return seastar::async([this, initial_contact_nodes] {
-        bool found_bootstrapping_node = false;
-        auto local_features = _feature_service.supported_feature_set();
-        do {
-            slogger.info("Performing gossip shadow round");
-            _gossiper.do_shadow_round(initial_contact_nodes, gms::gossiper::mandatory::yes).get();
-            _gossiper.check_snitch_name_matches(_snitch.local()->get_name());
-            auto addr = get_broadcast_address();
-            if (!_gossiper.is_safe_for_bootstrap(addr)) {
-                throw std::runtime_error(::format("A node with address {} already exists, cancelling join. "
-                    "Use replace_address if you want to replace this node.", addr));
-            }
-        } while (found_bootstrapping_node);
-        slogger.info("Checking bootstrapping/leaving/moving nodes: ok (check_for_endpoint_collision)");
-        _gossiper.reset_endpoint_state_map().get();
-    });
 }
 
 future<> storage_service::remove_endpoint(inet_address endpoint, gms::permit_id pid) {

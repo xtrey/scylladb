@@ -2331,31 +2331,6 @@ std::string_view gossiper::get_gossip_status(const locator::host_id& endpoint) c
     return do_get_gossip_status(get_application_state_ptr(endpoint, application_state::STATUS));
 }
 
-bool gossiper::is_safe_for_bootstrap(inet_address endpoint) const {
-    // We allow to bootstrap a new node in only two cases:
-    // 1) The node is a completely new node and no state in gossip at all
-    // 2) The node has state in gossip and it is already removed from the
-    // cluster either by nodetool decommission or nodetool removenode
-    bool allowed = true;
-    auto host_id = try_get_host_id(endpoint);
-    if (!host_id) {
-        logger.debug("is_safe_for_bootstrap: node={}, status=no state in gossip, allowed_to_bootstrap={}", endpoint, allowed);
-        return allowed;
-    }
-    auto eps = get_endpoint_state_ptr(*host_id);
-    if (!eps) {
-        logger.debug("is_safe_for_bootstrap: node={}, status=no state in gossip, allowed_to_bootstrap={}", endpoint, allowed);
-        return allowed;
-    }
-    auto status = get_gossip_status(*eps);
-    std::unordered_set<std::string_view> allowed_statuses{
-        versioned_value::STATUS_LEFT,
-    };
-    allowed = allowed_statuses.contains(status);
-    logger.debug("is_safe_for_bootstrap: node={}, status={}, allowed_to_bootstrap={}", endpoint, status, allowed);
-    return allowed;
-}
-
 std::set<sstring> gossiper::get_supported_features(locator::host_id endpoint) const {
     auto app_state = get_application_state_ptr(endpoint, application_state::SUPPORTED_FEATURES);
     if (!app_state) {
