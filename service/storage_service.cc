@@ -352,30 +352,6 @@ bool storage_service::is_replacing() {
     return !cfg.replace_address().empty();
 }
 
-bool storage_service::is_first_node() {
-    if (is_replacing()) {
-        return false;
-    }
-    auto seeds = _gossiper.get_seeds();
-    if (seeds.empty()) {
-        return false;
-    }
-    // Node with the smallest IP address is chosen as the very first node
-    // in the cluster. The first node is the only node that does not
-    // bootstrap in the cluster. All other nodes will bootstrap.
-    std::vector<gms::inet_address> sorted_seeds(seeds.begin(), seeds.end());
-    std::sort(sorted_seeds.begin(), sorted_seeds.end());
-    if (sorted_seeds.front() == get_broadcast_address()) {
-        slogger.info("I am the first node in the cluster. Skip bootstrap. Node={}", get_broadcast_address());
-        return true;
-    }
-    return false;
-}
-
-bool storage_service::should_bootstrap() {
-    return !_sys_ks.local().bootstrap_complete() && !is_first_node();
-}
-
 /* Broadcasts the chosen tokens through gossip,
  * together with a CDC generation timestamp and STATUS=NORMAL.
  *
@@ -1575,7 +1551,7 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
         raft_replace_info = raft_group0::replace_info {
             .raft_id = raft::server_id{ri->host_id.uuid()},
         };
-    } else if (should_bootstrap()) {
+    } else if (!_sys_ks.local().bootstrap_complete()) {
         co_await check_for_endpoint_collision(initial_contact_nodes);
     } else {
         slogger.info("Performing gossip shadow round, initial_contact_nodes={}", initial_contact_nodes);

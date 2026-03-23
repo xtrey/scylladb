@@ -492,9 +492,7 @@ public:
     future<> wait_for_group0_stop();
 
 private:
-    bool should_bootstrap();
     bool is_replacing();
-    bool is_first_node();
     future<> start_sys_dist_ks() const;
     future<> join_topology(sharded<service::storage_proxy>& proxy,
             std::unordered_set<gms::inet_address> initial_contact_nodes,
