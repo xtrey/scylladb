@@ -2135,7 +2135,9 @@ uint64_t compaction_group::live_disk_space_used() const noexcept {
 }
 
 sstables::file_size_stats compaction_group::live_disk_space_used_full_stats() const noexcept {
-    return _main_sstables->get_file_size_stats() + _maintenance_sstables->get_file_size_stats();
+    auto logstor_size = logstor_disk_space_used();
+    return _main_sstables->get_file_size_stats() + _maintenance_sstables->get_file_size_stats()
+        + sstables::file_size_stats{logstor_size, logstor_size};
 }
 
 uint64_t storage_group::live_disk_space_used() const {
@@ -3070,7 +3072,10 @@ future<> compaction_group::stop(sstring reason) noexcept {
 }
 
 bool compaction_group::empty() const noexcept {
-    return _memtables->empty() && live_sstable_count() == 0 && _sstable_add_gate.get_count() == 0;
+    return _memtables->empty() && live_sstable_count() == 0 && _sstable_add_gate.get_count() == 0
+        && (_logstor_segments ? _logstor_segments->empty() : true)
+        && (_logstor_separator ? _logstor_separator->empty() : true)
+        && _separator_flushes.empty();
 }
 
 const schema_ptr& compaction_group::schema() const {
@@ -4748,7 +4753,8 @@ future<> table::apply(const mutation& m, db::rp_handle&& h, db::timeout_clock::t
     auto holder = cg.async_gate().hold();
 
     if (_logstor) [[unlikely]] {
-        return _logstor->write(m, cg, std::move(holder));
+        auto ss_holder = cg.sstable_add_gate().hold();
+        return _logstor->write(m, cg, std::move(ss_holder));
     }
 
     return dirty_memory_region_group().run_when_memory_available([this, &m, h = std::move(h), &cg, holder = std::move(holder)] () mutable {
@@ -4767,7 +4773,8 @@ future<> table::apply(const frozen_mutation& m, schema_ptr m_schema, db::rp_hand
     auto holder = cg.async_gate().hold();
 
     if (_logstor) [[unlikely]] {
-        return _logstor->write(m.unfreeze(m_schema), cg, std::move(holder));
+        auto ss_holder = cg.sstable_add_gate().hold();
+        return _logstor->write(m.unfreeze(m_schema), cg, std::move(ss_holder));
     }
 
     return dirty_memory_region_group().run_when_memory_available([this, &m, m_schema = std::move(m_schema), h = std::move(h), &cg, holder = std::move(holder)]() mutable {

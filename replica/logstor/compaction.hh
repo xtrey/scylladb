@@ -93,6 +93,10 @@ struct segment_set {
     size_t segment_count() const noexcept {
         return _segment_count;
     }
+
+    bool empty() const noexcept {
+        return _segment_count == 0;
+    }
 };
 
 class segment_ref {
@@ -166,6 +170,10 @@ struct separator_buffer {
 
     bool can_fit(size_t write_size) const noexcept {
         return buf->can_fit(write_size);
+    }
+
+    bool empty() const noexcept {
+        return !buf->has_data();
     }
 };
 
