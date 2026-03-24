@@ -38,14 +38,6 @@ static logging::logger dlogger("system_distributed_keyspace");
 extern logging::logger cdc_log;
 
 namespace db {
-namespace {
-    const auto set_wait_for_sync_to_commitlog = schema_builder::register_schema_initializer([](schema_builder& builder) {
-        if (builder.ks_name() == system_distributed_keyspace::NAME && builder.cf_name() == system_distributed_keyspace::CDC_TOPOLOGY_DESCRIPTION)
-        {
-            builder.set_wait_for_sync_to_commitlog(true);
-        }
-    });
-}
 
 extern thread_local data_type cdc_streams_set_type;
 thread_local data_type cdc_streams_set_type = set_type_impl::get_instance(bytes_type, false);
