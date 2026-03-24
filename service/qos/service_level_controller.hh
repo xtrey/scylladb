@@ -31,7 +31,6 @@
 
 namespace db {
     class system_keyspace;
-    class system_distributed_keyspace;
 }
 namespace cql3 {
     class query_processor;

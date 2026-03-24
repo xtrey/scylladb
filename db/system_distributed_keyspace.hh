@@ -9,7 +9,6 @@
 #pragma once
 
 #include "schema/schema_fwd.hh"
-#include "service/qos/qos_common.hh"
 #include "utils/UUID.hh"
 #include "cdc/generation_id.hh"
 #include "locator/host_id.hh"
@@ -42,7 +41,6 @@ public:
     static constexpr auto NAME_EVERYWHERE = "system_distributed_everywhere";
 
     static constexpr auto VIEW_BUILD_STATUS = "view_build_status";
-    static constexpr auto SERVICE_LEVELS = "service_levels";
 
     /* Nodes use this table to communicate new CDC stream generations to other nodes. */
     static constexpr auto CDC_TOPOLOGY_DESCRIPTION = "cdc_generation_descriptions";
@@ -82,7 +80,6 @@ public:
     system_distributed_keyspace(cql3::query_processor&, service::migration_manager&, service::storage_proxy&);
 
     future<> start();
-    future<> start_workload_prioritization();
     future<> stop();
 
     bool started() const { return _started; }
@@ -96,11 +93,6 @@ public:
     future<std::map<db_clock::time_point, cdc::streams_version>> cdc_get_versioned_streams(db_clock::time_point not_older_than, context);
 
     future<db_clock::time_point> cdc_current_generation_timestamp(context);
-
-    future<qos::service_levels_info> get_service_levels(qos::query_context ctx) const;
-    future<qos::service_levels_info> get_service_level(sstring service_level_name) const;
-    future<> set_service_level(sstring service_level_name, qos::service_level_options slo) const;
-    future<> drop_service_level(sstring service_level_name) const;
 
 private:
     future<> create_tables(std::vector<schema_ptr> tables);
