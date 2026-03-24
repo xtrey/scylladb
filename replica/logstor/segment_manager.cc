@@ -1766,6 +1766,10 @@ void segment_manager_impl::write_to_separator(table& t, log_location prev_loc, l
 future<> compaction_manager_impl::flush_separator_buffer(separator_buffer buf, compaction_group& cg) {
     logstor_logger.trace("Flushing separator buffer with {} bytes", buf.buf->offset_in_buffer());
 
+    utils::get_local_injector().inject("fail_flush_separator_buffer", []() {
+        throw std::runtime_error("flush_separator_buffer failed by injection");
+    });
+
     if (buf.buf->has_data()) {
         auto sem_units = co_await get_units(_separator_flush_sem, 1);
         co_await with_scheduling_group(_cfg.separator_sg, [&] {

@@ -177,7 +177,9 @@ async def test_parallel_big_writes(manager: ManagerClient):
             assert rows[0].v == f"{i}-{large_value}"
 
 @pytest.mark.asyncio
-async def test_recovery_basic(manager: ManagerClient):
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+@pytest.mark.parametrize("fail_separator_flush", [False, True], ids=["normal", "fail_separator_flush"])
+async def test_recovery_basic(manager: ManagerClient, fail_separator_flush: bool):
     """
     Test that logstor data persists across server restarts.
 
@@ -193,6 +195,9 @@ async def test_recovery_basic(manager: ManagerClient):
     cfg = {'enable_logstor': True, 'experimental_features': ['logstor']}
     servers = await manager.servers_add(1, cmdline=cmdline, config=cfg)
     cql = manager.get_cql()
+
+    if fail_separator_flush:
+        await manager.api.enable_injection(servers[0].ip_addr, "fail_flush_separator_buffer", one_shot=False)
 
     async with new_test_keyspace(manager, "") as ks:
         await cql.run_async(f"CREATE TABLE {ks}.test (pk int PRIMARY KEY, v text) WITH storage_engine = 'logstor'")
@@ -412,6 +417,19 @@ async def test_drop_table(manager: ManagerClient):
         assert rows[0].v == 'new_value', f"Expected value 'new_value' for key 1 after new insert, but got {rows[0].v}"
 
         # verify test2 again
+        for i in range(20):
+            rows = await cql.run_async(f"SELECT pk, v FROM {ks}.test2 WHERE pk = {i}")
+            assert len(rows) == 1, f"Expected 1 row for key {i} in test2 after all operations, but got {len(rows)}"
+            assert rows[0].v == value, f"Expected value of size {value_size} for key {i} in test2 after all operations, but got {len(rows[0].v)}"
+
+        # now test recovery after drop table.
+        await cql.run_async(f"DROP TABLE {ks}.test1")
+
+        await manager.server_stop_gracefully(servers[0].server_id)
+        await manager.server_start(servers[0].server_id)
+        cql, _ = await manager.get_ready_cql(servers)
+
+        # verify test2
         for i in range(20):
             rows = await cql.run_async(f"SELECT pk, v FROM {ks}.test2 WHERE pk = {i}")
             assert len(rows) == 1, f"Expected 1 row for key {i} in test2 after all operations, but got {len(rows)}"
