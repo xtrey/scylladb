@@ -108,6 +108,7 @@ std::set<std::string_view> feature_service::supported_feature_set() const {
         "UUID_SSTABLE_IDENTIFIERS"sv,
         "GROUP0_SCHEMA_VERSIONING"sv,
         "VIEW_BUILD_STATUS_ON_GROUP0"sv,
+        "CDC_GENERATIONS_V2"sv,
     };
 
     if (is_test_only_feature_deprecated()) {

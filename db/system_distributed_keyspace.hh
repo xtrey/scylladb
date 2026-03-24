@@ -9,8 +9,6 @@
 #pragma once
 
 #include "schema/schema_fwd.hh"
-#include "utils/UUID.hh"
-#include "cdc/generation_id.hh"
 #include "locator/host_id.hh"
 
 #include <seastar/core/future.hh>
@@ -23,7 +21,6 @@ class query_processor;
 }
 
 namespace cdc {
-    class stream_id;
     class topology_description;
     class streams_version;
 } // namespace cdc
@@ -83,9 +80,6 @@ public:
     future<> stop();
 
     bool started() const { return _started; }
-
-    future<> insert_cdc_generation(utils::UUID, const cdc::topology_description&, context);
-    future<std::optional<cdc::topology_description>> read_cdc_generation(utils::UUID);
 
     future<> create_cdc_desc(db_clock::time_point, const cdc::topology_description&, context);
     future<bool> cdc_desc_exists(db_clock::time_point, context);
