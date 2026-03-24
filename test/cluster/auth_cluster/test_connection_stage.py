@@ -68,7 +68,7 @@ def make_server_config(auth_type: str) -> dict:
 @pytest.mark.parametrize("auth_type", [
     "allow_all",
     "password",
-    pytest.param("cert_bypass", marks=pytest.mark.xfail(reason="bug in process_startup cert-auth path", strict=True)),
+    "cert_bypass",
 ])
 @pytest.mark.skip_mode("release", reason="error injections are not supported in release mode")
 async def test_connection_stage_ready_after_auth(manager: ManagerClient, auth_type: str) -> None:
