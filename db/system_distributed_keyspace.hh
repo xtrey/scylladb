@@ -39,13 +39,6 @@ public:
 
     static constexpr auto VIEW_BUILD_STATUS = "view_build_status";
 
-    /* Nodes use this table to communicate new CDC stream generations to other nodes. */
-    static constexpr auto CDC_TOPOLOGY_DESCRIPTION = "cdc_generation_descriptions";
-
-    /* Nodes use this table to communicate new CDC stream generations to other nodes.
-     * Resides in system_distributed_everywhere. */
-    static constexpr auto CDC_GENERATIONS_V2 = "cdc_generation_descriptions_v2";
-
     /* This table is used by CDC clients to learn about available CDC streams. */
     static constexpr auto CDC_DESC_V2 = "cdc_streams_descriptions_v2";
 

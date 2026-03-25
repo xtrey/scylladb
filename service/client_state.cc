@@ -124,9 +124,7 @@ future<> service::client_state::check_internal_table_permissions(std::string_vie
     if (forbidden_permissions.contains(cmd.permission)) {
         if ((ks == db::system_distributed_keyspace::NAME || ks == db::system_distributed_keyspace::NAME_EVERYWHERE)
                 && (table_name == db::system_distributed_keyspace::CDC_DESC_V2
-                || table_name == db::system_distributed_keyspace::CDC_TOPOLOGY_DESCRIPTION
-                || table_name == db::system_distributed_keyspace::CDC_TIMESTAMPS
-                || table_name == db::system_distributed_keyspace::CDC_GENERATIONS_V2)) {
+                || table_name == db::system_distributed_keyspace::CDC_TIMESTAMPS)) {
             return make_exception_future(exceptions::unauthorized_exception(
                     format("Cannot {} {}", auth::permissions::to_string(cmd.permission), cmd.resource)));
         }
