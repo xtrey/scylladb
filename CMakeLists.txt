@@ -148,8 +148,10 @@ if(Scylla_ENABLE_LTO)
 endif()
 
 find_package(Sanitizers QUIET)
+# Match configure.py:2192 — abseil gets sanitizer flags with -fno-sanitize=vptr
+# to exclude vptr checks which are incompatible with abseil's usage.
 list(APPEND absl_cxx_flags
-    $<$<CONFIG:Debug,Sanitize>:$<TARGET_PROPERTY:Sanitizers::address,INTERFACE_COMPILE_OPTIONS>;$<TARGET_PROPERTY:Sanitizers::undefined_behavior,INTERFACE_COMPILE_OPTIONS>>)
+    $<$<CONFIG:Debug,Sanitize>:$<TARGET_PROPERTY:Sanitizers::address,INTERFACE_COMPILE_OPTIONS>;$<TARGET_PROPERTY:Sanitizers::undefined_behavior,INTERFACE_COMPILE_OPTIONS>;-fno-sanitize=vptr>)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     list(APPEND ABSL_GCC_FLAGS ${absl_cxx_flags})
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
