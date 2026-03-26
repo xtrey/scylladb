@@ -68,9 +68,8 @@ function(add_scylla_test name)
     target_link_libraries(${name}
       PRIVATE
         Seastar::seastar_testing)
-    target_compile_definitions(${name}
-      PRIVATE
-        SEASTAR_TESTING_MAIN)
+    # SEASTAR_TESTING_MAIN is provided by add_compile_definitions() in
+    # the top-level CMakeLists.txt, matching configure.py's global define.
   elseif(kind STREQUAL "BOOST")
     target_link_libraries(${name}
       PRIVATE

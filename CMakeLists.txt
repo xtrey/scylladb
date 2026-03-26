@@ -176,6 +176,11 @@ add_library(absl::headers ALIAS absl-headers)
 # unfortunately.
 set_target_properties(absl_strerror PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Now that seastar and abseil subdirectories are fully processed, add
+# SEASTAR_TESTING_MAIN globally. This matches configure.py's global define
+# without leaking into seastar (which would cause duplicate main symbols).
+add_compile_definitions(SEASTAR_TESTING_MAIN)
+
 # System libraries dependencies
 find_package(Boost REQUIRED
     COMPONENTS filesystem program_options system thread regex unit_test_framework)
