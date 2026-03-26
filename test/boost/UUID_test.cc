@@ -18,6 +18,17 @@ BOOST_AUTO_TEST_CASE(test_generation_of_name_based_UUID) {
     BOOST_REQUIRE_EQUAL(fmt::to_string(uuid), "0290003c-977e-397c-ac3e-fdfdc01d626b");
 }
 
+BOOST_AUTO_TEST_CASE(test_is_name_based) {
+    // Verify that a name-based UUID is identified as such
+    auto uuid = utils::UUID_gen::get_name_UUID("systembatchlog");
+    BOOST_CHECK(uuid.is_name_based());
+
+    // Verify that other UUID types are not name-based
+    BOOST_CHECK(!utils::null_uuid().is_name_based());
+    BOOST_CHECK(!utils::make_random_uuid().is_name_based());
+    BOOST_CHECK(!utils::UUID_gen::get_time_UUID().is_name_based());
+}
+
 using utils::UUID;
 
 BOOST_AUTO_TEST_CASE(test_UUID_comparison) {
