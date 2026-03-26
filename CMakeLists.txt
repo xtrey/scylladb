@@ -114,7 +114,31 @@ else()
     set(Seastar_IO_URING ON CACHE BOOL "" FORCE)
     set(Seastar_SCHEDULING_GROUPS_COUNT 21 CACHE STRING "" FORCE)
     set(Seastar_UNUSED_RESULT_ERROR ON CACHE BOOL "" FORCE)
+    # Match configure.py's build_seastar_shared_libs: Debug and Dev
+    # build Seastar as a shared library, others build it static.
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "Dev")
+        set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+    else()
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    endif()
     add_subdirectory(seastar)
+
+    # Coverage mode sets cmake_build_type='Debug' for Seastar
+    # (configure.py:515), so Seastar's pkg-config output includes sanitizer
+    # link flags in seastar_libs_coverage (configure.py:2514,2649).
+    # Seastar's own CMake only activates sanitizer targets for Debug/Sanitize
+    # configs, so we inject link options on the seastar target for Coverage.
+    # Using PUBLIC ensures they propagate to all targets linking Seastar
+    # (but not standalone tools like patchelf), matching configure.py's
+    # behavior.  Compile-time flags and defines are handled globally in
+    # cmake/mode.Coverage.cmake.
+    if(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+        target_link_options(seastar
+            PUBLIC
+                -fsanitize=address
+                -fsanitize=undefined
+                -fsanitize=vptr)
+    endif()
 endif()
 
 set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
