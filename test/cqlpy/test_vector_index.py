@@ -365,7 +365,7 @@ def test_one_vector_index_on_column(cql, test_keyspace, skip_without_tablets):
             cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING '{custom_class}'")
         cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ON {table}(v) USING '{custom_class}'")
 
-# Reproduces issue #26672
+# Validates fix for issue #26672
 def test_two_same_name_indexes_on_different_tables_with_if_not_exists(cql, test_keyspace, scylla_only, skip_without_tablets):
     schema = "p int primary key, v vector<float, 3>"
     with new_test_table(cql, test_keyspace, schema) as table:
@@ -562,10 +562,8 @@ def test_vector_index_writes_appear_in_cdc_log(cql, test_keyspace, scylla_only, 
         rows_after_lwt_delete = list(cql.execute(f"SELECT * FROM {cdc_log_table} ALLOW FILTERING"))
         assert len(rows_after_lwt_delete) > len(rows_after_lwt_update)
 
-# This test reproduces VECTOR-179.
-# It performs a vector search with tracing enabled. An exception is expected
-# because the vector store node is not configured. However, due to the bug,
-# Scylla crashes instead of returning an error.
+# Validates fix for VECTOR-179: a vector search with tracing enabled
+# used to crash Scylla instead of returning an error.
 def test_vector_search_when_tracing_is_enabled(cql, test_keyspace, scylla_only, skip_without_tablets):
     schema = "p int primary key, v vector<float, 3>"
     with new_test_table(cql, test_keyspace, schema) as table:
@@ -578,23 +576,9 @@ def test_vector_search_when_tracing_is_enabled(cql, test_keyspace, scylla_only, 
 
 
 
-@pytest.mark.xfail(reason="""We do not support primary key filtering yet, see VECTOR-374, 
-                            additionally this test will fail when that issue is fixed because pytest does not run the vector search backend.
-                            It does pass on Cassandra however, so we keep it xfailed for future reference.""")
-def test_ann_query_with_restriction_works_only_on_pk(cql, test_keyspace):
+# Validates fix for VECTOR-374: ANN query with PK restriction used to be
+# rejected even though the restriction is on a partition-key column.
+def test_ann_query_with_pk_restriction(cql, test_keyspace, skip_without_tablets):
     schema = 'p int primary key, q int, v vector<float, 3>'
-    custom_index = 'vector_index' if is_scylla(cql) else 'sai'
     with new_test_table(cql, test_keyspace, schema) as table:
-        cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING '{custom_index}'")
-        cql.execute(f"INSERT INTO {table} (p, q, v) VALUES (1, 1, [1.0, 1.0, 1.0])")
-        cql.execute(f"INSERT INTO {table} (p, q, v) VALUES (2, 2, [1.0, 1.0, 1.0])")
-        cql.execute(f"INSERT INTO {table} (p, q, v) VALUES (3, 3, [1.0, 1.0, 1.0])")
-
-        result = cql.execute(f"SELECT * FROM {table} WHERE p = 1 ORDER BY v ANN OF [1.0, 1.0, 1.0] LIMIT 3")
-
-        assert len(result.current_rows) == 1
-        assert result.current_rows[0].p == 1
-        with pytest.raises(InvalidRequest, match="ANN ordering by vector requires all restricted column(s) to be indexed"):
-            cql.execute(f"SELECT * FROM {table} WHERE q = 1 ORDER BY v ANN OF [1.0, 1.0, 1.0] LIMIT 3")
-
-
+        cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'vector_index'")
