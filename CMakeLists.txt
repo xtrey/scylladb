@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.27)
 
 project(scylla)
 
+# Disable CMake's automatic -fcolor-diagnostics injection (CMake 3.24+ adds
+# it for Clang+Ninja). configure.py does not add any color diagnostics flags,
+# so we clear the internal CMake variable to prevent injection.
+set(CMAKE_CXX_COMPILE_OPTIONS_COLOR_DIAGNOSTICS "")
+set(CMAKE_C_COMPILE_OPTIONS_COLOR_DIAGNOSTICS "")
+
 list(APPEND CMAKE_MODULE_PATH
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake
   ${CMAKE_CURRENT_SOURCE_DIR}/seastar/cmake)
@@ -51,6 +57,16 @@ set(CMAKE_CXX_EXTENSIONS ON CACHE INTERNAL "")
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE INTERNAL "")
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
+# Global defines matching configure.py
+# Since gcc 13, libgcc doesn't need the exception workaround
+add_compile_definitions(SEASTAR_NO_EXCEPTION_HACK)
+# Hacks needed to expose internal APIs for xxhash dependencies
+add_compile_definitions(XXH_PRIVATE_API)
+# SEASTAR_TESTING_MAIN is added later (after add_subdirectory(seastar) and
+# add_subdirectory(abseil)) to avoid leaking into the seastar subdirectory.
+# If SEASTAR_TESTING_MAIN is defined globally before seastar, it causes a
+# duplicate 'main' symbol in seastar_testing.
+
 if(is_multi_config)
     find_package(Seastar)
     # this is atypical compared to standard ExternalProject usage:
@@ -99,9 +115,6 @@ else()
     set(Seastar_SCHEDULING_GROUPS_COUNT 21 CACHE STRING "" FORCE)
     set(Seastar_UNUSED_RESULT_ERROR ON CACHE BOOL "" FORCE)
     add_subdirectory(seastar)
-    target_compile_definitions (seastar
-      PRIVATE
-        SEASTAR_NO_EXCEPTION_HACK)
 endif()
 
 set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
@@ -196,6 +209,10 @@ if (Scylla_USE_PRECOMPILED_HEADER)
     message(STATUS "Using precompiled header for Scylla - remember to add `sloppiness = pch_defines,time_macros` to ccache.conf, if you're using ccache.")
     target_precompile_headers(scylla-precompiled-header PRIVATE "stdafx.hh")
     target_compile_definitions(scylla-precompiled-header PRIVATE SCYLLA_USE_PRECOMPILED_HEADER)
+    # Match configure.py: -fpch-validate-input-files-content tells the compiler
+    # to check content of stdafx.hh if timestamps don't match (important for
+    # ccache/git workflows where timestamps may not be preserved).
+    add_compile_options(-fpch-validate-input-files-content)
   endif()
 else()
   set(Scylla_USE_PRECOMPILED_HEADER_USE OFF)
