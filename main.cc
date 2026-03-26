@@ -1963,9 +1963,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             });
 
             checkpoint(stop_signal, "initializing virtual tables");
-            smp::invoke_on_all([&] {
-                return db::initialize_virtual_tables(db, ss, gossiper, raft_gr, sys_ks, tablet_allocator, messaging, *cfg);
-            }).get();
+            db::initialize_virtual_tables(db, ss, gossiper, raft_gr, sys_ks, tablet_allocator, messaging, *cfg).get();
 
             // #293 - do not stop anything
             // engine().at_exit([&qp] { return qp.stop(); });
