@@ -111,6 +111,8 @@ _KNOWN_LIB_ASYMMETRIES = {
     "atomic": "conf",
     "boost_date_time": "conf",
     "ubsan": "conf",
+    # Lua transitive deps — configure.py gets them via pkg-config
+    "m": "conf",
     # GnuTLS transitive deps — configure.py links explicitly
     "tasn1": "conf",
     "idn2": "conf",
@@ -133,9 +135,6 @@ _KNOWN_LIB_ASYMMETRIES = {
     "ssl": "cmake",
     # Linked transitively via Seastar's rt::rt imported target
     "rt": "cmake",
-    # Name differs between systems (configure.py: lua, CMake: lua-5.4)
-    "lua": "conf",
-    "lua-5.4": "cmake",
 }
 
 
