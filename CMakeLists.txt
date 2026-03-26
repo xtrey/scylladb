@@ -184,6 +184,30 @@ add_compile_definitions(SEASTAR_TESTING_MAIN)
 # System libraries dependencies
 find_package(Boost REQUIRED
     COMPONENTS filesystem program_options system thread regex unit_test_framework)
+# When using shared Boost libraries, define BOOST_ALL_DYN_LINK (matching configure.py)
+if(NOT Boost_USE_STATIC_LIBS)
+    add_compile_definitions(BOOST_ALL_DYN_LINK)
+endif()
+
+# CMake's Boost package config adds per-component defines like
+# BOOST_UNIT_TEST_FRAMEWORK_DYN_LINK, BOOST_REGEX_DYN_LINK, etc. on the
+# imported targets. configure.py only uses BOOST_ALL_DYN_LINK (which covers
+# all components), so strip the per-component defines to align the two build
+# systems.
+foreach(_boost_target
+    Boost::unit_test_framework
+    Boost::regex
+    Boost::filesystem
+    Boost::program_options
+    Boost::system
+    Boost::thread)
+  if(TARGET ${_boost_target})
+    # Completely remove all INTERFACE_COMPILE_DEFINITIONS from the Boost target.
+    # This prevents per-component *_DYN_LINK and *_NO_LIB defines from
+    # propagating. BOOST_ALL_DYN_LINK (set globally) covers all components.
+    set_property(TARGET ${_boost_target} PROPERTY INTERFACE_COMPILE_DEFINITIONS)
+  endif()
+endforeach()
 target_link_libraries(Boost::regex
   INTERFACE
     ICU::i18n
