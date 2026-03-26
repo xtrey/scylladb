@@ -1031,7 +1031,7 @@ expression search_and_replace(const expression& e,
                     return cast{c.style, recurse(c.arg), c.type};
                 },
                 [&] (const field_selection& fs) -> expression {
-                    return field_selection{recurse(fs.structure), fs.field};
+                    return field_selection{recurse(fs.structure), fs.field, fs.field_idx, fs.type};
                 },
                 [&] (const subscript& s) -> expression {
                     return subscript {

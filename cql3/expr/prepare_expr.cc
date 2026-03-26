@@ -1688,6 +1688,12 @@ static lw_shared_ptr<column_specification> get_lhs_receiver(const expression& pr
                 return list_value_spec_of(*sub_col.col->column_specification);
             }
         },
+        [&](const field_selection& fs) -> lw_shared_ptr<column_specification> {
+            return make_lw_shared<column_specification>(
+                schema.ks_name(), schema.cf_name(),
+                ::make_shared<column_identifier>(fs.field->text(), true),
+                fs.type);
+        },
         [&](const tuple_constructor& tup) -> lw_shared_ptr<column_specification> {
             std::ostringstream tuple_name;
             tuple_name << "(";
