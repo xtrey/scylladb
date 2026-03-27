@@ -61,6 +61,9 @@ class AuditRowMustNotExistError(Exception):
 class AuditTester:
     audit_default_settings = {"audit": "table", "audit_categories": "ADMIN,AUTH,QUERY,DML,DDL,DCL", "audit_keyspaces": "ks"}
 
+    def __init__(self, manager: ManagerClient):
+        self.manager = manager
+
     def _build_server_config(self, needed: dict[str, str],
                              enable_compact_storage: bool,
                              user: str | None) -> dict[str, Any]:
@@ -526,8 +529,7 @@ class CQLAuditTester(AuditTester):
     AUDIT_LOG_QUERY = "SELECT * FROM audit.audit_log"
 
     def __init__(self, manager: ManagerClient, helper: AuditBackend | None = None):
-        super().__init__()
-        self.manager = manager
+        super().__init__(manager)
         self.server_addresses: list[str] = []
         self.helper: AuditBackend | None = helper
 
