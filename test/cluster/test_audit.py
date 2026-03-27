@@ -666,28 +666,23 @@ class CQLAuditTester(AuditTester):
             count_after = counts_after[mode]
             assert count_before == count_after, f"audit entries count changed (before: {count_before} after: {count_after})"
 
-    def execute_and_validate_audit_entry(  # noqa: PLR0913
+    def execute_and_validate_new_audit_entry(  # noqa: PLR0913
         self,
         session: Session,
         query: Any,
         category: str,
-        audit_settings: dict[str, str] = AuditTester.audit_default_settings,
         table: str = "",
         ks: str = "ks",
         cl: str = "ONE",
         user: str = "anonymous",
-        expected_error: Any = None,
         bound_values: list[Any] | None = None,
-        expect_new_audit_entry: bool = True,
         expected_operation: str | None = None,
+        error: bool = False,
         session_for_audit_entry_validation: Session | None = None,
     ):
         """
         Execute a query and validate that an audit entry was added to the audit
-        log table. Use the audit_settings parameter in combination with category
-        to determine if the audit entry should be added or not. If the audit
-        entry is expected, validate that the audit entry's content is as
-        expected.
+        log table.
         """
 
         # In some cases, provided session does not have access to the audit
@@ -696,22 +691,49 @@ class CQLAuditTester(AuditTester):
         if session_for_audit_entry_validation is None:
             session_for_audit_entry_validation = session
 
-        if category in audit_settings["audit_categories"].split(",") and expect_new_audit_entry:
-            operation = query if expected_operation is None else expected_operation
-            error = expected_error is not None
-
-            expected_entries = [AuditEntry(category, cl, error, ks, operation, table, user)]
-        else:
-            expected_entries = []
+        operation = query if expected_operation is None else expected_operation
+        expected_entries = [AuditEntry(category, cl, error, ks, operation, table, user)]
 
         with self.assert_entries_were_added(session_for_audit_entry_validation, expected_entries):
-            if expected_error is None:
-                res = session.execute(query, bound_values)
-            else:
-                assert_invalid(session, query, expected=expected_error)
-                res = None
+            res = session.execute(query, bound_values)
 
         return res
+
+    def execute_and_validate_if_category_enabled(  # noqa: PLR0913
+        self,
+        session: Session,
+        query: Any,
+        category: str,
+        audit_settings: dict[str, str],
+        table: str = "",
+        ks: str = "ks",
+        cl: str = "ONE",
+        user: str = "anonymous",
+        bound_values: list[Any] | None = None,
+        expected_operation: str | None = None,
+        session_for_audit_entry_validation: Session | None = None,
+    ):
+        """
+        Execute a query and validate or skip audit entry validation based on
+        whether the given category is enabled in audit_settings.
+        """
+
+        if session_for_audit_entry_validation is None:
+            session_for_audit_entry_validation = session
+
+        audit_categories = [c.strip() for c in audit_settings.get("audit_categories", "").split(",")]
+        if category in audit_categories:
+            return self.execute_and_validate_new_audit_entry(
+                session, query, category,
+                table=table, ks=ks, cl=cl, user=user,
+                bound_values=bound_values,
+                expected_operation=expected_operation,
+                session_for_audit_entry_validation=session_for_audit_entry_validation,
+            )
+        else:
+            with self.assert_no_audit_entries_were_added(session_for_audit_entry_validation):
+                res = session.execute(query, bound_values)
+            return res
 
     # Filter out queries that can appear in random moments of the tests,
     # such as LOGINs and USE statements.
@@ -803,22 +825,23 @@ class CQLAuditTester(AuditTester):
         """
         session = await self.prepare(create_keyspace=False, audit_settings=audit_settings, helper=helper)
 
-        def execute_and_validate_audit_entry(query, category, **kwargs):
-            return self.execute_and_validate_audit_entry(session, query, category, audit_settings, **kwargs)
-
-        execute_and_validate_audit_entry(
+        self.execute_and_validate_new_audit_entry(
+            session,
             "CREATE KEYSPACE ks WITH replication = { 'class':'SimpleStrategy', 'replication_factor':1} AND DURABLE_WRITES = true",
             category="DDL",
         )
-        execute_and_validate_audit_entry(
+        self.execute_and_validate_new_audit_entry(
+            session,
             'USE "ks"',
             category="DML",
         )
-        execute_and_validate_audit_entry(
+        self.execute_and_validate_new_audit_entry(
+            session,
             "ALTER KEYSPACE ks WITH replication = { 'class' : 'NetworkTopologyStrategy', 'dc1' : 1 } AND DURABLE_WRITES = false",
             category="DDL",
         )
-        execute_and_validate_audit_entry(
+        self.execute_and_validate_new_audit_entry(
+            session,
             "DROP KEYSPACE ks",
             category="DDL",
         )
@@ -848,12 +871,10 @@ class CQLAuditTester(AuditTester):
         with helper_class() as helper:
             session = await self.prepare(create_keyspace=False, helper=helper)
 
-            self.execute_and_validate_audit_entry(
-                session,
-                'USE "ks"',  # ks doesn't exist because create_keyspace=False in prepare
-                category="DML",
-                expected_error=InvalidRequest,
-            )
+            expected_entry = AuditEntry(category="DML", cl="ONE", error=True, ks="ks",
+                                        statement='USE "ks"', table="", user="anonymous")
+            with self.assert_entries_were_added(session, [expected_entry]):
+                assert_invalid(session, 'USE "ks"', expected=InvalidRequest)  # ks doesn't exist because create_keyspace=False in prepare
 
     async def verify_table(self, audit_settings=AuditTester.audit_default_settings, helper=None, table_prefix="test", overwrite_audit_tables=False):
         """
@@ -870,20 +891,20 @@ class CQLAuditTester(AuditTester):
 
         session = await self.prepare(audit_settings=audit_settings, helper=helper, enable_compact_storage=True)
 
-        def execute_and_validate_audit_entry(query, category, **kwargs):
-            return self.execute_and_validate_audit_entry(session, query, category, audit_settings, **kwargs)
-
-        execute_and_validate_audit_entry(
+        self.execute_and_validate_new_audit_entry(
+            session,
             f"CREATE TABLE {first_table} (k int PRIMARY KEY, v1 int)",
             category="DDL",
             table=first_table,
         )
-        execute_and_validate_audit_entry(
+        self.execute_and_validate_new_audit_entry(
+            session,
             f"CREATE TABLE {second_table} (k int, c1 int, v1 int, PRIMARY KEY (k, c1)) WITH COMPACT STORAGE",
             category="DDL",
             table=second_table,
         )
-        execute_and_validate_audit_entry(
+        self.execute_and_validate_new_audit_entry(
+            session,
             f"ALTER TABLE {first_table} ADD v2 int",
             category="DDL",
             table=first_table,
@@ -896,45 +917,49 @@ class CQLAuditTester(AuditTester):
                 else:
                     columns = "(k, c1, v1)"
 
-                execute_and_validate_audit_entry(
+                self.execute_and_validate_if_category_enabled(
+                    session,
                     f"INSERT INTO {table} {columns} VALUES ({i}, {i}, {i})",
                     category="DML",
+                    audit_settings=audit_settings,
                     table=f"{table}",
                 )
 
-            res = execute_and_validate_audit_entry(
+            res = self.execute_and_validate_if_category_enabled(
+                session,
                 f"SELECT * FROM {table}",
                 category="QUERY",
+                audit_settings=audit_settings,
                 table=f"{table}",
             )
             assert sorted(rows_to_list(res)) == [[i, i, i] for i in range(10)], res
 
-            execute_and_validate_audit_entry(
+            self.execute_and_validate_if_category_enabled(
+                session,
                 f"TRUNCATE {table}",
                 category="DML",
+                audit_settings=audit_settings,
                 table=f"{table}",
             )
 
-            res = execute_and_validate_audit_entry(
+            res = self.execute_and_validate_if_category_enabled(
+                session,
                 f"SELECT * FROM {table}",
                 category="QUERY",
+                audit_settings=audit_settings,
                 table=f"{table}",
             )
             assert rows_to_list(res) == [], res
 
-            execute_and_validate_audit_entry(
+            self.execute_and_validate_new_audit_entry(
+                session,
                 f"DROP TABLE {table}",
                 category="DDL",
                 table=f"{table}",
             )
 
-            execute_and_validate_audit_entry(
-                f"SELECT * FROM {table}",
-                category="QUERY",
-                table=f"{table}",
-                expected_error=InvalidRequest,
-                expect_new_audit_entry=False,
-            )
+            with self.assert_no_audit_entries_were_added(session):
+                assert_invalid(session, f"SELECT * FROM {table}", expected=InvalidRequest)
 
         # Test that the audit entries are not added if the keyspace is not
         # specified in the audit_keyspaces setting.
@@ -1050,7 +1075,7 @@ class CQLAuditTester(AuditTester):
         audit_settings = {"audit": "table", "audit_categories": "ADMIN,AUTH,QUERY,DML,DDL,DCL", "audit_keyspaces": "audit"}
         session = await self.prepare(create_keyspace=False, audit_settings=audit_settings)
 
-        self.execute_and_validate_audit_entry(session, query=self.AUDIT_LOG_QUERY, category="QUERY", ks="audit", table="audit_log", audit_settings=audit_settings)
+        self.execute_and_validate_new_audit_entry(session, query=self.AUDIT_LOG_QUERY, category="QUERY", ks="audit", table="audit_log")
 
     async def test_audit_categories_invalid(self):
         """
@@ -1112,24 +1137,30 @@ class CQLAuditTester(AuditTester):
         with helper_class() as helper:
             session = await self.prepare(user="cassandra", password="cassandra", helper=helper)
 
-            def execute_and_validate_audit_entry(query, category, **kwargs):
-                return self.execute_and_validate_audit_entry(session, query, category, self.audit_default_settings, **kwargs, user="cassandra", ks="")
-
             tests = [self.PasswordMaskingCase("user1", "secret", "Secret^%$#@!"), self.PasswordMaskingCase("user2", "", "")]
             for username, password, new_password in tests:
-                execute_and_validate_audit_entry(
+                self.execute_and_validate_new_audit_entry(
+                    session,
                     f"CREATE USER {username} WITH PASSWORD '{password}'",
                     category="DCL",
                     expected_operation=f"CREATE USER {username} WITH PASSWORD '***'",
+                    user="cassandra",
+                    ks="",
                 )
-                execute_and_validate_audit_entry(
+                self.execute_and_validate_new_audit_entry(
+                    session,
                     f"ALTER USER {username} WITH PASSWORD '{new_password}'",
                     category="DCL",
                     expected_operation=f"ALTER USER {username} WITH PASSWORD '***'",
+                    user="cassandra",
+                    ks="",
                 )
-                execute_and_validate_audit_entry(
+                self.execute_and_validate_new_audit_entry(
+                    session,
                     f"DROP USER {username}",
                     category="DCL",
+                    user="cassandra",
+                    ks="",
                 )
 
     async def test_negative_audit_records_auth(self):
@@ -1248,24 +1279,30 @@ class CQLAuditTester(AuditTester):
         with helper_class() as helper:
             session = await self.prepare(user="cassandra", password="cassandra", helper=helper)
 
-            def execute_and_validate_audit_entry(query, category, **kwargs):
-                return self.execute_and_validate_audit_entry(session, query, category, self.audit_default_settings, **kwargs, user="cassandra", ks="")
-
             tests = [self.PasswordMaskingCase("role1", "Secret!@#$", "Secret^%$#@!"), self.PasswordMaskingCase("role2", "", "")]
             for role_name, password, new_password in tests:
-                execute_and_validate_audit_entry(
+                self.execute_and_validate_new_audit_entry(
+                    session,
                     f"CREATE ROLE {role_name} WITH PASSWORD = '{password}'",
                     category="DCL",
                     expected_operation=f"CREATE ROLE {role_name} WITH PASSWORD = '***'",
+                    user="cassandra",
+                    ks="",
                 )
-                execute_and_validate_audit_entry(
+                self.execute_and_validate_new_audit_entry(
+                    session,
                     f"ALTER ROLE {role_name} WITH PASSWORD = '{new_password}'",
                     category="DCL",
                     expected_operation=f"ALTER ROLE {role_name} WITH PASSWORD = '***'",
+                    user="cassandra",
+                    ks="",
                 )
-                execute_and_validate_audit_entry(
+                self.execute_and_validate_new_audit_entry(
+                    session,
                     f"DROP ROLE {role_name}",
                     category="DCL",
+                    user="cassandra",
+                    ks="",
                 )
 
     async def test_login(self):
@@ -1302,15 +1339,13 @@ class CQLAuditTester(AuditTester):
         """
         session = await self.prepare(audit_settings={"audit": "table", "audit_categories": "DML", "audit_keyspaces": "ks"})
 
-        def execute_and_validate_audit_entry(query, category, **kwargs):
-            return self.execute_and_validate_audit_entry(session, query, category, self.audit_default_settings, **kwargs)
-
         with self.assert_no_audit_entries_were_added(session):
             session.execute("CREATE TABLE test1 (k int PRIMARY KEY, v1 int)")
             session.execute("ALTER TABLE test1 ADD v2 int")
 
         for i in range(10):
-            execute_and_validate_audit_entry(
+            self.execute_and_validate_new_audit_entry(
+                session,
                 f"INSERT INTO test1 (k, v1, v2) VALUES ({i}, {i}, {i})",
                 category="DML",
                 table="test1",
@@ -1320,7 +1355,8 @@ class CQLAuditTester(AuditTester):
             res = sorted(session.execute("SELECT * FROM test1"))
             assert rows_to_list(res) == [[i, i, i] for i in range(10)], res
 
-        execute_and_validate_audit_entry(
+        self.execute_and_validate_new_audit_entry(
+            session,
             "TRUNCATE test1",
             category="DML",
             table="test1",
@@ -1488,7 +1524,7 @@ class CQLAuditTester(AuditTester):
                 query = "INSERT INTO cf (k, c) VALUES (?, ?);"
                 pq = session.prepare(query)
 
-            self.execute_and_validate_audit_entry(
+            self.execute_and_validate_new_audit_entry(
                 session,
                 pq,
                 bound_values=["foo", 4],
@@ -1514,20 +1550,20 @@ class CQLAuditTester(AuditTester):
 
             test_session = await self.manager.get_cql_exclusive(servers[0], auth_provider=PlainTextAuthProvider(username="test", password="test"))
             test_session.get_execution_profile(EXEC_PROFILE_DEFAULT).consistency_level = ConsistencyLevel.ONE
-            def execute_and_validate_audit_entry(query, category, **kwargs):
-                return self.execute_and_validate_audit_entry(test_session, query, category, session_for_audit_entry_validation=session, user="test", **kwargs)
 
-            execute_and_validate_audit_entry(
+            self.execute_and_validate_new_audit_entry(
+                test_session,
                 "SELECT * FROM ks.test1",
                 category="QUERY",
                 table="test1",
+                user="test",
+                session_for_audit_entry_validation=session,
             )
-            execute_and_validate_audit_entry(
-                "INSERT INTO ks.test1 (k, v1) VALUES (2, 2)",
-                category="DML",
-                table="test1",
-                expected_error=Unauthorized,
-            )
+
+            expected_entry = AuditEntry(category="DML", cl="ONE", error=True, ks="ks",
+                                        statement="INSERT INTO ks.test1 (k, v1) VALUES (2, 2)", table="test1", user="test")
+            with self.assert_entries_were_added(session, [expected_entry]):
+                assert_invalid(test_session, "INSERT INTO ks.test1 (k, v1) VALUES (2, 2)", expected=Unauthorized)
 
             session.execute("DROP USER IF EXISTS test")
 
@@ -1596,7 +1632,7 @@ class CQLAuditTester(AuditTester):
         # Execute previously defined service level statements.
         # Validate that the audit log contains the expected entries.
         for query in query_sequence:
-            self.execute_and_validate_audit_entry(session, query, category="ADMIN", audit_settings=audit_settings, ks="", user="cassandra")
+            self.execute_and_validate_new_audit_entry(session, query, category="ADMIN", ks="", user="cassandra")
 
         # Create a session with the ADMIN category disabled to validate that
         # the service level statements are not audited in that case.
