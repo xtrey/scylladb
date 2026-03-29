@@ -3928,45 +3928,6 @@ future<> storage_service::prepare_for_tablets_migration(const sstring& ks_name) 
             }
         }
 
-        // Stateful lambdas for round-robin shard assignment per node.
-        std::unordered_map<locator::host_id, std::function<shard_id()>> next_shard_for;
-        tm.for_each_token_owner([&] (const locator::node& node) {
-            auto host = node.host_id();
-            next_shard_for[host] = [num_shards = node.get_shard_count(), idx = 0u]() mutable {
-                return shard_id(idx++ % num_shards);
-            };
-        });
-
-        slogger.info("Building tablet maps for tables in keyspace {} with {} tablet(s)", ks_name, tablet_count);
-
-        // Build a tablet_map from vnode token boundaries.
-        //
-        // The map contains one tablet per vnode. The replicas of each tablet are
-        // the same as the replicas of the corresponding vnode. Shards are assigned
-        // in round-robin fashion per node so that tablets are evenly distributed
-        // within each node.
-        // (FIXME: we should consider tablet sizes as well)
-        //
-        // This map will serve as a template for per-table tablet map mutations.
-        // Each table in the keyspace receives its own tablet map, but all maps
-        // have identical tablet boundaries and replica placement.
-
-        auto erm = ks.get_static_effective_replication_map();
-
-        locator::tablet_map tmap(tablet_count);
-        for (size_t i = 0; i < tablet_count; ++i) {
-            auto tablet = locator::tablet_id(i);
-            auto vnode_replica_hosts = erm->get_natural_replicas(sorted_tokens[i], true);
-            locator::tablet_replica_set tablet_replicas;
-            for (auto host : vnode_replica_hosts) {
-                tablet_replicas.push_back(locator::tablet_replica{host, next_shard_for[host]()});
-            }
-            tmap.set_tablet(tablet, locator::tablet_info(std::move(tablet_replicas)));
-            if (tmap.get_last_token(tablet) != sorted_tokens[i]) {
-                throw std::runtime_error(fmt::format("vnode token {} is not aligned; cannot be used as tablet boundary (expected: {})", sorted_tokens[i], tmap.get_last_token(tablet)));
-            }
-        }
-
         std::vector<std::pair<table_id, sstring>> tables_to_migrate;
 
         for (const auto& [name, schema] : cf_meta_data) {
@@ -3983,6 +3944,45 @@ future<> storage_service::prepare_for_tablets_migration(const sstring& ks_name) 
         if (tables_to_migrate.empty()) {
             slogger.info("All tables in keyspace {} already use tablets, nothing to do", ks_name);
             co_return;
+        }
+
+        // Build a tablet_map from vnode token boundaries.
+        //
+        // The map contains one tablet per vnode. The replicas of each tablet are
+        // the same as the replicas of the corresponding vnode. Shards are assigned
+        // in round-robin fashion per node so that tablets are evenly distributed
+        // within each node.
+        // (FIXME: we should consider tablet sizes as well)
+        //
+        // This map will serve as a template for per-table tablet map mutations.
+        // Each table in the keyspace receives its own tablet map, but all maps
+        // have identical tablet boundaries and replica placement.
+
+        slogger.info("Building tablet maps for tables in keyspace {} with {} tablet(s)", ks_name, tablet_count);
+
+        // Stateful lambdas for round-robin shard assignment per node.
+        std::unordered_map<locator::host_id, std::function<shard_id()>> next_shard_for;
+        tm.for_each_token_owner([&] (const locator::node& node) {
+            auto host = node.host_id();
+            next_shard_for[host] = [num_shards = node.get_shard_count(), idx = 0u]() mutable {
+                return shard_id(idx++ % num_shards);
+            };
+        });
+
+        auto erm = ks.get_static_effective_replication_map();
+
+        locator::tablet_map tmap(tablet_count);
+        for (size_t i = 0; i < tablet_count; ++i) {
+            auto tablet = locator::tablet_id(i);
+            auto vnode_replica_hosts = erm->get_natural_replicas(sorted_tokens[i], true);
+            locator::tablet_replica_set tablet_replicas;
+            for (auto host : vnode_replica_hosts) {
+                tablet_replicas.push_back(locator::tablet_replica{host, next_shard_for[host]()});
+            }
+            tmap.set_tablet(tablet, locator::tablet_info(std::move(tablet_replicas)));
+            if (tmap.get_last_token(tablet) != sorted_tokens[i]) {
+                throw std::runtime_error(fmt::format("vnode token {} is not aligned; cannot be used as tablet boundary (expected: {})", sorted_tokens[i], tmap.get_last_token(tablet)));
+            }
         }
 
         // Build tablet map mutations for all tables and persist them to group0 (system.tablets)
