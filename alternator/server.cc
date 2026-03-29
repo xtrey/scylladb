@@ -8,6 +8,7 @@
 
 #include "alternator/server.hh"
 #include "audit/audit.hh"
+#include "alternator/executor_util.hh"
 #include "gms/application_state.hh"
 #include "utils/log.hh"
 #include <fmt/ranges.h>
@@ -143,7 +144,7 @@ public:
                     return _response_compressor.generate_reply(std::move(rep), std::move(accept_encoding),
                                                                REPLY_CONTENT_TYPE, std::move(str));
                 },
-                [&] (executor::body_writer&& body_writer) {
+                [&] (body_writer&& body_writer) {
                     return _response_compressor.generate_reply(std::move(rep), std::move(accept_encoding),
                                                                REPLY_CONTENT_TYPE, std::move(body_writer));
                 },

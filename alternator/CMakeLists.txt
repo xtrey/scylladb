@@ -10,6 +10,7 @@ target_sources(alternator
     server.cc
     executor.cc
     executor_read.cc
+    executor_util.cc
     stats.cc
     serialization.cc
     expressions.cc

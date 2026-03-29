@@ -11,6 +11,7 @@
 #include <seastar/core/future.hh>
 #include "audit/audit.hh"
 #include "seastarx.hh"
+#include <seastar/core/future.hh>
 #include <seastar/core/sharded.hh>
 #include <seastar/util/noncopyable_function.hh>
 
@@ -21,12 +22,15 @@
 #include "db/config.hh"
 
 #include "alternator/error.hh"
-#include "stats.hh"
+#include "alternator/attribute_path.hh"
+#include "alternator/stats.hh"
+#include "alternator/executor_util.hh"
+
 #include "utils/rjson.hh"
 #include "utils/updateable_value.hh"
-#include "utils/simple_value_with_expiry.hh"
 
 #include "tracing/trace_state.hh"
+
 
 namespace db {
     class system_distributed_keyspace;
@@ -67,18 +71,12 @@ class gossiper;
 
 class schema_builder;
 
-#include "alternator/attribute_path.hh"
 
 namespace alternator {
 
 enum class table_status;
 class rmw_operation;
 class put_or_delete_item;
-
-schema_ptr get_table(service::storage_proxy& proxy, const rjson::value& request);
-bool is_alternator_keyspace(const sstring& ks_name);
-// Wraps the db::get_tags_of_table and throws if the table is missing the tags extension.
-const std::map<sstring, sstring>& get_tags_of_table_or_throw(schema_ptr schema);
 
 namespace parsed {
 class expression_cache;
@@ -119,7 +117,6 @@ public:
     // is written in chunks to the output_stream. This allows for efficient
     // handling of large responses without needing to allocate a large buffer
     // in memory.
-    using body_writer = noncopyable_function<future<>(output_stream<char>&&)>;
     using request_return_type = std::variant<std::string, body_writer, api_error>;
     stats _stats;
     // The metric_groups object holds this stat object's metrics registered
@@ -168,15 +165,9 @@ public:
     future<> start();
     future<> stop();
 
-    static sstring table_name(const schema&);
     static db::timeout_clock::time_point default_timeout();
 private:
     static thread_local utils::updateable_value<uint32_t> s_default_timeout_in_ms;
-public:
-    static schema_ptr find_table(service::storage_proxy&, std::string_view table_name);
-    static schema_ptr find_table(service::storage_proxy&, const rjson::value& request);
-
-private:
     friend class rmw_operation;
 
     // Helper to set up auditing for an Alternator operation. Checks whether
@@ -190,7 +181,6 @@ private:
                      const rjson::value& request,
                      std::optional<db::consistency_level> cl = std::nullopt);
 
-    static void describe_key_schema(rjson::value& parent, const schema&, std::unordered_map<std::string,std::string> * = nullptr, const std::map<sstring, sstring> *tags = nullptr);
     future<rjson::value> fill_table_description(schema_ptr schema, table_status tbl_status, service::client_state& client_state, tracing::trace_state_ptr trace_state, service_permit permit);
     future<executor::request_return_type> create_table_on_shard0(service::client_state&& client_state, tracing::trace_state_ptr trace_state, rjson::value request, bool enforce_authorization,
             bool warn_authorization, const db::tablets_mode_t::mode tablets_mode, std::unique_ptr<audit::audit_info_alternator>& audit_info);
@@ -206,61 +196,10 @@ private:
         tracing::trace_state_ptr trace_state, service_permit permit);
 
 public:
-    static void describe_key_schema(rjson::value& parent, const schema& schema, std::unordered_map<std::string,std::string>&, const std::map<sstring, sstring> *tags = nullptr);
-
-    static std::optional<rjson::value> describe_single_item(schema_ptr,
-        const query::partition_slice&,
-        const cql3::selection::selection&,
-        const query::result&,
-        const std::optional<attrs_to_get>&,
-        uint64_t* = nullptr);
-
-    // Converts a multi-row selection result to JSON compatible with DynamoDB.
-    // For each row, this method calls item_callback, which takes the size of
-    // the item as the parameter.
-    static future<std::vector<rjson::value>> describe_multi_item(schema_ptr schema,
-        const query::partition_slice&& slice,
-        shared_ptr<cql3::selection::selection> selection,
-        foreign_ptr<lw_shared_ptr<query::result>> query_result,
-        shared_ptr<const std::optional<attrs_to_get>> attrs_to_get,
-        noncopyable_function<void(uint64_t)> item_callback = {});
-
-    static void describe_single_item(const cql3::selection::selection&,
-        const std::vector<managed_bytes_opt>&,
-        const std::optional<attrs_to_get>&,
-        rjson::value&,
-        uint64_t* item_length_in_bytes = nullptr,
-        bool = false);
-
     static bool add_stream_options(const rjson::value& stream_spec, schema_builder&, service::storage_proxy& sp);
     static void supplement_table_info(rjson::value& descr, const schema& schema, service::storage_proxy& sp);
     static void supplement_table_stream_info(rjson::value& descr, const schema& schema, const service::storage_proxy& sp);
 };
-
-// is_big() checks approximately if the given JSON value is "bigger" than
-// the given big_size number of bytes. The goal is to *quickly* detect
-// oversized JSON that, for example, is too large to be serialized to a
-// contiguous string - we don't need an accurate size for that. Moreover,
-// as soon as we detect that the JSON is indeed "big", we can return true
-// and don't need to continue calculating its exact size.
-// For simplicity, we use a recursive implementation. This is fine because
-// Alternator limits the depth of JSONs it reads from inputs, and doesn't
-// add more than a couple of levels in its own output construction.
-bool is_big(const rjson::value& val, int big_size = 100'000);
-
-// Check CQL's Role-Based Access Control (RBAC) permission (MODIFY,
-// SELECT, DROP, etc.) on the given table. When permission is denied an
-// appropriate user-readable api_error::access_denied is thrown.
-future<> verify_permission(bool enforce_authorization, bool warn_authorization, const service::client_state&, const schema_ptr&, auth::permission, alternator::stats& stats);
-
-/**
- * Make return type for serializing the object "streamed",
- * i.e. direct to HTTP output stream. Note: only useful for
- * (very) large objects as there are overhead issues with this
- * as well, but for massive lists of return objects this can
- * help avoid large allocations/many re-allocs
- */
-executor::body_writer make_streamed(rjson::value&&);
 
 // returns table creation time in seconds since epoch for `db_clock`
 double get_table_creation_time(const schema &schema);
@@ -287,25 +226,4 @@ arn_parts parse_arn(std::string_view arn, std::string_view arn_field_name, std::
 
 // The format is ks1|ks2|ks3... and table1|table2|table3...
 sstring print_names_for_audit(const std::set<sstring>& names);
-
-map_type attrs_type();
-lw_shared_ptr<stats> get_stats_from_schema(service::storage_proxy& sp, const schema& schema);
-std::string view_name(std::string_view table_name, std::string_view index_name,
-        const std::string& delim = ":", bool validate_len = true);
-std::string gsi_name(std::string_view table_name, std::string_view index_name,
-        bool validate_len = true);
-std::string lsi_name(std::string_view table_name, std::string_view index_name,
-        bool validate_len = true);
-std::string get_table_name(const rjson::value& request);
-schema_ptr try_get_internal_table(data_dictionary::database db, std::string_view table_name);
-std::optional<int> get_int_attribute(const rjson::value& value, std::string_view attribute_name);
-bool get_bool_attribute(const rjson::value& value, std::string_view attribute_name, bool default_return);
-void check_key(const rjson::value& key, const schema_ptr& schema);
-schema_ptr get_table_from_batch_request(const service::storage_proxy& proxy, const rjson::value::ConstMemberIterator& batch_request);
-void verify_all_are_used(
-        const rjson::value* field,
-        const std::unordered_set<std::string>& used,
-        const char* field_name,
-        const char* operation);
-
 }

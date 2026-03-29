@@ -21,6 +21,7 @@
 // ConsistentRead, ProjectionExpression, and more.
 
 #include "alternator/executor.hh"
+#include "alternator/executor_util.hh"
 #include "alternator/conditions.hh"
 #include "alternator/expressions.hh"
 #include "alternator/consumed_capacity.hh"
@@ -61,7 +62,7 @@ extern logging::logger elogger; // from executor.cc
 // If we ever fix RapidJSON to avoid contiguous allocations for arrays, or
 // replace it entirely (#24458), we can remove this function and the function
 // rjson::print_with_extra_array() which it calls.
-static executor::body_writer make_streamed_with_extra_array(rjson::value&& value,
+static body_writer make_streamed_with_extra_array(rjson::value&& value,
         std::string array_name, utils::chunked_vector<rjson::value>&& array) {
     return [value = std::move(value), array_name = std::move(array_name), array = std::move(array)](output_stream<char>&& _out) mutable -> future<> {
         auto out = std::move(_out);
@@ -1470,7 +1471,7 @@ static future<executor::request_return_type> query_vector(
                             db::consistency_level::LOCAL_ONE,
                             service::storage_proxy::coordinator_query_options(
                                     timeout, permit, client_state, trace_state));
-            auto opt_item = executor::describe_single_item(base_schema, partition_slice,
+            auto opt_item = describe_single_item(base_schema, partition_slice,
                     *selection, *qr.query_result, *attrs_to_get);
             if (opt_item && (!flt || flt.check(*opt_item))) {
                 ++matched_count;
@@ -1535,7 +1536,7 @@ static future<executor::request_return_type> query_vector(
                             db::consistency_level::LOCAL_ONE,
                             service::storage_proxy::coordinator_query_options(
                                     timeout, permit, client_state, trace_state));
-            auto opt_item = executor::describe_single_item(base_schema, partition_slice,
+            auto opt_item = describe_single_item(base_schema, partition_slice,
                     *selection, *qr.query_result, *attrs_to_get);
             if (opt_item && (!flt || flt.check(*opt_item))) {
                 ++matched_count;
@@ -1686,7 +1687,10 @@ future<executor::request_return_type> executor::query(client_state& client_state
             std::move(filter), opts, client_state, _stats, std::move(trace_state), std::move(permit), _enforce_authorization, _warn_authorization);
 }
 
-future<std::vector<rjson::value>> executor::describe_multi_item(schema_ptr schema,
+// Converts a multi-row selection result to JSON compatible with DynamoDB.
+// For each row, this method calls item_callback, which takes the size of
+// the item as the parameter.
+static future<std::vector<rjson::value>> describe_multi_item(schema_ptr schema,
         const query::partition_slice&& slice,
         shared_ptr<cql3::selection::selection> selection,
         foreign_ptr<lw_shared_ptr<query::result>> query_result,
@@ -1719,7 +1723,7 @@ static rjson::value describe_item(schema_ptr schema,
         const std::optional<attrs_to_get>& attrs_to_get,
         consumed_capacity_counter& consumed_capacity,
         uint64_t& metric) {
-    std::optional<rjson::value> opt_item = executor::describe_single_item(std::move(schema), slice, selection, std::move(query_result), attrs_to_get, &consumed_capacity._total_bytes);
+    std::optional<rjson::value> opt_item = describe_single_item(std::move(schema), slice, selection, std::move(query_result), attrs_to_get, &consumed_capacity._total_bytes);
     rjson::value item_descr = rjson::empty_object();
     if (opt_item) {
         rjson::add(item_descr, "Item", std::move(*opt_item));
@@ -1916,7 +1920,7 @@ future<executor::request_return_type> executor::batch_get_item(client_state& cli
     rjson::value consumed_capacity = rjson::empty_array();
     for (size_t i = 0; i < requests.size(); i++) {
         const table_requests& rs = requests[i];
-        std::string table = table_name(*rs.schema);
+        std::string table = rs.schema->cf_name();
         if (should_audit) {
             table_names.insert(table);
         }

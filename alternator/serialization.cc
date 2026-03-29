@@ -14,12 +14,12 @@
 #include "types/concrete_types.hh"
 #include "types/json_utils.hh"
 #include "mutation/position_in_partition.hh"
+#include "alternator/executor_util.hh"
 
 static logging::logger slogger("alternator-serialization");
 
 namespace alternator {
 
-bool is_alternator_keyspace(const sstring& ks_name);
 
 type_info type_info_from_string(std::string_view type) {
     static thread_local const std::unordered_map<std::string_view, type_info> type_infos = {

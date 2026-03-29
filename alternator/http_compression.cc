@@ -264,7 +264,7 @@ private:
     }
 };
 
-executor::body_writer compress(response_compressor::compression_type ct, const db::config& cfg, executor::body_writer&& bw) {
+body_writer compress(response_compressor::compression_type ct, const db::config& cfg, body_writer&& bw) {
     return [bw = std::move(bw), ct, level = cfg.alternator_response_gzip_compression_level()](output_stream<char>&& out) mutable -> future<> {
         output_stream_options opts;
         opts.trim_to_size = true;
@@ -287,7 +287,7 @@ executor::body_writer compress(response_compressor::compression_type ct, const d
     };
 }
 
-future<std::unique_ptr<http::reply>> response_compressor::generate_reply(std::unique_ptr<http::reply> rep, sstring accept_encoding, const char* content_type, executor::body_writer&& body_writer) {
+future<std::unique_ptr<http::reply>> response_compressor::generate_reply(std::unique_ptr<http::reply> rep, sstring accept_encoding, const char* content_type, body_writer&& body_writer) {
     response_compressor::compression_type ct = find_compression(accept_encoding, std::numeric_limits<size_t>::max());
     if (ct != response_compressor::compression_type::none) {
         rep->add_header("Content-Encoding", get_encoding_name(ct));
