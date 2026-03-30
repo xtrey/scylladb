@@ -898,3 +898,24 @@ struct fmt::formatter<sstables::deletion_time> {
                               dt.marked_for_delete_at, dt.local_deletion_time);
     }
 };
+
+template <>
+struct fmt::formatter<sstables::large_data_type> : fmt::formatter<string_view> {
+    template <typename FormatContext>
+    auto format(sstables::large_data_type type, FormatContext& ctx) const {
+        using enum sstables::large_data_type;
+        switch (type) {
+        case partition_size:
+            return formatter<string_view>::format("partition_size", ctx);
+        case row_size:
+            return formatter<string_view>::format("row_size", ctx);
+        case cell_size:
+            return formatter<string_view>::format("cell_size", ctx);
+        case rows_in_partition:
+            return formatter<string_view>::format("rows_in_partition", ctx);
+        case elements_in_collection:
+            return formatter<string_view>::format("elements_in_collection", ctx);
+        }
+        return formatter<string_view>::format("unknown", ctx);
+    }
+};

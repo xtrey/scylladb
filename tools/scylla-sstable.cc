@@ -1342,17 +1342,6 @@ const char* to_string(sstables::scylla_metadata_type t) {
     std::abort();
 }
 
-const char* to_string(sstables::large_data_type t) {
-    switch (t) {
-        case sstables::large_data_type::partition_size: return "partition_size";
-        case sstables::large_data_type::row_size: return "row_size";
-        case sstables::large_data_type::cell_size: return "cell_size";
-        case sstables::large_data_type::rows_in_partition: return "rows_in_partition";
-        case sstables::large_data_type::elements_in_collection: return "elements_in_collection";
-    }
-    std::abort();
-}
-
 const char* to_string(sstables::ext_timestamp_stats_type t) {
     switch (t) {
         case sstables::ext_timestamp_stats_type::min_live_timestamp: return "min_live_timestamp";
@@ -1440,7 +1429,7 @@ public:
     void operator()(const sstables::scylla_metadata::large_data_stats& val) const {
         _writer.StartObject();
         for (const auto& [k, v] : val.map) {
-            _writer.Key(to_string(k));
+            _writer.Key(fmt::format("{}", k));
             _writer.StartObject();
             _writer.Key("max_value");
             _writer.Uint64(v.max_value);
