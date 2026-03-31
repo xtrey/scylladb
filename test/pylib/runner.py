@@ -33,7 +33,8 @@ from _pytest.junitxml import xml_key
 
 
 from test import ALL_MODES, DEBUG_MODES, TEST_RUNNER, TOP_SRC_DIR, TESTPY_PREPARED_ENVIRONMENT, HOST_ID
-from test.pylib.resource_gather import setup_cgroup, setup_worker_cgroup, get_resource_gather, run_resource_watcher, SCYLLA_TEST_CGROUP_BASE_ENV
+from test.pylib.resource_gather import setup_cgroup, setup_worker_cgroup, get_resource_gather, run_resource_watcher, SCYLLA_TEST_CGROUP_BASE_ENV, gather_host_info
+from test.pylib.db.writer import SQLiteWriter, DEFAULT_DB_NAME, HOST_INFO_TABLE
 from test.pylib.scylla_cluster import merge_cmdline_options
 from test.pylib.suite.base import (
     SUITE_CONFIG_FILENAME,
@@ -277,7 +278,7 @@ def pytest_runtest_logfinish(nodeid: str, location: tuple) -> None:
                 elif call_report.passed:
                     status = "xpassed"
             else:
-                # with xfail_strict = true wasxfail is not present when test is xpassed, so neet to check report
+                # with xfail_strict = true wasxfail is not present when test is xpassed, so need to check report
                 if 'XPASS' in call_report.longreprtext:
                     status = "xpassed"
         else:
@@ -290,6 +291,7 @@ def pytest_runtest_logfinish(nodeid: str, location: tuple) -> None:
         )
     finally:
         resource_gather.teardown_test_tracking()
+
 
 @pytest.fixture(scope=testpy_test_fixture_scope, autouse=True)
 def build_mode(request: pytest.FixtureRequest) -> str:
@@ -373,7 +375,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         if not is_xdist_worker and SCYLLA_TEST_CGROUP_BASE_ENV not in os.environ:
             setup_cgroup(is_required=True)
         setup_worker_cgroup()
-        _future = _thread_pool_executor.submit( run_resource_watcher, gather_metrics, _stop_event,temp_dir)
+        _future = _thread_pool_executor.submit(run_resource_watcher, gather_metrics, _stop_event,temp_dir)
 
 
 
@@ -500,6 +502,20 @@ def pytest_configure(config: pytest.Config) -> None:
         config.run_ids = (testpy_run_id,)
     else:
         config.run_ids = tuple(range(1, repeat + 1))
+
+    # Write host hardware info once, at the very start, before any test preparation.
+    # Done unconditionally (not gated on --gather-metrics) so that the host_info FK
+    # referenced by every other table is always populated, regardless of whether
+    # full metrics collection is enabled.
+    # Only in the main process — xdist workers share the same DB and the same host_id,
+    # so there is nothing new to record.
+    if os.environ.get("PYTEST_XDIST_WORKER") is None:
+        temp_dir = pathlib.Path(config.getoption("--tmpdir")).absolute()
+        writer = SQLiteWriter(temp_dir / DEFAULT_DB_NAME)
+        try:
+            writer.write_row_if_not_exist(gather_host_info(), HOST_INFO_TABLE, id_column="host_id")
+        finally:
+            writer.close()
 
 
 @pytest.hookimpl(wrapper=True)
