@@ -1269,9 +1269,9 @@ future<> cql_server::connection::process_request() {
                             auto extra_units = consume_units(_server._memory_available, extra);
                             mem_permit.adopt(std::move(extra_units));
                         }
-                        write_response(std::move(response), std::move(mem_permit), _compression);
+                        write_response(std::move(response), _compression);
                     }
-                    _ready_to_respond = _ready_to_respond.finally([leave = std::move(leave)] {});
+                    _ready_to_respond = _ready_to_respond.finally([leave = std::move(leave), permit = std::move(mem_permit)] {});
                 } catch (...) {
                     clogger.error("{}: request processing failed: {}",
                                   _client_state.get_remote_address(), std::current_exception());
@@ -2110,9 +2110,9 @@ cql_server::connection::make_client_routes_change_event(const event::client_rout
     return response;
 }
 
-void cql_server::connection::write_response(foreign_ptr<std::unique_ptr<cql_server::response>>&& response, service_permit permit, cql_compression compression)
+void cql_server::connection::write_response(foreign_ptr<std::unique_ptr<cql_server::response>>&& response, cql_compression compression)
 {
-    _ready_to_respond = _ready_to_respond.then([this, compression, response = std::move(response), permit = std::move(permit)] () mutable {
+    _ready_to_respond = _ready_to_respond.then([this, compression, response = std::move(response)] () mutable {
         cql_server::response& r = *response;
         auto del = make_deleter([response = std::move(response)] {});
         return r.write_message(_write_buf, _version, compression, std::move(del));
