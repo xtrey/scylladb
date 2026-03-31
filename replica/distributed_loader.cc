@@ -23,6 +23,7 @@
 #include "db/system_keyspace.hh"
 #include "db/system_distributed_keyspace.hh"
 #include "db/schema_tables.hh"
+#include "service/task_manager_module.hh"
 #include "compaction/compaction_manager.hh"
 #include "compaction/task_manager_module.hh"
 #include "sstables/sstables.hh"
@@ -101,9 +102,9 @@ distributed_loader::lock_table(global_table_ptr& table, sharded<sstables::sstabl
 //  - The second part calls each shard's distributed object to reshard the SSTables they were
 //    assigned.
 future<>
-distributed_loader::reshard(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, compaction::compaction_sstable_creator_fn creator, compaction::owned_ranges_ptr owned_ranges_ptr, bool vnodes_resharding) {
+distributed_loader::reshard(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, compaction::compaction_sstable_creator_fn creator, compaction::owned_ranges_ptr owned_ranges_ptr, bool vnodes_resharding, tasks::task_info parent_info) {
     auto& compaction_module = db.local().get_compaction_manager().get_task_manager_module();
-    auto task = co_await compaction_module.make_and_start_task<compaction::table_resharding_compaction_task_impl>({}, std::move(ks_name), std::move(table_name), dir, db, std::move(creator), std::move(owned_ranges_ptr), vnodes_resharding);
+    auto task = co_await compaction_module.make_and_start_task<compaction::table_resharding_compaction_task_impl>(parent_info, std::move(ks_name), std::move(table_name), parent_info.id, dir, db, std::move(creator), std::move(owned_ranges_ptr), vnodes_resharding);
     co_await task->done();
 }
 
@@ -407,6 +408,7 @@ future<> table_populator::populate_subdir(sharded<sstables::sstable_directory>& 
     bool vnodes_resharding = _migration_direction == migration_direction::forward;
     dblog.debug("Populating {}/{}/{} state={} resharding_mode={}", _ks, _cf, _global_table->get_storage_options(), state, vnodes_resharding ? "vnodes-to-tablets" : "normal");
 
+    tasks::task_info parent_info;
     compaction::owned_ranges_ptr owned_ranges_ptr = nullptr;
 
     if (vnodes_resharding) {
@@ -421,13 +423,17 @@ future<> table_populator::populate_subdir(sharded<sstables::sstable_directory>& 
         owned_ranges_ptr = compaction::make_owned_ranges_ptr(std::move(ranges));
     }
 
+    if (_migration_direction != migration_direction::none) {
+        parent_info = tasks::task_info(service::vnodes_to_tablets::migration_virtual_task::make_task_id(_ks), 0);
+    }
+
     co_await distributed_loader::reshard(directory, _db, _ks, _cf, [this, state] (shard_id shard) mutable {
         auto gen = smp::submit_to(shard, [this] () {
             return _global_table->calculate_generation_for_new_table();
         }).get();
 
         return make_sstable(*_global_table, state, gen, _version_for_reshaping);
-    }, owned_ranges_ptr, vnodes_resharding);
+    }, owned_ranges_ptr, vnodes_resharding, parent_info);
 
     // The node is offline at this point so we are very lenient with what we consider
     // offstrategy.

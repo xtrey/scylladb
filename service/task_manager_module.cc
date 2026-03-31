@@ -581,6 +581,11 @@ future<std::optional<tasks::task_status>> migration_virtual_task::get_status(tas
     auto task_state = tasks::task_manager::task_state::running;
     auto task_progress = tasks::task_manager::task::progress{nodes_upgraded, total_nodes};
 
+    // Note: Children are left empty. Although the resharding tasks are children
+    // of the migration task, using get_children() here would be pointless
+    // because resharding runs during startup before start_listen() is called,
+    // so the RPC fan-out to collect children from all nodes (including self)
+    // would fail.
     co_return make_task_status(id, *ks_name, task_state, task_progress);
 }
 

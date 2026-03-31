@@ -101,8 +101,8 @@ public:
     virtual future<std::optional<tasks::task_status>> wait(tasks::task_id id, tasks::virtual_task_hint hint) override;
     virtual future<> abort(tasks::task_id id, tasks::virtual_task_hint hint) noexcept override;
     virtual future<std::vector<tasks::task_stats>> get_stats() override;
-private:
     static tasks::task_id make_task_id(const sstring& keyspace);
+private:
     std::optional<sstring> find_keyspace_for_task_id(tasks::task_id id) const;
     static tasks::task_stats make_task_stats(tasks::task_id id, const sstring& keyspace);
     static tasks::task_status make_task_status(tasks::task_id id, const sstring& keyspace,
