@@ -30,6 +30,7 @@ import time
 
 from cassandra.protocol import InvalidRequest, ConfigurationException
 
+from test.pylib.skip_types import skip_env
 from .util import unique_name, new_test_table
 
 # check_af_optional() and check_af_mandatory() are utility functions for
@@ -515,7 +516,7 @@ def test_allow_filtering_index_intersection_sai(cql, test_keyspace, cassandra_bu
             cql.execute(f"CREATE CUSTOM INDEX ON {table}(x) USING 'SAI'")
             cql.execute(f"CREATE CUSTOM INDEX ON {table}(y) USING 'SAI'")
         except (InvalidRequest, ConfigurationException):
-            pytest.skip('SAI test skipped, SAI not supported')
+            skip_env('SAI test skipped, SAI not supported')
         cql.execute(f'INSERT INTO {table}(p, x, y) VALUES (0, 0, 0)')
         cql.execute(f'INSERT INTO {table}(p, x, y) VALUES (1, 0, 1)')
         cql.execute(f'INSERT INTO {table}(p, x, y) VALUES (2, 1, 0)')

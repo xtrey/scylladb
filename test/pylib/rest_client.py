@@ -19,6 +19,8 @@ import pytest
 from aiohttp import request, BaseConnector, UnixConnector, ClientTimeout
 from cassandra.pool import Host                          # type: ignore # pylint: disable=no-name-in-module
 
+from test.pylib.skip_types import skip_env
+
 from test.pylib.internal_types import IPAddress, HostID
 from test.pylib.util import universalasync_typed_wrap
 
@@ -710,7 +712,7 @@ async def inject_error(api: ScyllaRESTAPIClient, node_ip: IPAddress, injection: 
     enabled = await api.get_enabled_injections(node_ip)
     logging.info(f"Error injections enabled on {node_ip}: {enabled}")
     if not enabled:
-        pytest.skip("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
+        skip_env("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
     try:
         yield InjectionHandler(api, injection, node_ip)
     finally:
@@ -727,7 +729,7 @@ async def inject_error_one_shot(api: ScyllaRESTAPIClient, node_ip: IPAddress, in
     enabled = await api.get_enabled_injections(node_ip)
     logging.info(f"Error injections enabled on {node_ip}: {enabled}")
     if not enabled:
-        pytest.skip("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
+        skip_env("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
     return InjectionHandler(api, injection, node_ip)
 
 

@@ -37,6 +37,7 @@ from test.cluster.dtest.tools.data import rows_to_list, run_in_parallel
 
 from test.pylib.manager_client import ManagerClient
 from test.pylib.rest_client import read_barrier
+from test.pylib.skip_types import skip_env
 from test.pylib.util import wait_for as wait_for_async
 from test.pylib.scylla_cluster import ScyllaVersionDescription
 
@@ -1414,7 +1415,7 @@ class CQLAuditTester(AuditTester):
                 if not common:
                     insert_addr = all_addresses - partitions - audit_nodes
                     if len(all_addresses) != 7 or len(partitions) != 3 or len(audit_nodes) != 3 or len(insert_addr) != 1:
-                        raise pytest.skip("Failed to assign nodes for insert failure test")
+                        skip_env("Failed to assign nodes for insert failure test")
                     audit_partition_servers = [address_to_server[addr] for addr in audit_nodes]
                     insert_server = address_to_server[insert_addr.pop()]
                     kill_server = address_to_server[partitions.pop()]
@@ -1452,7 +1453,7 @@ class CQLAuditTester(AuditTester):
                 await self.manager.get_host_id(srv.server_id)
 
         if len(audit_partition_servers) != 3 or server_to_stop is None or insert_server is None:
-            raise pytest.skip("Failed to assign nodes for insert failure test")
+            skip_env("Failed to assign nodes for insert failure test")
 
         for srv in audit_partition_servers:
             logger.debug(f"audit_partition_server: {srv.server_id} {srv.ip_addr}")

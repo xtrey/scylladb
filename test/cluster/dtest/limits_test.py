@@ -11,6 +11,8 @@ import pytest
 
 from dtest_class import Tester, create_ks
 
+from test.pylib.skip_types import skip_env
+
 logger = logging.getLogger(__name__)
 # Those are ideal values according to c* specifications
 # they should pass
@@ -271,7 +273,7 @@ class TestLimits(Tester):
 
     def test_max_cells(self):
         if self.cluster.scylla_mode == "debug":
-            pytest.skip("client times out in debug mode")
+            skip_env("client times out in debug mode")
         cluster = self.prepare()
         cluster.set_configuration_options(values={"query_tombstone_page_limit": 9999999, "batch_size_warn_threshold_in_kb": 1024 * 1024, "batch_size_fail_threshold_in_kb": 1024 * 1024, "commitlog_segment_size_in_mb": 64})
         cluster.populate(1).start(jvm_args=["--smp", "1", "--memory", "2G", "--logger-log-level", "lsa-timing=debug"])

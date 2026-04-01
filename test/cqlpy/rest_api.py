@@ -11,6 +11,8 @@ from . import nodetool
 import pytest
 from contextlib import contextmanager
 
+from test.pylib.skip_types import skip_env
+
 # Sends GET request to REST API. Response is returned as JSON.
 # If API isn't available, `pytest.skip()` is called.
 def get_request(cql, *path):
@@ -18,7 +20,7 @@ def get_request(cql, *path):
         response = requests.get(f"{nodetool.rest_api_url(cql)}/{'/'.join(path)}")
         return response.json()
     else:
-        pytest.skip("REST API not available")
+        skip_env("REST API not available")
 
 # Sends POST request to REST API. Response is returned as JSON or None
 # if the response body was empty (this is typical).
@@ -30,7 +32,7 @@ def post_request(cql, *path):
             return None
         return response.json()
     else:
-        pytest.skip("REST API not available")
+        skip_env("REST API not available")
 
 # Sends DELETE request to REST API. Response is returned as JSON or None
 # if the response body was empty (this is typical).
@@ -42,7 +44,7 @@ def delete_request(cql, *path):
             return None
         return response.json()
     else:
-        pytest.skip("REST API not available")
+        skip_env("REST API not available")
 
 
 # Get column family's metric.
@@ -70,7 +72,7 @@ def scylla_inject_error(cql, err, one_shot=False):
     response = get_request(cql, f'v2/error_injection/injection')
     print("Enabled error injections:", response)
     if not err in response:
-        pytest.skip("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
+        skip_env("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
     try:
         yield
     finally:

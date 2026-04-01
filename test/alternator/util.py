@@ -14,6 +14,8 @@ import pytest
 from contextlib import contextmanager
 from botocore.hooks import HierarchicalEmitter
 
+from test.pylib.skip_types import skip_env
+
 # The "pytest-randomly" pytest plugins modifies the default "random" to repeat
 # the same pseudo-random sequence (with the same seed) in each separate test.
 # But we currently rely on random_string() at al. to return unique keys that
@@ -247,7 +249,7 @@ def scylla_inject_error(rest_api, err, one_shot=False):
     response = requests.get(f'{rest_api}/v2/error_injection/injection')
     print("Enabled error injections:", response.content.decode('utf-8'))
     if response.content.decode('utf-8') == "[]":
-        pytest.skip("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
+        skip_env("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
     try:
         yield
     finally:

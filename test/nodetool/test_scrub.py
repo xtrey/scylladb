@@ -9,6 +9,7 @@ import pytest
 
 from test.nodetool.utils import check_nodetool_fails_with
 from test.nodetool.rest_api_mock import expected_request
+from test.pylib.skip_types import skip_env
 
 
 class scrub_status(enum.Enum):
@@ -81,7 +82,7 @@ def test_scrub_options(request, nodetool, table, mode, quarantine_mode, disable_
             args += list(quarantine_mode)
             expected_params["quarantine_mode"] = quarantine_mode[1]
         else:
-            pytest.skip("--quarantine-mode only supported by scylla-nodetool")
+            skip_env("--quarantine-mode only supported by scylla-nodetool")
 
     if disable_snapshot:
         args.append(disable_snapshot)

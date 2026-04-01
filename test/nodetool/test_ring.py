@@ -11,6 +11,7 @@ from socket import getnameinfo
 import pytest
 from test.nodetool.rest_api_mock import expected_request
 from test.nodetool.utils import format_size, check_nodetool_fails_with
+from test.pylib.skip_types import skip_env
 
 
 null_ownership_error = ("Non-system keyspaces don't have the same replication settings, "
@@ -73,7 +74,7 @@ def test_ring(request, nodetool, keyspace_table, resolve_ip, host_status, host_s
         keyspace, table = keyspace_table, None
 
     if uses_cassandra_nodetool and table is not None:
-        pytest.skip("skipping tablets-related test with Cassandra nodetool")
+        skip_env("skipping tablets-related test with Cassandra nodetool")
 
     host = Host('dc0', 'rack0', '127.0.0.1', host_status, host_state,
                 6414780.0, 1.0,

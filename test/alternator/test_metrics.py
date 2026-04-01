@@ -36,6 +36,7 @@ from botocore.exceptions import ClientError
 from test.alternator.test_cql_rbac import new_dynamodb, new_role
 from test.alternator.util import random_string, new_test_table, is_aws, scylla_config_read, scylla_config_temporary, get_signed_request
 from test.alternator.test_vector import vs
+from test.pylib.skip_types import skip_env
 
 # Fixture for checking if we are able to test Scylla metrics. Scylla metrics
 # are not available on AWS (of course), but may also not be available for
@@ -46,7 +47,7 @@ from test.alternator.test_vector import vs
 @pytest.fixture(scope="module")
 def metrics(dynamodb):
     if is_aws(dynamodb):
-        pytest.skip('Scylla-only feature not supported by AWS')
+        skip_env('Scylla-only feature not supported by AWS')
     url = dynamodb.meta.client._endpoint.host
     # The Prometheus API is on port 9180, and always http, not https.
     url = re.sub(r':[0-9]+(/|$)', ':9180', url)
@@ -54,7 +55,7 @@ def metrics(dynamodb):
     url = url + '/metrics'
     resp = requests.get(url)
     if resp.status_code != 200:
-        pytest.skip('Metrics port 9180 is not available')
+        skip_env('Metrics port 9180 is not available')
     yield url
 
 # Utility function for fetching all metrics from Scylla, using an HTTP request
@@ -891,15 +892,15 @@ def test_total_operations(dynamodb, metrics):
 def alternator_ttl_period_in_seconds(dynamodb, request):
     # If not running on Scylla, skip the test
     if is_aws(dynamodb):
-        pytest.skip('Scylla-only test skipped')
+        skip_env('Scylla-only test skipped')
     # In Scylla, we can inspect the configuration via a system table
     # (which is also visible in Alternator)
     period = scylla_config_read(dynamodb, 'alternator_ttl_period_in_seconds')
     if period is None:
-        pytest.skip('missing TTL feature, skipping test')
+        skip_env('missing TTL feature, skipping test')
     period = float(period)
     if period > 1 and not request.config.getoption('runveryslow'):
-        pytest.skip('need --runveryslow option to run')
+        skip_env('need --runveryslow option to run')
     return period
 
 # Test metrics of the background expiration thread run for Alternator's TTL

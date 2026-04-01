@@ -10,6 +10,7 @@
 
 from ...porting import *
 from cassandra.connection import DRIVER_NAME, DRIVER_VERSION
+from test.pylib.skip_types import skip_env
 
 # Some of the lines in these tests are commented out because Scylla doesn't support arithmetic operations in literals (issue #2693).
 
@@ -18,7 +19,7 @@ def skip_if_driver_doesnt_support_variable_width_types():
     scylla_driver = 'Scylla' in DRIVER_NAME
     driver_version = tuple(int(x) for x in DRIVER_VERSION.split('.'))
     if scylla_driver or (not scylla_driver and driver_version < (3, 29, 2)):
-        pytest.skip("The driver doesn't support variable width types in vectors.")
+        skip_env("The driver doesn't support variable width types in vectors.")
 
 def test_select(cql, test_keyspace):
     with create_table(cql, test_keyspace, "(pk vector<int, 2> primary key)") as table:

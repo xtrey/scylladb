@@ -32,6 +32,7 @@ import re
 
 from cassandra import InvalidRequest
 
+from test.pylib.skip_types import skip_env
 from .util import new_test_keyspace, new_test_table, local_process_id
 from .test_batch import generate_big_batch
 
@@ -48,18 +49,18 @@ from .test_batch import generate_big_batch
 def logfile_path(cql):
     pid = local_process_id(cql)
     if not pid:
-        pytest.skip("Can't find local process")
+        skip_env("Can't find local process")
     # Now that we know the process id, use /proc to find if its standard
     # output is redirected to a file. If it is, that's the log file. If it
     # isn't a file, we don't where the user is piping the log.
     try:
         log = os.readlink(f'/proc/{pid}/fd/1')
     except:
-        pytest.skip("Can't find local log file")
+        skip_env("Can't find local log file")
     # If the process's standard output is some pipe or device, it's
     # not the log file we were hoping for...
     if not log.startswith('/') or not os.path.isfile(log):
-        pytest.skip("Can't find local log file")
+        skip_env("Can't find local log file")
     # Scylla can be configured to put the log in syslog, not in the standard
     # output. So let's verify that the file which we found actually looks
     # like a Scylla log and isn't just empty or something... The Scylla log
@@ -67,7 +68,7 @@ def logfile_path(cql):
     with open(log, 'r') as f:
         head = f.read(7)
         if head != 'Scylla ':
-            pytest.skip("Not a Scylla log file")
+            skip_env("Not a Scylla log file")
         yield log
 
 # The "logfile" fixture returns the log file open for reading at the end.

@@ -13,6 +13,7 @@ from decimal import Decimal
 import pytest
 from botocore.exceptions import ClientError
 
+from test.pylib.skip_types import skip_env
 from .util import new_test_table, random_string, full_query, unique_table_name, is_aws, client_no_transform, multiset, scylla_config_read
 
 # The following fixture is to ensure that Alternator TTL is being tested with both vnodes and tablets.
@@ -70,12 +71,12 @@ def waits_for_expiration(dynamodb, request):
         if request.config.getoption('runveryslow'):
             return
         else:
-            pytest.skip('need --runveryslow option to run')
+            skip_env('need --runveryslow option to run')
     period = scylla_config_read(dynamodb, 'alternator_ttl_period_in_seconds')
     assert period is not None
     period = float(period)
     if period > 1 and not request.config.getoption('runveryslow'):
-        pytest.skip('need --runveryslow option to run')
+        skip_env('need --runveryslow option to run')
 
 # The veryslow_on_aws says that this test is very slow on AWS, but
 # always reasonably fast on Scylla. If fastness on Scylla requires a
@@ -84,7 +85,7 @@ def waits_for_expiration(dynamodb, request):
 @pytest.fixture(scope="module")
 def veryslow_on_aws(dynamodb, request):
     if is_aws(dynamodb) and not request.config.getoption('runveryslow'):
-        pytest.skip('need --runveryslow option to run')
+        skip_env('need --runveryslow option to run')
 
 # Test the DescribeTimeToLive operation on a table where the time-to-live
 # feature was *not* enabled.

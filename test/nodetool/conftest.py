@@ -20,6 +20,7 @@ from test import TOP_SRC_DIR, path_to
 from test.nodetool.rest_api_mock import set_expected_requests, expected_request, get_expected_requests, \
     get_unexpected_requests, expected_requests_manager
 from test.pylib.db.model import Test
+from test.pylib.skip_types import skip_env
 
 
 def pytest_addoption(parser):
@@ -185,13 +186,13 @@ def nodetool_path(request, build_mode):
 @pytest.fixture(scope="function")
 def scylla_only(request):
     if request.config.getoption("nodetool") != "scylla":
-        pytest.skip('Scylla-only test skipped')
+        skip_env('Scylla-only test skipped')
 
 
 @pytest.fixture(scope="function")
 def cassandra_only(request):
     if request.config.getoption("nodetool") != "cassandra":
-        pytest.skip('Cassandra-only test skipped')
+        skip_env('Cassandra-only test skipped')
 
 def split_list(l, delim):
     before = []

@@ -4,6 +4,8 @@ import threading
 
 from contextlib import contextmanager
 
+from test.pylib.skip_types import skip_env
+
 # A utility function for creating a new temporary snapshot.
 # If no keyspaces are given, a snapshot is taken over all keyspaces and tables.
 # If no tables are given, a snapshot is taken over all tables in the keyspace.
@@ -51,7 +53,7 @@ def scylla_inject_error(rest_api, err, one_shot=False):
     assert response.ok
     print("Enabled error injections:", response.content.decode('utf-8'))
     if response.content.decode('utf-8') == "[]":
-        pytest.skip("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
+        skip_env("Error injection not enabled in Scylla - try compiling in dev/debug/sanitize mode")
     try:
         yield
     finally:

@@ -22,6 +22,7 @@ import pytest
 import requests
 
 from test.alternator.util import random_string, full_scan, full_query, create_test_table, scylla_config_temporary
+from test.pylib.skip_types import skip_env
 
 
 # The "with_tracing" fixture ensures that tracing is enabled throughout
@@ -35,15 +36,15 @@ from test.alternator.util import random_string, full_scan, full_query, create_te
 def with_tracing(rest_api):
     probability_resp = requests.get(rest_api+'/storage_service/trace_probability')
     if probability_resp.status_code != 200:
-        pytest.skip('Failed to fetch tracing probability')
+        skip_env('Failed to fetch tracing probability')
     probability = probability_resp.text
     response = requests.post(rest_api+'/storage_service/trace_probability?probability=1')
     if response.status_code != 200:
-        pytest.skip('Failed to enable tracing')
+        skip_env('Failed to enable tracing')
     # verify that tracing is really enabled
     response = requests.get(rest_api+'/storage_service/trace_probability')
     if response.status_code != 200 or response.content.decode('utf-8') != '1':
-        pytest.skip('Failed to verify tracing')
+        skip_env('Failed to verify tracing')
     yield
     print("with_tracing restoring tracing")
     response = requests.post(rest_api+'/storage_service/trace_probability?probability='+probability)
@@ -51,7 +52,7 @@ def with_tracing(rest_api):
         pytest.fail('Failed to disable tracing after with_tracing test')
     response = requests.get(rest_api+'/storage_service/trace_probability')
     if response.status_code != 200 or response.content.decode('utf-8') != '0':
-        pytest.skip('Failed to verify tracing disabled')
+        skip_env('Failed to verify tracing disabled')
 
 # Similarly to the fixture above, slow query logging is enabled only for the run of the
 # test function. Slow logging is set up with threshold equal to 0 microseconds,
@@ -61,22 +62,22 @@ def with_slow_query_logging(rest_api):
     print("with_slow_query_logging enabling slow query logging")
     slow_query_info = requests.get(rest_api+'/storage_service/slow_query')
     if slow_query_info.status_code != 200:
-        pytest.skip('Failed to fetch slow query logging info')
+        skip_env('Failed to fetch slow query logging info')
     slow_query_json = json.loads(slow_query_info.text)
     print(slow_query_json)
     response = requests.post(rest_api+'/storage_service/slow_query?enable=true')
     if response.status_code != 200:
-        pytest.skip('Failed to enable slow query logging')
+        skip_env('Failed to enable slow query logging')
     response = requests.post(rest_api+'/storage_service/slow_query?threshold=0')
     if response.status_code != 200:
-        pytest.skip('Failed to enable slow query logging threshold')
+        skip_env('Failed to enable slow query logging threshold')
     # verify that logging is really enabled
     response = requests.get(rest_api+'/storage_service/slow_query')
     if response.status_code != 200:
-        pytest.skip('Failed to verify slow query logging')
+        skip_env('Failed to verify slow query logging')
     response_json = json.loads(response.text)
     if response_json['enable'] != True or response_json['threshold'] != 0:
-        pytest.skip('Failed to verify slow query logging values')
+        skip_env('Failed to verify slow query logging values')
     print(response_json)
     yield
     print("with_slow_query_logging restoring slow query logging")
