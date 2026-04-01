@@ -576,7 +576,7 @@ def test_UDA(cql, test_keyspace, table1, scylla_with_wasm_only, metrics):
 # FIXME: shorten the wait time when such configuration becomes possible
 
 # The function grows the memory by n pages and returns n.
-@pytest.mark.skip(reason="slow test, remove skip to try it anyway")
+@pytest.mark.skip_slow(reason="slow test, remove skip to try it anyway")
 def test_mem_grow(cql, test_keyspace, table1, scylla_with_wasm_only, metrics):
     table = table1
     mem_grow_name = "mem_grow_" + unique_name()
