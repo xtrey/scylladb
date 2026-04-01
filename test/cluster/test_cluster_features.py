@@ -181,7 +181,7 @@ async def test_downgrade_after_successful_upgrade_fails(manager: ManagerClient) 
             expected_error=f"Feature '{TEST_FEATURE_NAME}' was previously enabled in the cluster")
 
 
-@pytest.mark.skip(reason="issue #14194")
+@pytest.mark.skip_bug(reason="issue #14194")
 @pytest.mark.asyncio
 async def test_partial_upgrade_can_be_finished_with_removenode(manager: ManagerClient) -> None:
     """Upgrades all but one node in the cluster to enable the test feature.

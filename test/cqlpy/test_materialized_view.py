@@ -430,7 +430,7 @@ def test_oversized_base_regular_view_key(cql, test_keyspace, cassandra_bug):
 # This test currently breaks the build (it repeats a failing build step,
 # and never complete) and we cannot quickly recognize this failure, so
 # to avoid a very slow failure, we currently "skip" this test.
-@pytest.mark.skip(reason="issue #8627, fails very slow")
+@pytest.mark.skip_bug(reason="issue #8627, fails very slow")
 def test_oversized_base_regular_view_key_build(cql, test_keyspace, cassandra_bug):
     with new_test_table(cql, test_keyspace, 'p int primary key, v text') as table:
         # No materialized view yet - a "big" value in v is perfectly fine:

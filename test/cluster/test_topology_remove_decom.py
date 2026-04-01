@@ -71,7 +71,7 @@ async def test_decommission_node_add_column(manager: ManagerClient, random_table
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Wait for @slow attribute, #11713")
+@pytest.mark.skip_bug(reason="Wait for @slow attribute, #11713")
 async def test_remove_node_with_concurrent_ddl(manager: ManagerClient, random_tables: RandomTables):
     stopped = False
     ddl_failed = False
