@@ -8,6 +8,7 @@ Each only checks that the command does not fail - but not what it does or return
 
 import pytest
 
+from test.pylib.skip_types import skip_bug
 from test.scylla_gdb.conftest import execute_gdb_command
 
 pytestmark = [
@@ -34,7 +35,7 @@ def test_coroutine_frame(gdb_cmd):
     )
     if "COROUTINE_NOT_FOUND" in result.stdout:
         # See https://github.com/scylladb/scylladb/issues/22501
-        pytest.skip("Failed to find coroutine task. Skipping test.")
+        skip_bug("Failed to find coroutine task. Skipping test. https://github.com/scylladb/scylladb/issues/22501")
     assert result.returncode == 0, (
         f"GDB command `coro_frame` failed. stdout: {result.stdout} stderr: {result.stderr}"
     )
