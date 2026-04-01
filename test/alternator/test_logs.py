@@ -88,7 +88,7 @@ def local_process_id(ip, port):
 
 # A fixture to find the Scylla log file, returning the log file's path.
 # If the log file cannot be found, or it's not Scylla, the fixture calls
-# pytest.skip() to skip any test which uses it. The fixture has module
+# skip_env() to skip any test which uses it. The fixture has module
 # scope, so looking for the log file only happens once. Individual tests
 # should use the function-scope fixture "logfile" below, which takes care
 # of opening the log file for reading in the right place.

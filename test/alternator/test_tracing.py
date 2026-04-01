@@ -27,8 +27,8 @@ from test.pylib.skip_types import skip_env
 
 # The "with_tracing" fixture ensures that tracing is enabled throughout
 # the run of a test function, and disabled when it ends. If tracing cannot be
-# enabled, the test is pytest.skip()ed. This will of course happens if we run
-# the test with "--aws" (tracing is a Scylla-only feature).
+# enabled, the test is skipped via skip_env(). This will of course happens
+# if we run the test with "--aws" (tracing is a Scylla-only feature).
 # Note that to support (in the future) the ability for Alternator tests to
 # run in parallel, the tests here need to be prepared that completely
 # unrelated requests get traced during a test with with_tracing.

@@ -204,7 +204,7 @@ def random_seed():
 # to the address and port to which our our CQL connection is connected.
 # If such a process exists, we verify that it is Scylla, and return the
 # executable's path. If we can't find the Scylla executable we use
-# pytest.skip() to skip tests relying on this executable.
+# skip_env() to skip tests relying on this executable.
 @pytest.fixture(scope=dynamic_scope())
 def scylla_path(cql):
     pid = local_process_id(cql)

@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from test.pylib.skip_types import skip_env
 
 # Sends GET request to REST API. Response is returned as JSON.
-# If API isn't available, `pytest.skip()` is called.
+# If API isn't available, `skip_env()` is called.
 def get_request(cql, *path):
     if nodetool.has_rest_api(cql):
         response = requests.get(f"{nodetool.rest_api_url(cql)}/{'/'.join(path)}")
@@ -24,7 +24,7 @@ def get_request(cql, *path):
 
 # Sends POST request to REST API. Response is returned as JSON or None
 # if the response body was empty (this is typical).
-# If API isn't available, `pytest.skip()` is called.
+# If API isn't available, `skip_env()` is called.
 def post_request(cql, *path):
     if nodetool.has_rest_api(cql):
         response = requests.post(f"{nodetool.rest_api_url(cql)}/{'/'.join(path)}")
@@ -36,7 +36,7 @@ def post_request(cql, *path):
 
 # Sends DELETE request to REST API. Response is returned as JSON or None
 # if the response body was empty (this is typical).
-# If API isn't available, `pytest.skip()` is called.
+# If API isn't available, `skip_env()` is called.
 def delete_request(cql, *path):
     if nodetool.has_rest_api(cql):
         response = requests.delete(f"{nodetool.rest_api_url(cql)}/{'/'.join(path)}")
