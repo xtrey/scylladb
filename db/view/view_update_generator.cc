@@ -240,6 +240,9 @@ future<> view_update_generator::process_staging_sstables(lw_shared_ptr<replica::
             _progress_tracker->on_sstable_registration(sst);
         }
 
+        utils::get_local_injector().inject("view_update_generator_pause_before_processing",
+                utils::wait_for_message(std::chrono::minutes(5))).get();
+
         // Generate view updates from staging sstables
         auto start_time = db_clock::now();
         auto [result, input_size] = generate_updates_from_staging_sstables(table, sstables);

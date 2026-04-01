@@ -269,6 +269,10 @@ public:
     // Gets the view a sstable currently belongs to.
     compaction::compaction_group_view& view_for_sstable(const sstables::shared_sstable& sst) const;
     utils::small_vector<compaction::compaction_group_view*, 3> all_views() const;
+    // Returns true iff v is the repaired view of this compaction group.
+    bool is_repaired_view(const compaction::compaction_group_view* v) const noexcept;
+    // Returns an sstable set containing only repaired sstables (those classified as repaired).
+    lw_shared_ptr<sstables::sstable_set> make_repaired_sstable_set() const;
 
     seastar::condition_variable& get_staging_done_condition() noexcept {
         return _staging_done_condition;
@@ -404,6 +408,8 @@ public:
 
     // Make an sstable set spanning all sstables in the storage_group
     lw_shared_ptr<const sstables::sstable_set> make_sstable_set() const;
+    // Like make_sstable_set(), but restricted to repaired sstables only across all compaction groups.
+    lw_shared_ptr<const sstables::sstable_set> make_repaired_sstable_set() const;
 
     future<utils::chunked_vector<logstor::segment_snapshot>> take_logstor_snapshot() const;
 

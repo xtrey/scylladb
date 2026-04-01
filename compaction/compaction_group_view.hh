@@ -39,6 +39,9 @@ public:
     virtual future<lw_shared_ptr<const sstables::sstable_set>> main_sstable_set() const = 0;
     virtual future<lw_shared_ptr<const sstables::sstable_set>> maintenance_sstable_set() const = 0;
     virtual lw_shared_ptr<const sstables::sstable_set> sstable_set_for_tombstone_gc() const = 0;
+    // Returns true when tombstone GC considers only the repaired sstable set, meaning the
+    // memtable does not need to be consulted (its data is always newer than any GC-eligible tombstone).
+    virtual bool skip_memtable_for_tombstone_gc() const noexcept = 0;
     virtual std::unordered_set<sstables::shared_sstable> fully_expired_sstables(const std::vector<sstables::shared_sstable>& sstables, gc_clock::time_point compaction_time) const = 0;
     virtual const std::vector<sstables::shared_sstable>& compacted_undeleted_sstables() const noexcept = 0;
     virtual compaction_strategy& get_compaction_strategy() const noexcept = 0;

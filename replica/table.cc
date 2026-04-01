@@ -1203,9 +1203,33 @@ future<utils::chunked_vector<logstor::segment_snapshot>> storage_group::take_log
     co_return std::move(snp);
 }
 
+lw_shared_ptr<const sstables::sstable_set> storage_group::make_repaired_sstable_set() const {
+    if (_split_ready_groups.empty() && _merging_groups.empty()) {
+        return _main_cg->make_repaired_sstable_set();
+    }
+    const auto& schema = _main_cg->_t.schema();
+    std::vector<lw_shared_ptr<sstables::sstable_set>> underlying;
+    underlying.reserve(1 + _merging_groups.size() + _split_ready_groups.size());
+    underlying.emplace_back(_main_cg->make_repaired_sstable_set());
+    for (const auto& cg : _merging_groups) {
+        if (!cg->empty()) {
+            underlying.emplace_back(cg->make_repaired_sstable_set());
+        }
+    }
+    for (const auto& cg : _split_ready_groups) {
+        underlying.emplace_back(cg->make_repaired_sstable_set());
+    }
+    return make_lw_shared(sstables::make_compound_sstable_set(schema, std::move(underlying)));
+}
+
 lw_shared_ptr<const sstables::sstable_set> table::sstable_set_for_tombstone_gc(const compaction_group& cg) const {
     auto& sg = storage_group_for_id(cg.group_id());
     return sg.make_sstable_set();
+}
+
+lw_shared_ptr<const sstables::sstable_set> table::make_repaired_sstable_set_for_tombstone_gc(const compaction_group& cg) const {
+    auto& sg = storage_group_for_id(cg.group_id());
+    return sg.make_repaired_sstable_set();
 }
 
 bool tablet_storage_group_manager::all_storage_groups_split() {
@@ -3000,8 +3024,46 @@ public:
     future<lw_shared_ptr<const sstables::sstable_set>> maintenance_sstable_set() const override {
         return make_sstable_set_for_this_view(_cg.maintenance_sstables(), [this] { return *_cg.make_maintenance_sstable_set(); });
     }
+private:
+    // Returns true when tombstone GC is restricted to the repaired set:
+    // tombstone_gc=repair mode and this view is the repaired view.
+    //
+    // The optimization is safe for materialized view tables as well as base tables.
+    // The key invariant for MV: MV tablet repair calls flush_hints() before
+    // take_storage_snapshot().  flush_hints() creates a sync point that covers BOTH
+    // _hints_manager (base mutations) AND _hints_for_views_manager (view mutations).
+    // It waits until all pending hints — including any D_view hint stored in
+    // _hints_for_views_manager while the target node was down — have been replayed
+    // to the target node.  Only then is take_storage_snapshot() called, which flushes
+    // the MV memtable and captures D_view in the repairing sstable.  After repair
+    // completes, D_view is in the repaired set.
+    //
+    // If a subsequent base repair later replays a D_base hint that causes another
+    // D_view write (same key and timestamp), it is a no-op duplicate: the original
+    // D_view already in the repaired set still prevents T_mv from being purged.
+    //
+    // USING TIMESTAMP with timestamps predating (gc_before + propagation_delay) is
+    // explicitly UB and excluded from the safety argument.
+    bool is_tombstone_gc_repaired_only() const noexcept {
+        return _cg.is_repaired_view(this) &&
+               _t.schema()->tombstone_gc_options().mode() == tombstone_gc_mode::repair;
+    }
+public:
     lw_shared_ptr<const sstables::sstable_set> sstable_set_for_tombstone_gc() const override {
+        // Optimization: when tombstone_gc=repair and this is the repaired view, only check
+        // repaired sstables. The repair ordering guarantee ensures that by the time a tombstone
+        // becomes GC-eligible (repair_time committed to Raft), any data it shadows has already
+        // been promoted from repairing to repaired. Unrepaired data always has timestamps newer
+        // than any GC-eligible tombstone (legitimate writes; USING TIMESTAMP abuse is UB).
+        // For all other tombstone_gc modes this invariant does not hold, so we fall through to
+        // the full storage-group set.
+        if (is_tombstone_gc_repaired_only()) {
+            return _t.make_repaired_sstable_set_for_tombstone_gc(_cg);
+        }
         return _t.sstable_set_for_tombstone_gc(_cg);
+    }
+    bool skip_memtable_for_tombstone_gc() const noexcept override {
+        return is_tombstone_gc_repaired_only();
     }
     std::unordered_set<sstables::shared_sstable> fully_expired_sstables(const std::vector<sstables::shared_sstable>& sstables, gc_clock::time_point query_time) const override {
         return compaction::get_fully_expired_sstables(*this, sstables, query_time);
@@ -5417,6 +5479,21 @@ compaction::compaction_group_view& compaction_group::as_view_for_static_sharding
 
 compaction::compaction_group_view& compaction_group::view_for_unrepaired_data() const {
     return *_unrepaired_view;
+}
+
+bool compaction_group::is_repaired_view(const compaction::compaction_group_view* v) const noexcept {
+    return v == _repaired_view.get();
+}
+
+lw_shared_ptr<sstables::sstable_set> compaction_group::make_repaired_sstable_set() const {
+    auto set = make_lw_shared<sstables::sstable_set>(make_main_sstable_set());
+    auto sstables_repaired_at = get_sstables_repaired_at();
+    for (auto& sst : *_main_sstables->all()) {
+        if (repair::is_repaired(sstables_repaired_at, sst)) {
+            set->insert(sst);
+        }
+    }
+    return set;
 }
 
 compaction::compaction_group_view& compaction_group::view_for_sstable(const sstables::shared_sstable& sst) const {

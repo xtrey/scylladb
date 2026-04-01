@@ -240,7 +240,7 @@ static max_purgeable get_max_purgeable_timestamp(const compaction_group_view& ta
     // and if the memtable also contains the key we're calculating max purgeable timestamp for.
     // First condition helps to not penalize the common scenario where memtable only contains
     // newer data.
-    if (memtable_min_timestamp <= compacting_max_timestamp && table_s.memtable_has_key(dk)) {
+    if (!table_s.skip_memtable_for_tombstone_gc() && memtable_min_timestamp <= compacting_max_timestamp && table_s.memtable_has_key(dk)) {
         timestamp = memtable_min_timestamp;
         source = max_purgeable::timestamp_source::memtable_possibly_shadowing_data;
     }
