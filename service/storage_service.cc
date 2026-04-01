@@ -4149,6 +4149,13 @@ future<storage_service::keyspace_migration_status> storage_service::get_tablets_
         co_return result;
     }
 
+    // system.tablet_sizes is a group0_virtual_table, so it requires group0 to
+    // be initialized. If this function is called via the task manager API,
+    // group0 may not be initialized yet.
+    if (!_group0 || !_group0->joined_group0()) {
+        throw std::runtime_error(::format("Cannot fetch node statuses for migrating keyspace '{}': group0 is not yet initialized on this node", ks_name));
+    }
+
     // Pick one table and query system.tablet_sizes to find which nodes
     // report tablet sizes (i.e. have loaded tablet-based ERMs).
     auto& ks = _db.local().find_keyspace(ks_name);
