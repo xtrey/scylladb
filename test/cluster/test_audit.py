@@ -12,6 +12,7 @@ import functools
 import itertools
 import logging
 import os.path
+from pathlib import Path
 import re
 import socket
 import socketserver
@@ -37,6 +38,7 @@ from test.cluster.dtest.tools.data import rows_to_list, run_in_parallel
 from test.pylib.manager_client import ManagerClient
 from test.pylib.rest_client import read_barrier
 from test.pylib.util import wait_for as wait_for_async
+from test.pylib.scylla_cluster import ScyllaVersionDescription
 
 logger = logging.getLogger(__name__)
 
@@ -1993,3 +1995,62 @@ async def test_config_liveupdate(manager: ManagerClient, helper_class, config_ch
 async def test_parallel_syslog_audit(manager: ManagerClient, helper_class):
     """Cluster must not fail when multiple queries are audited in parallel."""
     await CQLAuditTester(manager).test_parallel_syslog_audit(helper_class)
+
+@pytest.mark.asyncio
+async def test_upgrade_preserves_ddl_audit_for_tables(
+        manager: ManagerClient,
+        scylla_2025_1: ScyllaVersionDescription,
+        scylla_binary: Path):
+    """Verify that upgrading from 2025.1 to master preserves DDL auditing
+    for table-scoped audit configurations (SCYLLADB-1155).
+    """
+    keyspace = "test_audit_upgrade_ks"
+    table = "audited_tbl"
+    fq_table = f"{keyspace}.{table}"
+
+    audit_settings = {
+        "audit": "table",
+        "audit_tables": fq_table,
+        "audit_keyspaces": keyspace,
+    }
+
+    logger.info("Starting server with version 2025.1 and DDL audit config")
+    server = await manager.server_add(
+        version=scylla_2025_1,
+        config=audit_settings,
+    )
+    cql, _ = await manager.get_ready_cql([server])
+
+    await cql.run_async(
+        f"CREATE KEYSPACE IF NOT EXISTS {keyspace}"
+        f" WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}")
+    await cql.run_async(f"CREATE TABLE {fq_table} (pk int PRIMARY KEY, v int)")
+
+    t = CQLAuditTester(manager, helper=AuditBackendTable())
+    t.server_addresses = [server.ip_addr]
+    cql.get_execution_profile(EXEC_PROFILE_DEFAULT).consistency_level = ConsistencyLevel.ONE
+
+    logger.info("Verifying DDL is audited before upgrade (2025.1)")
+    t.helper.clear_audit_logs(cql)
+    t.execute_and_validate_new_audit_entry(
+        cql,
+        f"ALTER TABLE {fq_table} ADD v2 int",
+        category="DDL",
+        table=table,
+        ks=keyspace,
+    )
+
+    logger.info("Upgrading server to current binary")
+    await manager.server_change_version(server.server_id, scylla_binary)
+    cql, _ = await manager.get_ready_cql([server])
+    cql.get_execution_profile(EXEC_PROFILE_DEFAULT).consistency_level = ConsistencyLevel.ONE
+
+    logger.info("Verifying DDL is audited after upgrade (master)")
+    t.helper.clear_audit_logs(cql)
+    t.execute_and_validate_new_audit_entry(
+        cql,
+        f"ALTER TABLE {fq_table} ADD v3 int",
+        category="DDL",
+        table=table,
+        ks=keyspace,
+    )
