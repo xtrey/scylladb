@@ -204,7 +204,14 @@ get_table_or_view(service::storage_proxy& proxy, const rjson::value& request) {
             // DynamoDB returns a different error depending on whether the
             // base table doesn't exist (ResourceNotFoundException) or it
             // does exist but the index does not (ValidationException).
-            if (proxy.data_dictionary().has_schema(keyspace_name, orig_table_name)) {
+            auto base_table = proxy.data_dictionary().try_find_table(keyspace_name, orig_table_name);
+            if (base_table) {
+                // If the given IndexName is a vector index, not a GSI or LSI,
+                // give a more helpful message than just an index not found.
+                if (base_table->schema()->has_index(rjson::to_sstring(*index_name))) {
+                    throw api_error::validation(
+                        fmt::format("IndexName '{}' is a vector index for table '{}, so VectorSearch is mandatory in Query.", rjson::to_string_view(*index_name), orig_table_name));
+                }
                 throw api_error::validation(
                     fmt::format("Requested resource not found: Index '{}' for table '{}'", rjson::to_string_view(*index_name), orig_table_name));
             } else {
