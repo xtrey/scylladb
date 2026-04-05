@@ -1225,6 +1225,10 @@ static future<executor::request_return_type> query_vector(
         bool warn_authorization,
         alternator::stats& stats,
         parsed::expression_cache& parsed_expr_cache) {
+    schema_ptr base_schema = get_table(proxy, request);
+    get_stats_from_schema(proxy, *base_schema)->api_operations.query++;
+    tracing::add_alternator_table_name(trace_state, base_schema->cf_name());
+
     // If vector search is requested, IndexName must be given and must
     // refer to a vector index - not to a GSI or LSI.
     const rjson::value* index_name_v = rjson::find(request, "IndexName");
@@ -1233,7 +1237,6 @@ static future<executor::request_return_type> query_vector(
             "VectorSearch requires IndexName referring to a vector index");
     }
     std::string_view index_name = rjson::to_string_view(*index_name_v);
-    schema_ptr base_schema = get_table(proxy, request);
     int dimensions = 0;
     bool is_vector = false;
     for (const index_metadata& im : base_schema->indices()) {
