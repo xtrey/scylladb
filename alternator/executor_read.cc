@@ -45,6 +45,7 @@
 #include <seastar/coroutine/maybe_yield.hh>
 #include <boost/range/algorithm/find_end.hpp>
 #include <charconv>
+#include <stdexcept>
 
 using namespace std::chrono_literals;
 
@@ -1233,11 +1234,28 @@ static future<executor::request_return_type> query_vector(
     }
     std::string_view index_name = rjson::to_string_view(*index_name_v);
     schema_ptr base_schema = get_table(proxy, request);
-    bool is_vector = std::ranges::any_of(base_schema->indices(), [&](const index_metadata& im) {
-        const auto& opts = im.options();
-        auto it = opts.find(db::index::secondary_index::custom_class_option_name);
-        return im.name() == index_name && it != opts.end() && it->second == "vector_index";
-    });
+    int dimensions = 0;
+    bool is_vector = false;
+    for (const index_metadata& im : base_schema->indices()) {
+        if (im.name() == index_name) {
+            const auto& opts = im.options();
+            // The only secondary index we expect to see is a vector index.
+            // We also expect it to have a valid "dimensions".
+            auto it = opts.find(db::index::secondary_index::custom_class_option_name);
+            if (it == opts.end() || it->second != "vector_index") {
+                on_internal_error(elogger, fmt::format("IndexName '{}' is a secondary index but not a vector index.", index_name));
+            }
+            it = opts.find("dimensions");
+            if (it != opts.end()) {
+                try {
+                    dimensions = std::stoi(it->second);
+                } catch (std::logic_error&) {}
+            }
+            throwing_assert(dimensions > 0);
+            is_vector = true;
+            break;
+        }
+    }
     if (!is_vector) {
         co_return api_error::validation(
             format("VectorSearch IndexName '{}' is not a vector index.", index_name));
@@ -1259,19 +1277,6 @@ static future<executor::request_return_type> query_vector(
     // vector index. We'll now validate all these assumptions and parse
     // all the numbers in the vector into an std::vector<float> query_vec -
     // the type that ann() wants.
-    int dimensions = 0;
-    for (const index_metadata& im : base_schema->indices()) {
-        if (im.name() == index_name) {
-            auto dims_it = im.options().find("dimensions");
-            if (dims_it != im.options().end()) {
-                try {
-                    dimensions = std::stoi(dims_it->second);
-                } catch (...) {}
-            }
-            break;
-        }
-    }
-    throwing_assert(dimensions > 0);
     const rjson::value* qv_list = rjson::find(*query_vector, "L");
     if (!qv_list || !qv_list->IsArray()) {
         co_return api_error::validation(
@@ -1456,140 +1461,74 @@ static future<executor::request_return_type> query_vector(
     rjson::value items_json = rjson::empty_array();
     int matched_count = 0;
 
-    if (base_schema->clustering_key_size() == 0) {
-        // Hash-only table: query each partition individually, in the order
-        // returned by the vector store, to preserve vector-distance ordering
-        // in the response. A multi-partition batch read would return items in
-        // token order instead, which would be wrong.
-        // FIXME: do this more efficiently with a batched read that preserves
-        // ordering.
-        for (const auto& pkey : pkeys) {
-            std::vector<query::clustering_range> bounds{
-                    query::clustering_range::make_open_ended_both_sides()};
-            auto partition_slice = query::partition_slice(std::move(bounds), {},
-                    regular_columns, selection->get_query_options());
-            auto command = ::make_lw_shared<query::read_command>(
-                    base_schema->id(), base_schema->version(), partition_slice,
-                    proxy.get_max_result_size(partition_slice),
-                    query::tombstone_limit(proxy.get_tombstone_limit()));
-            service::storage_proxy::coordinator_query_result qr =
-                    co_await proxy.query(base_schema, command,
-                            {dht::partition_range(pkey.partition)},
-                            db::consistency_level::LOCAL_ONE,
-                            service::storage_proxy::coordinator_query_options(
-                                    timeout, permit, client_state, trace_state));
-            auto opt_item = describe_single_item(base_schema, partition_slice,
-                    *selection, *qr.query_result, *attrs_to_get);
-            if (opt_item && (!flt || flt.check(*opt_item))) {
-                ++matched_count;
-                if (select != select_type::count) {
-                    if (select == select_type::projection) {
-                        // A filter caused us to fall through here instead of
-                        // taking the projection early-exit above. Reconstruct
-                        // the key-only item from the full item we fetched.
-                        rjson::value key_item = rjson::empty_object();
-                        for (const column_definition& cdef : base_schema->partition_key_columns()) {
-                            if (const rjson::value* v = rjson::find(*opt_item, cdef.name_as_text())) {
-                                rjson::add_with_string_name(key_item, cdef.name_as_text(), rjson::copy(*v));
-                            }
+    // Query each primary key individually, in the order returned by the
+    // vector store, to preserve vector-distance ordering in the response.
+    // FIXME: do this more efficiently with a batched read that preserves ordering.
+    for (const auto& pkey : pkeys) {
+        std::vector<query::clustering_range> bounds{
+                base_schema->clustering_key_size() > 0
+                    ? query::clustering_range::make_singular(pkey.clustering)
+                    : query::clustering_range::make_open_ended_both_sides()};
+        auto partition_slice = query::partition_slice(std::move(bounds), {},
+                regular_columns, selection->get_query_options());
+        auto command = ::make_lw_shared<query::read_command>(
+                base_schema->id(), base_schema->version(), partition_slice,
+                proxy.get_max_result_size(partition_slice),
+                query::tombstone_limit(proxy.get_tombstone_limit()));
+        service::storage_proxy::coordinator_query_result qr =
+                co_await proxy.query(base_schema, command,
+                        {dht::partition_range(pkey.partition)},
+                        db::consistency_level::LOCAL_ONE,
+                        service::storage_proxy::coordinator_query_options(
+                                timeout, permit, client_state, trace_state));
+        auto opt_item = describe_single_item(base_schema, partition_slice,
+                *selection, *qr.query_result, *attrs_to_get);
+        if (opt_item && (!flt || flt.check(*opt_item))) {
+            ++matched_count;
+            if (select != select_type::count) {
+                if (select == select_type::projection) {
+                    // A filter caused us to fall through here instead of
+                    // taking the projection early-exit above. Reconstruct
+                    // the key-only item from the full item we fetched.
+                    rjson::value key_item = rjson::empty_object();
+                    for (const column_definition& cdef : base_schema->partition_key_columns()) {
+                        if (const rjson::value* v = rjson::find(*opt_item, cdef.name_as_text())) {
+                            rjson::add_with_string_name(key_item, cdef.name_as_text(), rjson::copy(*v));
                         }
-                        rjson::push_back(items_json, std::move(key_item));
-                    } else {
-                        // When a filter caused us to fetch the full item, apply the
-                        // requested projection (attrs_to_get_opt) before returning it.
-                        // This mirrors describe_items_visitor::end_row() which removes
-                        // extra filter attributes from the returned item.
-                        if (flt && attrs_to_get_opt) {
-                            for (const auto& [attr_name, subpath] : *attrs_to_get_opt) {
-                                if (!subpath.has_value()) {
-                                    if (rjson::value* toplevel = rjson::find(*opt_item, attr_name)) {
-                                        if (!hierarchy_filter(*toplevel, subpath)) {
-                                            rjson::remove_member(*opt_item, attr_name);
-                                        }
+                    }
+                    for (const column_definition& cdef : base_schema->clustering_key_columns()) {
+                        if (const rjson::value* v = rjson::find(*opt_item, cdef.name_as_text())) {
+                            rjson::add_with_string_name(key_item, cdef.name_as_text(), rjson::copy(*v));
+                        }
+                    }
+                    rjson::push_back(items_json, std::move(key_item));
+                } else {
+                    // When a filter caused us to fetch the full item, apply the
+                    // requested projection (attrs_to_get_opt) before returning it.
+                    // This mirrors describe_items_visitor::end_row() which removes
+                    // extra filter attributes from the returned item.
+                    if (flt && attrs_to_get_opt) {
+                        for (const auto& [attr_name, subpath] : *attrs_to_get_opt) {
+                            if (!subpath.has_value()) {
+                                if (rjson::value* toplevel = rjson::find(*opt_item, attr_name)) {
+                                    if (!hierarchy_filter(*toplevel, subpath)) {
+                                        rjson::remove_member(*opt_item, attr_name);
                                     }
                                 }
                             }
-                            std::vector<std::string> to_remove;
-                            for (auto it = opt_item->MemberBegin(); it != opt_item->MemberEnd(); ++it) {
-                                std::string key(it->name.GetString(), it->name.GetStringLength());
-                                if (!attrs_to_get_opt->contains(key)) {
-                                    to_remove.push_back(std::move(key));
-                                }
-                            }
-                            for (const auto& key : to_remove) {
-                                rjson::remove_member(*opt_item, key);
+                        }
+                        std::vector<std::string> to_remove;
+                        for (auto it = opt_item->MemberBegin(); it != opt_item->MemberEnd(); ++it) {
+                            std::string key(it->name.GetString(), it->name.GetStringLength());
+                            if (!attrs_to_get_opt->contains(key)) {
+                                to_remove.push_back(std::move(key));
                             }
                         }
-                        rjson::push_back(items_json, std::move(*opt_item));
+                        for (const auto& key : to_remove) {
+                            rjson::remove_member(*opt_item, key);
+                        }
                     }
-                }
-            }
-        }
-    } else {
-        // Hash+range table: query each (partition, clustering) pair individually.
-        // FIXME: do this more efficiently!!!
-        for (const auto& pkey : pkeys) {
-            std::vector<query::clustering_range> bounds{
-                    query::clustering_range::make_singular(pkey.clustering)};
-            auto partition_slice = query::partition_slice(std::move(bounds), {},
-                    regular_columns, selection->get_query_options());
-            auto command = ::make_lw_shared<query::read_command>(
-                    base_schema->id(), base_schema->version(), partition_slice,
-                    proxy.get_max_result_size(partition_slice),
-                    query::tombstone_limit(proxy.get_tombstone_limit()));
-            service::storage_proxy::coordinator_query_result qr =
-                    co_await proxy.query(base_schema, command,
-                            {dht::partition_range(pkey.partition)},
-                            db::consistency_level::LOCAL_ONE,
-                            service::storage_proxy::coordinator_query_options(
-                                    timeout, permit, client_state, trace_state));
-            auto opt_item = describe_single_item(base_schema, partition_slice,
-                    *selection, *qr.query_result, *attrs_to_get);
-            if (opt_item && (!flt || flt.check(*opt_item))) {
-                ++matched_count;
-                if (select != select_type::count) {
-                    if (select == select_type::projection) {
-                        // A filter caused us to fall through here; project to keys.
-                        rjson::value key_item = rjson::empty_object();
-                        for (const column_definition& cdef : base_schema->partition_key_columns()) {
-                            if (const rjson::value* v = rjson::find(*opt_item, cdef.name_as_text())) {
-                                rjson::add_with_string_name(key_item, cdef.name_as_text(), rjson::copy(*v));
-                            }
-                        }
-                        for (const column_definition& cdef : base_schema->clustering_key_columns()) {
-                            if (const rjson::value* v = rjson::find(*opt_item, cdef.name_as_text())) {
-                                rjson::add_with_string_name(key_item, cdef.name_as_text(), rjson::copy(*v));
-                            }
-                        }
-                        rjson::push_back(items_json, std::move(key_item));
-                    } else {
-                        // When a filter caused us to fetch the full item, apply the
-                        // requested projection (attrs_to_get_opt) before returning it.
-                        // This mirrors describe_items_visitor::end_row() which removes
-                        // extra filter attributes from the returned item.
-                        if (flt && attrs_to_get_opt) {
-                            for (const auto& [attr_name, subpath] : *attrs_to_get_opt) {
-                                if (!subpath.has_value()) {
-                                    if (rjson::value* toplevel = rjson::find(*opt_item, attr_name)) {
-                                        if (!hierarchy_filter(*toplevel, subpath)) {
-                                            rjson::remove_member(*opt_item, attr_name);
-                                        }
-                                    }
-                                }
-                            }
-                            std::vector<std::string> to_remove;
-                            for (auto it = opt_item->MemberBegin(); it != opt_item->MemberEnd(); ++it) {
-                                std::string key(it->name.GetString(), it->name.GetStringLength());
-                                if (!attrs_to_get_opt->contains(key)) {
-                                    to_remove.push_back(std::move(key));
-                                }
-                            }
-                            for (const auto& key : to_remove) {
-                                rjson::remove_member(*opt_item, key);
-                            }
-                        }
-                        rjson::push_back(items_json, std::move(*opt_item));
-                    }
+                    rjson::push_back(items_json, std::move(*opt_item));
                 }
             }
         }
