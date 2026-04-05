@@ -1672,6 +1672,22 @@ def test_gsi_query_select_1(test_table_gsi_1):
         Select='SPECIFIC_ATTRIBUTES',
         AttributesToGet=['y'],
         KeyConditions={'c': {'AttributeValueList': [c], 'ComparisonOperator': 'EQ'}})
+    assert_index_query(test_table_gsi_1, 'hello', expected_items,
+        Select='SPECIFIC_ATTRIBUTES',
+        ProjectionExpression='y',
+        KeyConditions={'c': {'AttributeValueList': [c], 'ComparisonOperator': 'EQ'}})
+    # If AttributesToGet or ProjectionExpression are used, SPECIFIC_ATTRIBUTES
+    # is implied, and can be omitted.
+    assert_index_query(test_table_gsi_1, 'hello', expected_items,
+        AttributesToGet=['y'],
+        KeyConditions={'c': {'AttributeValueList': [c], 'ComparisonOperator': 'EQ'}})
+    assert_index_query(test_table_gsi_1, 'hello', expected_items,
+        ProjectionExpression='y',
+        KeyConditions={'c': {'AttributeValueList': [c], 'ComparisonOperator': 'EQ'}})
+    assert_index_query(test_table_gsi_1, 'hello', expected_items,
+        ProjectionExpression='#name',
+        ExpressionAttributeNames={'#name': 'y'},
+        KeyConditions={'c': {'AttributeValueList': [c], 'ComparisonOperator': 'EQ'}})
     assert not 'Items' in test_table_gsi_1.query(ConsistentRead=False,
         IndexName='hello',
         Select='COUNT',
@@ -1714,12 +1730,23 @@ def test_gsi_query_select_2(dynamodb):
                 Select='ALL_ATTRIBUTES',
                 KeyConditions={'x': {'AttributeValueList': [x], 'ComparisonOperator': 'EQ'}})
         # SPECIFIC_ATTRIBUTES (with AttributesToGet / ProjectionExpression)
-        # is allowed for the projected attributes, but not for unprojected
-        # attributes.
+        # is allowed for the projected attributes, but not allowed for
+        # unprojected attributes:
         expected_items = [{'a': z['a']} for z in items if z['x'] == x]
         assert_index_query(table, 'hello', expected_items,
             Select='SPECIFIC_ATTRIBUTES',
             AttributesToGet=['a'],
+            KeyConditions={'x': {'AttributeValueList': [x], 'ComparisonOperator': 'EQ'}})
+        # Requesting an unprojected attribute 'b' via AttributesToGet or
+        # ProjectionExpression returns an explicit error, not silent nothing.
+        with pytest.raises(ClientError, match='ValidationException.*project'):
+            table.query(IndexName='hello',
+                Select='SPECIFIC_ATTRIBUTES',
+                AttributesToGet=['b'],
+                KeyConditions={'x': {'AttributeValueList': [x], 'ComparisonOperator': 'EQ'}})
+        with pytest.raises(ClientError, match='ValidationException.*project'):
+            table.query(IndexName='hello',
+                ProjectionExpression='b',
             KeyConditions={'x': {'AttributeValueList': [x], 'ComparisonOperator': 'EQ'}})
         # Select=COUNT is also allowed, and doesn't return item content
         assert not 'Items' in table.query(ConsistentRead=False,

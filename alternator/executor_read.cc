@@ -230,18 +230,25 @@ get_table_or_view(service::storage_proxy& proxy, const rjson::value& request) {
 // SPECIFIC_ATTRIBUTES without ProjectionExpression or AttributesToGet.
 static select_type parse_select(const rjson::value& request, table_or_view_type table_type) {
     const rjson::value* select_value = rjson::find(request, "Select");
+    const bool has_attributes_to_get = request.HasMember("AttributesToGet");
+    const bool has_projection_expression = request.HasMember("ProjectionExpression");
     if (!select_value) {
-        // If "Select" is not specified, it defaults to ALL_ATTRIBUTES
-        // on a base table or vector index, or ALL_PROJECTED_ATTRIBUTES on GSI/LSI.
-        return (table_type == table_or_view_type::base || table_type == table_or_view_type::vector_index) ?
+        // "Select" is not specified:
+        // If ProjectionExpression or AttributesToGet are present,
+        // then Select defaults to SPECIFIC_ATTRIBUTES:
+        if (has_projection_expression || has_attributes_to_get) {
+            return select_type::regular;
+        }
+        // Otherwise, "Select" defaults to ALL_ATTRIBUTES on a base table,
+        // or ALL_PROJECTED_ATTRIBUTES on an index. This is explicitly
+        // documented in the DynamoDB API reference.
+        return table_type == table_or_view_type::base ?
             select_type::regular : select_type::projection;
     }
     if (!select_value->IsString()) {
         throw api_error::validation("Select parameter must be a string");
     }
     std::string_view select = rjson::to_string_view(*select_value);
-    const bool has_attributes_to_get = request.HasMember("AttributesToGet");
-    const bool has_projection_expression = request.HasMember("ProjectionExpression");
     if (select == "SPECIFIC_ATTRIBUTES") {
         if (has_projection_expression || has_attributes_to_get) {
             return select_type::regular;
