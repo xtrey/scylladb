@@ -2246,23 +2246,32 @@ future<executor::request_return_type> executor::create_table(client_state& clien
 // columns of the base table or any of its prior GSIs or LSIs, the type
 // given in AttributeDefinitions must match the type of the existing key -
 // otherwise Alternator will not know which type to enforce in new writes.
+// Also, if the table already has vector indexes, their key attributes cannot
+// be redefined in AttributeDefinitions with a non-vector type.
 // This function checks for such conflicts. It assumes that the structure of
 // the given attribute_definitions was already validated (with
 // validate_attribute_definitions()).
 // This function should be called multiple times - once for the base schema
 // and once for each of its views (existing GSIs and LSIs on this table).
  static void check_attribute_definitions_conflicts(const rjson::value& attribute_definitions, const schema& schema) {
-    for (auto& def : schema.primary_key_columns()) {
-        std::string def_type = type_to_string(def.type);
-        for (auto it = attribute_definitions.Begin(); it != attribute_definitions.End(); ++it) {
-            const rjson::value& attribute_info = *it;
-            if (rjson::to_string_view(attribute_info["AttributeName"]) == def.name_as_text()) {
+    for (auto it = attribute_definitions.Begin(); it != attribute_definitions.End(); ++it) {
+        const rjson::value& attribute_info = *it;
+        std::string_view attribute_name = rjson::to_string_view(attribute_info["AttributeName"]);
+        for (auto& def : schema.primary_key_columns()) {
+            if (attribute_name == def.name_as_text()) {
+                auto def_type = type_to_string(def.type);
                 std::string_view type = rjson::to_string_view(attribute_info["AttributeType"]);
                 if (type != def_type) {
                     throw api_error::validation(fmt::format("AttributeDefinitions redefined {} to {} already a key attribute of type {} in this table", def.name_as_text(), type, def_type));
                 }
                 break;
             }
+        }
+        // Additionally, if we have a vector index, its key attribute is
+        // required to have a vector type, and cannot be listed in
+        // AttributeDefinitions with a non-vector key type.
+        if (has_vector_index_on_attribute(schema, attribute_name)) {
+            throw api_error::validation(fmt::format("AttributeDefinitions redefines {} but already a key of a vector index in this table", attribute_name));
         }
     }
 }
@@ -2521,6 +2530,10 @@ future<executor::request_return_type> executor::update_table(client_state& clien
                         if (p.local().data_dictionary().has_schema(keyspace_name, lsi_name(table_name, index_name, false))) {
                             co_return api_error::validation(fmt::format(
                                 "LSI {} already exists in table {}, can't use same name for GSI", index_name, table_name));
+                        }
+                        if (tab->has_index(sstring(index_name))) {
+                            co_return api_error::validation(fmt::format(
+                                "Vector index {} already exists in table {}, cannot reuse the name for a GSI", index_name, table_name));
                         }
                         try {
                             locator::assert_rf_rack_valid_keyspace(keyspace_name, p.local().local_db().get_token_metadata_ptr(),
