@@ -30,6 +30,7 @@
 #include <fmt/ranges.h>
 #include "service/raft/raft_group0_client.hh"
 #include "service/storage_service.hh"
+#include "service/topology_state_machine.hh"
 #include "service/load_meter.hh"
 #include "gms/feature_service.hh"
 #include "gms/gossiper.hh"
@@ -1729,6 +1730,69 @@ rest_tablet_balancing_enable(sharded<service::storage_service>& ss, std::unique_
 
 static
 future<json::json_return_type>
+rest_create_vnode_tablet_migration(http_context& ctx, sharded<service::storage_service>& ss, std::unique_ptr<http::request> req) {
+    if (!ss.local().get_feature_service().vnodes_to_tablets_migrations) {
+        apilog.warn("create_vnode_tablet_migration: called before the cluster feature was enabled");
+        throw std::runtime_error("vnodes-to-tablets migration requires all nodes to support the VNODES_TO_TABLETS_MIGRATIONS cluster feature");
+    }
+    auto keyspace = validate_keyspace(ctx, req);
+    co_await ss.local().prepare_for_tablets_migration(keyspace);
+    co_return json_void();
+}
+
+static
+future<json::json_return_type>
+rest_get_vnode_tablet_migration(http_context& ctx, sharded<service::storage_service>& ss, std::unique_ptr<http::request> req) {
+    if (!ss.local().get_feature_service().vnodes_to_tablets_migrations) {
+        apilog.warn("get_vnode_tablet_migration: called before the cluster feature was enabled");
+        throw std::runtime_error("vnodes-to-tablets migration requires all nodes to support the VNODES_TO_TABLETS_MIGRATIONS cluster feature");
+    }
+    auto keyspace = validate_keyspace(ctx, req);
+    auto status = co_await ss.local().get_tablets_migration_status(keyspace);
+
+    ss::vnode_tablet_migration_status result;
+    result.keyspace = status.keyspace;
+    result.status = status.status;
+    result.nodes._set = true;
+    for (const auto& node : status.nodes) {
+        ss::vnode_tablet_migration_node_status n;
+        n.host_id = fmt::to_string(node.host_id);
+        n.current_mode = node.current_mode;
+        n.intended_mode = node.intended_mode;
+        result.nodes.push(n);
+    }
+    co_return result;
+}
+
+static
+future<json::json_return_type>
+rest_set_vnode_tablet_migration_node_storage_mode(http_context& ctx, sharded<service::storage_service>& ss, std::unique_ptr<http::request> req) {
+    if (!ss.local().get_feature_service().vnodes_to_tablets_migrations) {
+        apilog.warn("set_vnode_tablet_migration_node_storage_mode: called before the cluster feature was enabled");
+        throw std::runtime_error("vnodes-to-tablets migration requires all nodes to support the VNODES_TO_TABLETS_MIGRATIONS cluster feature");
+    }
+    auto mode_str = req->get_query_param("intended_mode");
+    auto mode = service::intended_storage_mode_from_string(mode_str);
+    co_await ss.local().set_node_intended_storage_mode(mode);
+    co_return json_void();
+}
+
+static
+future<json::json_return_type>
+rest_finalize_vnode_tablet_migration(http_context& ctx, sharded<service::storage_service>& ss, std::unique_ptr<http::request> req) {
+    if (!ss.local().get_feature_service().vnodes_to_tablets_migrations) {
+        apilog.warn("finalize_vnode_tablet_migration: called before the cluster feature was enabled");
+        throw std::runtime_error("vnodes-to-tablets migration requires all nodes to support the VNODES_TO_TABLETS_MIGRATIONS cluster feature");
+    }
+    auto keyspace = validate_keyspace(ctx, req);
+    validate_keyspace(ctx, keyspace);
+
+    co_await ss.local().finalize_tablets_migration(keyspace);
+    co_return json_void();
+}
+
+static
+future<json::json_return_type>
 rest_quiesce_topology(sharded<service::storage_service>& ss, std::unique_ptr<http::request> req) {
         co_await ss.local().await_topology_quiesced();
         co_return json_void();
@@ -1877,6 +1941,10 @@ void set_storage_service(http_context& ctx, routes& r, sharded<service::storage_
     ss::del_tablet_replica.set(r, rest_bind(rest_del_tablet_replica, ctx, ss));
     ss::repair_tablet.set(r, rest_bind(rest_repair_tablet, ctx, ss));
     ss::tablet_balancing_enable.set(r, rest_bind(rest_tablet_balancing_enable, ss));
+    ss::create_vnode_tablet_migration.set(r, rest_bind(rest_create_vnode_tablet_migration, ctx, ss));
+    ss::get_vnode_tablet_migration.set(r, rest_bind(rest_get_vnode_tablet_migration, ctx, ss));
+    ss::set_vnode_tablet_migration_node_storage_mode.set(r, rest_bind(rest_set_vnode_tablet_migration_node_storage_mode, ctx, ss));
+    ss::finalize_vnode_tablet_migration.set(r, rest_bind(rest_finalize_vnode_tablet_migration, ctx, ss));
     ss::quiesce_topology.set(r, rest_bind(rest_quiesce_topology, ss));
     sp::get_schema_versions.set(r, rest_bind(rest_get_schema_versions, ss));
     ss::drop_quarantined_sstables.set(r, rest_bind(rest_drop_quarantined_sstables, ctx, ss));
@@ -1956,6 +2024,10 @@ void unset_storage_service(http_context& ctx, routes& r) {
     ss::del_tablet_replica.unset(r);
     ss::repair_tablet.unset(r);
     ss::tablet_balancing_enable.unset(r);
+    ss::create_vnode_tablet_migration.unset(r);
+    ss::get_vnode_tablet_migration.unset(r);
+    ss::set_vnode_tablet_migration_node_storage_mode.unset(r);
+    ss::finalize_vnode_tablet_migration.unset(r);
     ss::quiesce_topology.unset(r);
     sp::get_schema_versions.unset(r);
     ss::drop_quarantined_sstables.unset(r);
