@@ -804,6 +804,8 @@ public:
         return _raw._props.get_cdc_options();
     }
 
+    bool tablet_merges_forbidden() const;
+
     const ::tombstone_gc_options& tombstone_gc_options() const {
         return _raw._props.get_tombstone_gc_options();
     }

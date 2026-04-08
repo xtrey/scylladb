@@ -15,6 +15,7 @@
 #include "auth/resource.hh"
 #include "cdc/log.hh"
 #include "cdc/cdc_options.hh"
+#include "cdc/cdc_extension.hh"
 #include "auth/service.hh"
 #include "cql3/cql3_type.hh"
 #include "db/config.hh"
@@ -1310,6 +1311,29 @@ static future<> mark_view_schemas_as_built(utils::chunked_vector<mutation>& out,
     }
 }
 
+// When Alternator Streams are requested on a tablet table, convert the
+// already-configured enabled=true CDC options into a deferred state:
+// - enabled=false: don't create the CDC log table yet
+// - enable_requested=true: persist the user's intent for the topology
+//   coordinator to finalize later
+// - tablet_merge_blocked=true: suppress tablet merges that would produce
+//   2-parent shards incompatible with the DynamoDB Streams API
+// The topology coordinator will finalize enablement once all pending merges
+// complete (see maybe_finalize_pending_stream_enables in cdc/generation.cc).
+//
+// Callers must ensure the builder already has CDC options with enabled=true.
+static void defer_enabling_streams_block_tablet_merges(schema_builder& builder) {
+    auto& exts = builder.get_extensions();
+    auto it = exts.find(cdc::cdc_extension::NAME);
+    throwing_assert(it != exts.end());
+    auto opts = dynamic_pointer_cast<cdc::cdc_extension>(it->second)->get_options();
+    throwing_assert(opts.enabled());
+    opts.enabled(false);
+    opts.enable_requested(true);
+    opts.tablet_merge_blocked(true);
+    builder.with_cdc_options(opts);
+}
+
 // Returns true if the given attribute name is already the target of any vector
 // index on the schema. Analogous to schema::has_index(), but looks up by the
 // indexed attribute name rather than the index name.
@@ -1838,15 +1862,21 @@ future<executor::request_return_type> executor::update_table(client_state& clien
                 empty_request = false;
                 if (add_stream_options(*stream_specification, builder, p.local())) {
                     validate_cdc_log_name_length(builder.cf_name());
+                    // On tablet tables, defer stream enablement and block
+                    // tablet merges (see defer_enabling_streams_block_tablet_merges).
+                    bool uses_tablets = p.local().local_db().find_keyspace(tab->ks_name()).get_replication_strategy().uses_tablets();
+                    if (uses_tablets) {
+                        defer_enabling_streams_block_tablet_merges(builder);
+                    }
                 }
                 auto stream_enabled = rjson::find(*stream_specification, "StreamEnabled");
                 if (stream_enabled && stream_enabled->IsBool()) {
                     if (stream_enabled->GetBool()) {
-                        if (tab->cdc_options().enabled()) {
+                        if (tab->cdc_options().enabled() || tab->cdc_options().enable_requested()) {
                             co_return api_error::validation("Table already has an enabled stream: TableName: " + tab->cf_name());
                         }
                     }
-                    else if (!tab->cdc_options().enabled()) {
+                    else if (!tab->cdc_options().enabled() && !tab->cdc_options().enable_requested()) {
                         co_return api_error::validation("Table has no stream to disable: TableName: " + tab->cf_name());
                     }
                 }

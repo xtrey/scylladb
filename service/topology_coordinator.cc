@@ -2782,6 +2782,21 @@ class topology_coordinator : public endpoint_lifecycle_subscriber
                 guard = std::move(*guard_opt);
             }
 
+            // Check if any Alternator tables have deferred stream enablement
+            // that can now be finalized (no in-progress tablet merges).
+            {
+                auto tm = get_token_metadata_ptr();
+                auto cdc_muts = co_await _cdc_gens.maybe_finalize_pending_stream_enables(*tm, guard.write_timestamp());
+                if (!cdc_muts.empty()) {
+                    rtlogger.info("Finalizing deferred Alternator stream enablement for {} table(s)", cdc_muts.size());
+                    mixed_change change{std::move(cdc_muts)};
+                    group0_command g0_cmd = _group0.client().prepare_command(std::move(change), guard,
+                        "Finalize deferred Alternator stream enablement");
+                    co_await _group0.client().add_entry(std::move(g0_cmd), std::move(guard), _as);
+                    co_return true;
+                }
+            }
+
             // If there is no other work, evaluate load and start tablet migration if there is imbalance.
             if (auto guard_opt = co_await maybe_start_tablet_migration(std::move(guard)); !guard_opt) {
                 co_return true;

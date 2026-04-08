@@ -877,6 +877,8 @@ future<executor::request_return_type> executor::describe_stream(client_state& cl
         } else {
             status = "ENABLED";
         }
+    } else if (opts.enable_requested()) {
+        status = "ENABLING";
     }
 
     auto ttl = std::chrono::seconds(opts.ttl());
@@ -1544,6 +1546,7 @@ bool executor::add_stream_options(const rjson::value& stream_specification, sche
 
         cdc::options opts;
         opts.enabled(true);
+        opts.tablet_merge_blocked(true);
         // cdc::delta_mode is ignored by Alternator, so aim for the least overhead.
         opts.set_delta_mode(cdc::delta_mode::keys);
         opts.ttl(std::chrono::duration_cast<std::chrono::seconds>(dynamodb_streams_max_window).count());
@@ -1581,21 +1584,27 @@ void executor::supplement_table_stream_info(rjson::value& descr, const schema& s
         stream_arn arn(cf.schema(), cdc::get_base_table(db.real_database(), *cf.schema()));
         rjson::add(descr, "LatestStreamArn", arn);
         rjson::add(descr, "LatestStreamLabel", rjson::from_string(stream_label(*cf.schema())));
-
-        auto stream_desc = rjson::empty_object();
-        rjson::add(stream_desc, "StreamEnabled", true);
-
-        auto mode = stream_view_type::KEYS_ONLY;
-        if (opts.preimage() && opts.postimage()) {
-            mode = stream_view_type::NEW_AND_OLD_IMAGES;
-        } else if (opts.preimage()) {
-            mode = stream_view_type::OLD_IMAGE;
-        } else if (opts.postimage()) {
-            mode = stream_view_type::NEW_IMAGE;
-        }
-        rjson::add(stream_desc, "StreamViewType", mode);
-        rjson::add(descr, "StreamSpecification", std::move(stream_desc));
+    } else if (!opts.enable_requested()) {
+        return;
     }
+    // For both enabled() and enable_requested():
+    // DynamoDB returns StreamEnabled=true in StreamSpecification even when
+    // the stream status is ENABLING (not yet fully active). We mirror this
+    // behavior: enable_requested means the user asked for streams but CDC
+    // is not yet finalized, so we still report StreamEnabled=true.
+    auto stream_desc = rjson::empty_object();
+    rjson::add(stream_desc, "StreamEnabled", true);
+
+    auto mode = stream_view_type::KEYS_ONLY;
+    if (opts.preimage() && opts.postimage()) {
+        mode = stream_view_type::NEW_AND_OLD_IMAGES;
+    } else if (opts.preimage()) {
+        mode = stream_view_type::OLD_IMAGE;
+    } else if (opts.postimage()) {
+        mode = stream_view_type::NEW_IMAGE;
+    }
+    rjson::add(stream_desc, "StreamViewType", mode);
+    rjson::add(descr, "StreamSpecification", std::move(stream_desc));
 }
 
 } // namespace alternator
