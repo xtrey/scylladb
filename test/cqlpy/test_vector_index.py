@@ -265,6 +265,22 @@ def test_describe_vector_index_local_with_filtering_columns(cql, test_keyspace, 
 
         assert f"CREATE CUSTOM INDEX {idx} ON {table}((p1, p2), v, f1, f2) USING 'vector_index'" in desc
 
+def test_describe_vector_index_with_options(cql, test_keyspace, scylla_only, skip_without_tablets):
+    """Verify that DESCRIBE INDEX includes user-provided options in the
+    WITH OPTIONS clause. System-internal keys (target, class_name,
+    index_version) must not appear."""
+    schema = 'p int primary key, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        idx = unique_name()
+        cql.execute(
+            f"CREATE CUSTOM INDEX {idx} ON {table}(v) USING 'vector_index' "
+            f"WITH OPTIONS = {{'similarity_function': 'euclidean'}}"
+        )
+        desc = cql.execute(f"DESC INDEX {test_keyspace}.{idx}").one().create_statement
+        assert "'similarity_function': 'euclidean'" in desc
+        # System keys must not leak into WITH OPTIONS.
+        assert 'class_name' not in desc
+        assert 'target' not in desc.split("USING")[1]  # "target" may appear in column names before USING
 
 def test_vector_index_version_on_recreate(cql, test_keyspace, scylla_only, skip_without_tablets):
     schema = 'p int primary key, v vector<float, 3>'
@@ -474,21 +490,22 @@ def test_sai_short_class_name_case_insensitive(cql, test_keyspace, skip_on_scyll
         )
 
 
-def test_sai_fqn_requires_exact_case(cql, test_keyspace, skip_without_tablets):
+def test_sai_fqn_requires_exact_case(cql, test_keyspace, skip_on_scylla_vnodes):
     """The fully qualified SAI class name requires exact casing.
     Only 'org.apache.cassandra.index.sai.StorageAttachedIndex' is accepted."""
     schema = 'p int PRIMARY KEY, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
-        with pytest.raises(InvalidRequest, match=r"Non-supported custom class|Unable to find"):
+        with pytest.raises((InvalidRequest, ConfigurationException), match=r"Non-supported custom class|Unable to find"):
             cql.execute(
                 f"CREATE CUSTOM INDEX ON {table}(v) "
                 f"USING 'org.apache.cassandra.index.sai.STORAGEATTACHEDINDEX'"
             )
 
 
-def test_sai_local_index_with_vector_column(cql, test_keyspace, skip_without_tablets):
+def test_sai_local_index_with_vector_column(cql, test_keyspace, scylla_only, skip_without_tablets):
     """SAI with a multi-column (local index) target like ((p), v) should
-    succeed — vector_index supports local indexes."""
+    succeed — vector_index supports local indexes.
+    Cassandra SAI does not support this multi-column syntax."""
     schema = 'p int, q int, v vector<float, 3>, PRIMARY KEY (p, q)'
     with new_test_table(cql, test_keyspace, schema) as table:
         cql.execute(f"CREATE CUSTOM INDEX ON {table}((p), v) USING 'sai'")
@@ -529,6 +546,25 @@ def test_sai_on_nonexistent_column(cql, test_keyspace, skip_on_scylla_vnodes):
     with new_test_table(cql, test_keyspace, schema) as table:
         with pytest.raises(InvalidRequest, match='No column definition found|Undefined column name|SAI.*only supported on vector columns'):
             cql.execute(f"CREATE CUSTOM INDEX ON {table}(nonexistent) USING 'sai'")
+
+
+def test_sai_vector_index_with_source_model(cql, test_keyspace, scylla_only, skip_without_tablets):
+    """The source_model option (used by Cassandra client libraries like CassIO
+    to tag the embedding model) is rejected by Cassandra SAI as an unrecognized
+    property. ScyllaDB accepts and preserves it in DESCRIBE output for
+    compatibility with those libraries."""
+    schema = 'p int PRIMARY KEY, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        idx = unique_name()
+        cql.execute(
+            f"CREATE CUSTOM INDEX {idx} ON {table}(v) USING 'sai' "
+            f"WITH OPTIONS = {{'similarity_function': 'COSINE', "
+            f"'source_model': 'ada002'}}"
+        )
+        desc = cql.execute(f"DESC INDEX {test_keyspace}.{idx}").one().create_statement
+        # ScyllaDB preserves all user-provided options in DESCRIBE output.
+        assert "'source_model': 'ada002'" in desc
+        assert "'similarity_function'" in desc
 
 
 ###############################################################################

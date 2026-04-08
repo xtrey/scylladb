@@ -41,7 +41,6 @@
 #include "tombstone_gc_extension.hh"
 #include "index/secondary_index.hh"
 
-#include <boost/algorithm/string.hpp>
 #include <stdexcept>
 
 namespace cql3 {

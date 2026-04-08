@@ -261,6 +261,11 @@ The following options are supported for vector indexes. All of them are optional
 |                              | * ``true``: Enable rescoring.                                                                            |               |
 |                              | * ``false``: Disable rescoring.                                                                          |               |
 +------------------------------+----------------------------------------------------------------------------------------------------------+---------------+
+| ``source_model``             | The name of the embedding model that produced the vectors (e.g., ``"ada002"``). Cassandra client         | *(none)*      |
+|                              | libraries such as CassIO send this option to tag the index with the model. Cassandra SAI rejects it as   |               |
+|                              | an unrecognized property; ScyllaDB accepts and preserves it in ``DESCRIBE`` output for compatibility     |               |
+|                              | with those libraries, but does not act on it.                                                            |               |
++------------------------------+----------------------------------------------------------------------------------------------------------+---------------+
 
 
 .. _cassandra-sai-compatibility:
