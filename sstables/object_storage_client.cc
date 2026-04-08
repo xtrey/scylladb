@@ -81,6 +81,9 @@ public:
     future<> put_object(object_name name, ::memory_data_sink_buffers bufs, abort_source* as) override {
         return _client->put_object(name.str(), std::move(bufs), as);
     }
+    future<> copy_object(object_name src, object_name dst, abort_source* as) override {
+        return _client->copy_object(src.str(), dst.str(), std::nullopt, std::nullopt, as);
+    }
     future<> delete_object(object_name name) override {
         return _client->delete_object(name.str());
     }
@@ -154,6 +157,9 @@ public:
         }
         co_await sink.flush();
         co_await sink.close();
+    }
+    future<> copy_object(object_name src, object_name dst, abort_source*) override {
+        return _client->copy_object(src.bucket(), src.object(), dst.bucket(), dst.object());
     }
     future<> delete_object(object_name name) override {
         return _client->delete_object(name.bucket(), name.object());

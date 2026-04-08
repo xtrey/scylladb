@@ -1071,14 +1071,14 @@ future<> utils::gcp::storage::client::copy_object(std::string_view bucket_in, st
         , new_bucket
         , seastar::http::internal::url_encode(to_name)
     );
-    std::string body;
+    std::string body = "{}";
 
     for (;;) {
         auto res = co_await _impl->send_with_retry(path
             , GCP_OBJECT_SCOPE_READ_WRITE
             , body
             , APPLICATION_JSON
-            , httpclient::method_type::PUT
+            , httpclient::method_type::POST
         );
 
         if (res.result() != status_type::ok) {
