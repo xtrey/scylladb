@@ -4,6 +4,20 @@
 
 ###############################################################################
 # Tests for vector indexes
+#
+# Index class usage:
+#   - Tests that exercise only features common to both Cassandra SAI and
+#     ScyllaDB (basic vector creation, similarity_function, IF NOT EXISTS,
+#     error on nonexistent columns, etc.) use USING 'sai' so they run
+#     against both backends.
+#   - Tests that exercise ScyllaDB-specific options or features (quantization,
+#     rescoring, oversampling, CDC integration, etc.)
+#     use USING 'vector_index' and are marked scylla_only.
+#
+# Note: pytest does not run the vector search backend, so ANN queries that
+# pass CQL validation will fail with "Vector Store is disabled" rather than
+# returning results.  Tests use this error to confirm that CQL parsing and
+# validation succeeded.
 ###############################################################################
 
 import pytest
@@ -47,20 +61,34 @@ unsupported_filtering_types = [
 ]
 
 def test_create_vector_search_index(cql, test_keyspace, scylla_only, skip_without_tablets):
+    """ScyllaDB-only: basic vector index creation using the native
+    'vector_index' class (non-SAI) to verify the ScyllaDB-specific path."""
     schema = 'p int primary key, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
         cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'vector_index'")
 
 
-def test_create_vector_search_index_without_custom_keyword(cql, test_keyspace, skip_without_tablets):
+def test_create_vector_search_index_uppercase_class(cql, test_keyspace, scylla_only, skip_without_tablets):
+    """Custom index class name lookup is case-insensitive, so 'VECTOR_INDEX'
+    should be accepted just like 'vector_index'."""
     schema = 'p int primary key, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
-        if is_scylla(cql):
-            custom_class = 'vector_index'
-        else:
-            custom_class =  'sai'
-        
-        cql.execute(f"CREATE INDEX ON {table}(v) USING '{custom_class}'")
+        cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'VECTOR_INDEX'")
+
+
+def test_create_vector_search_index_using_sai(cql, test_keyspace, skip_on_scylla_vnodes):
+    """SAI class name should be accepted for creating a vector index on a
+    VECTOR<FLOAT, N> column.  On ScyllaDB the class is translated to the
+    native 'vector_index'; on Cassandra SAI handles it natively."""
+    schema = 'p int primary key, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai'")
+
+
+def test_create_vector_search_index_without_custom_keyword(cql, test_keyspace, skip_on_scylla_vnodes):
+    schema = 'p int primary key, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(f"CREATE INDEX ON {table}(v) USING 'sai'")
 
 def test_create_custom_index_with_invalid_class(cql, test_keyspace):
     schema = 'p int primary key, v vector<float, 3>'
@@ -76,6 +104,8 @@ def test_create_custom_index_without_custom_class(cql, test_keyspace):
             cql.execute(f"CREATE CUSTOM INDEX ON {table}(v)")
 
 def test_create_vector_search_index_on_nonvector_column(cql, test_keyspace, scylla_only, skip_without_tablets):
+    """ScyllaDB-only: the native vector_index class rejects non-vector columns.
+    Cassandra SAI accepts all column types, so this rejection is ScyllaDB-specific."""
     schema = 'p int primary key, v int'
     with new_test_table(cql, test_keyspace, schema) as table:
         with pytest.raises(InvalidRequest, match="Vector indexes are only supported on columns of vectors of floats"):
@@ -132,29 +162,34 @@ def test_create_vector_search_index_with_duplicated_columns(cql, test_keyspace, 
         with pytest.raises(InvalidRequest, match=f"Duplicate column x in index target list"):
             cql.execute(f"CREATE CUSTOM INDEX local_idx ON {table}((p), v, x, x) USING 'vector_index'")
 
-def test_create_vector_search_index_with_bad_options(cql, test_keyspace, scylla_only, skip_without_tablets):
+def test_create_vector_search_index_with_bad_options(cql, test_keyspace, skip_on_scylla_vnodes):
     schema = 'p int primary key, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
-        with pytest.raises(InvalidRequest, match="Unsupported option"):
-            cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'vector_index' WITH OPTIONS = {{'bad_option': 'bad_value'}}")
+        with pytest.raises((InvalidRequest, ConfigurationException), match='Unsupported option|not understood by'):
+            cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai' WITH OPTIONS = {{'bad_option': 'bad_value'}}")
 
-def test_create_vector_search_index_with_bad_numeric_value(cql, test_keyspace, scylla_only, skip_without_tablets):
+def test_create_vector_search_index_with_bad_numeric_value(cql, test_keyspace, skip_on_scylla_vnodes):
     schema = 'p int primary key, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
-        for val in ['-1', '513']:
-            with pytest.raises(InvalidRequest, match="out of valid range"):
-                cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'vector_index' WITH OPTIONS = {{'maximum_node_connections': '{val}' }}") 
-        for val in ['dog', '123dog']:
-            with pytest.raises(InvalidRequest, match="not an integer"):
-                cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'vector_index' WITH OPTIONS = {{'maximum_node_connections': '{val}' }}") 
-        with pytest.raises(InvalidRequest, match="out of valid range"):
-            cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'vector_index' WITH OPTIONS = {{'construction_beam_width': '5000' }}") 
+        def check_bad_option(option, bad_range_vals):
+            for val in bad_range_vals:
+                with pytest.raises(InvalidRequest, match='out of valid range|cannot be <= 0'):
+                    cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai' WITH OPTIONS = {{'{option}': '{val}' }}")
+            for val in ['dog', '123dog']:
+                with pytest.raises(InvalidRequest, match='not.*integer'):
+                    cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai' WITH OPTIONS = {{'{option}': '{val}' }}")
 
-def test_create_vector_search_index_with_bad_similarity_value(cql, test_keyspace, scylla_only, skip_without_tablets):
+        check_bad_option('maximum_node_connections', ['-1', '513'])
+        check_bad_option('construction_beam_width', ['-1', '5000'])
+        # search_beam_width is a ScyllaDB-specific option (not in Cassandra SAI).
+        if is_scylla(cql):
+            check_bad_option('search_beam_width', ['-1', '5000'])
+
+def test_create_vector_search_index_with_bad_similarity_value(cql, test_keyspace, skip_on_scylla_vnodes):
     schema = 'p int primary key, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
-        with pytest.raises(InvalidRequest, match="Invalid value in option 'similarity_function'"):
-            cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'vector_index' WITH OPTIONS = {{'similarity_function': 'bad_similarity_function'}}") 
+        with pytest.raises(InvalidRequest, match="Invalid value in option 'similarity_function'|was not recognized"):
+            cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai' WITH OPTIONS = {{'similarity_function': 'bad_similarity_function'}}")
 
 def test_create_vector_search_index_on_nonfloat_vector_column(cql, test_keyspace, scylla_only, skip_without_tablets):
     schema = 'p int primary key, v vector<int, 3>'
@@ -173,23 +208,23 @@ def test_no_view_for_vector_search_index(cql, test_keyspace, scylla_only, skip_w
         result = cql.execute(f"SELECT * FROM system_schema.views WHERE keyspace_name = '{test_keyspace}' AND view_name = 'def_index'")
         assert len(result.current_rows) == 1, "Regular index should create a view in system_schema.views"
         
-def test_describe_custom_index(cql, test_keyspace, skip_without_tablets):
+def test_describe_custom_index(cql, test_keyspace, skip_on_scylla_vnodes):
     schema = 'p int primary key, v1 vector<float, 3>, v2 vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
         # Cassandra inserts a space between the table name and parentheses,
         # Scylla doesn't. This difference doesn't matter because both are
-        # valid CQL commands
-        # Scylla doesn't support sai custom class.
+        # valid CQL commands.
+        # ScyllaDB translates SAI to vector_index, so DESCRIBE shows
+        # 'vector_index'; Cassandra shows 'sai'.
         if is_scylla(cql):
             maybe_space = ''
-            custom_class = 'vector_index'
+            described_class = 'vector_index'
         else:
             maybe_space = ' '
-            custom_class =  'sai'
+            described_class = 'sai'
 
-
-        create_idx_a = f"CREATE INDEX custom ON {table}(v1) USING '{custom_class}'"
-        create_idx_b = f"CREATE CUSTOM INDEX custom1 ON {table}(v2) USING '{custom_class}'"
+        create_idx_a = f"CREATE INDEX custom ON {table}(v1) USING 'sai'"
+        create_idx_b = f"CREATE CUSTOM INDEX custom1 ON {table}(v2) USING 'sai'"
 
         cql.execute(create_idx_a)
         cql.execute(create_idx_b)
@@ -197,8 +232,8 @@ def test_describe_custom_index(cql, test_keyspace, skip_without_tablets):
         a_desc = cql.execute(f"DESC INDEX {test_keyspace}.custom").one().create_statement
         b_desc = cql.execute(f"DESC INDEX {test_keyspace}.custom1").one().create_statement
 
-        assert f"CREATE CUSTOM INDEX custom ON {table}{maybe_space}(v1) USING '{custom_class}'" in a_desc
-        assert f"CREATE CUSTOM INDEX custom1 ON {table}{maybe_space}(v2) USING '{custom_class}'" in b_desc
+        assert f"CREATE CUSTOM INDEX custom ON {table}{maybe_space}(v1) USING '{described_class}'" in a_desc
+        assert f"CREATE CUSTOM INDEX custom1 ON {table}{maybe_space}(v2) USING '{described_class}'" in b_desc
 
 def test_describe_vector_index_with_filtering_columns(cql, test_keyspace, scylla_only, skip_without_tablets):
     schema = 'p int primary key, v vector<float, 3>, f1 int, f2 int'
@@ -353,17 +388,13 @@ def test_vector_index_target_serialization_local_index_with_filtering_columns(cq
         assert len(res) == 1
         assert json.loads(res[0].options['target']) == {"tc": "v", "pk": ["p1", "p2"], "fc": ["f1", "f2"]}
 
-def test_one_vector_index_on_column(cql, test_keyspace, skip_without_tablets):
+def test_one_vector_index_on_column(cql, test_keyspace, skip_on_scylla_vnodes):
     schema = "p int primary key, v vector<float, 3>"
-    if is_scylla(cql):
-        custom_class = 'vector_index'
-    else:
-        custom_class =  'sai'
     with new_test_table(cql, test_keyspace, schema) as table:
-        cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING '{custom_class}'")
-        with pytest.raises(InvalidRequest, match=r"There exists a duplicate custom index|Cannot create more than one storage-attached index on the same column"):
-            cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING '{custom_class}'")
-        cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ON {table}(v) USING '{custom_class}'")
+        cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai'")
+        with pytest.raises(InvalidRequest, match=r"There exists a duplicate custom index|Cannot create more than one storage-attached index on the same column|is a duplicate of existing index"):
+            cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai'")
+        cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ON {table}(v) USING 'sai'")
 
 # Validates fix for issue #26672
 def test_two_same_name_indexes_on_different_tables_with_if_not_exists(cql, test_keyspace, scylla_only, skip_without_tablets):
@@ -373,6 +404,132 @@ def test_two_same_name_indexes_on_different_tables_with_if_not_exists(cql, test_
         with new_test_table(cql, test_keyspace, schema) as table2:
             cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ann_index ON {table}(v) USING 'vector_index'")
             cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ann_index ON {table2}(v) USING 'vector_index'")
+
+###############################################################################
+# SAI (StorageAttachedIndex) compatibility tests
+#
+# Cassandra SAI is accepted by ScyllaDB for vector columns and translated
+# to the native 'vector_index'.  These tests validate all accepted SAI
+# class name variants and that non-vector SAI targets are properly rejected.
+###############################################################################
+
+
+def test_sai_vector_index_with_similarity_function(cql, test_keyspace, skip_on_scylla_vnodes):
+    """SAI vector index should accept the similarity_function option
+    (supported on both ScyllaDB and Cassandra)."""
+    schema = 'p int PRIMARY KEY, v vector<float, 3>'
+    for func in ['cosine', 'euclidean', 'dot_product']:
+        with new_test_table(cql, test_keyspace, schema) as table:
+            cql.execute(
+                f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai' "
+                f"WITH OPTIONS = {{'similarity_function': '{func}'}}"
+            )
+
+
+def test_sai_vector_index_if_not_exists(cql, test_keyspace, skip_on_scylla_vnodes):
+    """IF NOT EXISTS should work with SAI class name."""
+    schema = 'p int PRIMARY KEY, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        idx = unique_name()
+        cql.execute(
+            f"CREATE CUSTOM INDEX IF NOT EXISTS {idx} ON {table}(v) USING 'sai'"
+        )
+        # Creating the same index again with IF NOT EXISTS should not fail
+        cql.execute(
+            f"CREATE CUSTOM INDEX IF NOT EXISTS {idx} ON {table}(v) USING 'sai'"
+        )
+
+
+def test_sai_fully_qualified_class_name(cql, test_keyspace, skip_on_scylla_vnodes):
+    """The fully qualified Cassandra SAI class name should be accepted."""
+    schema = 'p int PRIMARY KEY, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(
+            f"CREATE CUSTOM INDEX ON {table}(v) "
+            f"USING 'org.apache.cassandra.index.sai.StorageAttachedIndex'"
+        )
+
+
+def test_sai_short_class_name(cql, test_keyspace, skip_on_scylla_vnodes):
+    """The short class name 'StorageAttachedIndex' should also be accepted."""
+    schema = 'p int PRIMARY KEY, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'StorageAttachedIndex'")
+
+
+def test_sai_short_class_uppercase_name(cql, test_keyspace, skip_on_scylla_vnodes):
+    """The short class name 'StorageAttachedIndex' should also be accepted."""
+    schema = 'p int PRIMARY KEY, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'SAI'")
+
+
+def test_sai_short_class_name_case_insensitive(cql, test_keyspace, skip_on_scylla_vnodes):
+    """Short SAI class name matching should be case-insensitive."""
+    schema = 'p int PRIMARY KEY, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(
+            f"CREATE CUSTOM INDEX ON {table}(v) "
+            f"USING 'STORAGEATTACHEDINDEX'"
+        )
+
+
+def test_sai_fqn_requires_exact_case(cql, test_keyspace, skip_without_tablets):
+    """The fully qualified SAI class name requires exact casing.
+    Only 'org.apache.cassandra.index.sai.StorageAttachedIndex' is accepted."""
+    schema = 'p int PRIMARY KEY, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        with pytest.raises(InvalidRequest, match=r"Non-supported custom class|Unable to find"):
+            cql.execute(
+                f"CREATE CUSTOM INDEX ON {table}(v) "
+                f"USING 'org.apache.cassandra.index.sai.STORAGEATTACHEDINDEX'"
+            )
+
+
+def test_sai_local_index_with_vector_column(cql, test_keyspace, skip_without_tablets):
+    """SAI with a multi-column (local index) target like ((p), v) should
+    succeed — vector_index supports local indexes."""
+    schema = 'p int, q int, v vector<float, 3>, PRIMARY KEY (p, q)'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(f"CREATE CUSTOM INDEX ON {table}((p), v) USING 'sai'")
+
+
+# --- SAI on non-vector columns: rejected by ScyllaDB, accepted by Cassandra ---
+#
+# Cassandra SAI natively supports indexing regular and collection columns.
+# ScyllaDB only accepts SAI for vector columns and rejects non-vector targets
+# with an explicit error.  These tests validate the ScyllaDB rejection; they
+# would pass on Cassandra but are expected to fail on ScyllaDB (scylla_only).
+
+
+def test_sai_on_regular_column_rejected(cql, test_keyspace, scylla_only):
+    """SAI on a regular (non-vector) column is rejected by ScyllaDB.
+    On Cassandra this would succeed since SAI supports arbitrary columns."""
+    schema = 'p int PRIMARY KEY, x text'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        with pytest.raises(InvalidRequest, match='SAI.*only supported on vector columns'):
+            cql.execute(f"CREATE CUSTOM INDEX ON {table}(x) USING 'sai'")
+
+
+def test_sai_entries_on_map_rejected(cql, test_keyspace, scylla_only):
+    """SAI ENTRIES index on a MAP column is rejected by ScyllaDB.
+    On Cassandra this is a common pattern for metadata filtering."""
+    schema = 'p int PRIMARY KEY, metadata_s map<text, text>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        with pytest.raises(InvalidRequest, match='SAI.*only supported on vector columns'):
+            cql.execute(
+                f"CREATE CUSTOM INDEX ON {table}(ENTRIES(metadata_s)) "
+                f"USING 'sai'"
+            )
+
+
+def test_sai_on_nonexistent_column(cql, test_keyspace, skip_on_scylla_vnodes):
+    """SAI on a non-existent column should fail with an appropriate error."""
+    schema = 'p int PRIMARY KEY, v vector<float, 3>'
+    with new_test_table(cql, test_keyspace, schema) as table:
+        with pytest.raises(InvalidRequest, match='No column definition found|Undefined column name|SAI.*only supported on vector columns'):
+            cql.execute(f"CREATE CUSTOM INDEX ON {table}(nonexistent) USING 'sai'")
+
 
 ###############################################################################
 # Tests for CDC with vector indexes
