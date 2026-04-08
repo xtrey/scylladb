@@ -528,7 +528,7 @@ public:
 
     future<utils::chunked_vector<token_range_endpoints>> describe_ring(const sstring& keyspace, bool include_only_local_dc = false) const;
 
-    future<utils::chunked_vector<dht::token_range_endpoints>> describe_ring_for_table(const sstring& keyspace_name, const sstring& table_name) const;
+    future<utils::chunked_vector<dht::token_range_endpoints>> describe_ring_for_table(table_id tid) const;
 
     /**
      * Retrieve a map of tokens to endpoints, including the bootstrapping ones.

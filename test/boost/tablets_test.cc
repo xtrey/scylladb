@@ -6037,8 +6037,7 @@ SEASTAR_THREAD_TEST_CASE(test_tablets_describe_ring) {
 
         auto ks = add_keyspace(e, {{topo.dc(), num_racks}}, num_racks * nodes_per_rack);
         auto table = add_table(e, ks, std::map<sstring, sstring>({{"min_tablet_count", std::to_string(min_tablet_count)}})).get();
-        auto s = db.find_schema(table);
-        auto ring = ss.describe_ring_for_table(s->ks_name(), s->cf_name()).get();
+        auto ring = ss.describe_ring_for_table(table).get();
         BOOST_REQUIRE_GE(ring.size(), min_tablet_count);
     }, cfg).get();
 }
