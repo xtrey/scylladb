@@ -33,7 +33,6 @@
 #include "db/view/view.hh"
 #include "service/migration_manager.hh"
 #include "replica/database.hh"
-#include "db/config.hh"
 #include "cql3/cql_config.hh"
 
 namespace cql3 {
@@ -107,7 +106,7 @@ static bool validate_primary_key(
     return new_non_pk_column;
 }
 
-std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(data_dictionary::database db, locator::token_metadata_ptr tmptr) const {
+std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(data_dictionary::database db, locator::token_metadata_ptr tmptr, const view_restrictions& vr) const {
     // We need to make sure that:
     //  - materialized view name is valid
     //  - primary key includes all columns in base table's primary key
@@ -325,7 +324,7 @@ std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(
     }
 
     if (!invalid_not_null_column_names.empty() &&
-        db.get_config().strict_is_not_null_in_views() == db::tri_mode_restriction_t::mode::TRUE) {
+        vr.strict_is_not_null_in_views() == db::tri_mode_restriction_t::mode::TRUE) {
         throw exceptions::invalid_request_exception(
             fmt::format("The IS NOT NULL restriction is allowed only columns which are part of the view's primary key,"
                         " found columns: {}. The flag strict_is_not_null_in_views can be used to turn this error "
@@ -334,7 +333,7 @@ std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(
     }
 
     if (!invalid_not_null_column_names.empty() &&
-        db.get_config().strict_is_not_null_in_views() == db::tri_mode_restriction_t::mode::WARN) {
+        vr.strict_is_not_null_in_views() == db::tri_mode_restriction_t::mode::WARN) {
         sstring warning_text = fmt::format(
             "The IS NOT NULL restriction is allowed only columns which are part of the view's primary key,"
             " found columns: {}. Restrictions on these columns will be silently ignored. "
@@ -402,7 +401,7 @@ std::pair<view_ptr, cql3::cql_warnings_vec> create_view_statement::prepare_view(
 future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, utils::chunked_vector<mutation>, cql3::cql_warnings_vec>>
 create_view_statement::prepare_schema_mutations(query_processor& qp, const query_options&, api::timestamp_type ts) const {
     utils::chunked_vector<mutation> m;
-    auto [definition, warnings] = prepare_view(qp.db(), qp.proxy().get_token_metadata_ptr());
+    auto [definition, warnings] = prepare_view(qp.db(), qp.proxy().get_token_metadata_ptr(), qp.get_cql_config().view_restrictions);
     try {
         m = co_await service::prepare_new_view_announcement(qp.proxy(), std::move(definition), ts);
     } catch (const exceptions::already_exists_exception& e) {
