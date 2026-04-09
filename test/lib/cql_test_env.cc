@@ -740,7 +740,7 @@ private:
             _proxy.start(std::ref(_db), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get(), std::ref(_feature_service), std::ref(_token_metadata), std::ref(_erm_factory)).get();
             auto stop_proxy = defer_verbose_shutdown("storage proxy", [this] { _proxy.stop().get(); });
 
-            _cql_config.start(cql3::cql_config::default_tag{}).get();
+            _cql_config.start(seastar::sharded_parameter([&] { return cql3::cql_config(*cfg); })).get();
             auto stop_cql_config = defer_verbose_shutdown("cql config", [this] { _cql_config.stop().get(); });
 
             cql3::query_processor::memory_config qp_mcfg;
