@@ -13,7 +13,6 @@ import time
 import random
 
 from test.pylib.manager_client import ManagerClient, ServerInfo
-from test.cluster.object_store.conftest import format_tuples
 from test.cluster.util import wait_for_cql_and_get_hosts, get_replication, new_test_keyspace
 from test.pylib.rest_client import read_barrier
 from test.pylib.util import unique_name, wait_all
@@ -26,22 +25,6 @@ import statistics
 logger = logging.getLogger(__name__)
 
 
-def create_ks_and_cf(cql):
-    ks = 'test_ks'
-    cf = 'test_cf'
-
-    replication_opts = format_tuples({'class': 'NetworkTopologyStrategy', 'replication_factor': '1'})
-    cql.execute((f"CREATE KEYSPACE {ks} WITH REPLICATION = {replication_opts};"))
-    cql.execute(f"CREATE TABLE {ks}.{cf} ( name text primary key, value text );")
-
-    rows = [('0', 'zero'),
-            ('1', 'one'),
-            ('2', 'two')]
-    for row in rows:
-        cql_fmt = "INSERT INTO {}.{} ( name, value ) VALUES ('{}', '{}');"
-        cql.execute(cql_fmt.format(ks, cf, *row))
-
-    return ks, cf
 
 
 async def take_snapshot(ks, servers, manager, logger):
