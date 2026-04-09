@@ -11,6 +11,7 @@
 #include "cql3/util.hh"
 #include "raw/batch_statement.hh"
 #include "db/config.hh"
+#include "cql3/cql_config.hh"
 #include "db/consistency_level_validations.hh"
 #include "data_dictionary/data_dictionary.hh"
 #include <seastar/core/execution_stage.hh>
@@ -195,7 +196,7 @@ void batch_statement::verify_batch_size(query_processor& qp, const utils::chunke
         return;     // We only warn for batch spanning multiple mutations
     }
 
-    size_t warn_threshold = qp.db().get_config().batch_size_warn_threshold_in_kb() * 1024;
+    size_t warn_threshold = qp.get_cql_config().batch_size_warn_threshold_in_kb() * 1024;
     size_t fail_threshold = qp.db().get_config().batch_size_fail_threshold_in_kb() * 1024;
 
     size_t size = 0;

@@ -23,12 +23,14 @@ struct cql_config {
     utils::updateable_value<uint32_t> select_internal_page_size;
     utils::updateable_value<db::tri_mode_restriction> strict_allow_filtering;
     utils::updateable_value<bool> enable_parallelized_aggregation;
+    utils::updateable_value<uint32_t> batch_size_warn_threshold_in_kb;
 
     explicit cql_config(const db::config& cfg)
         : restrictions(cfg)
         , select_internal_page_size(cfg.select_internal_page_size)
         , strict_allow_filtering(cfg.strict_allow_filtering)
         , enable_parallelized_aggregation(cfg.enable_parallelized_aggregation)
+        , batch_size_warn_threshold_in_kb(cfg.batch_size_warn_threshold_in_kb)
     {}
     struct default_tag{};
     cql_config(default_tag)
@@ -36,6 +38,7 @@ struct cql_config {
         , select_internal_page_size(10000)
         , strict_allow_filtering(db::tri_mode_restriction(db::tri_mode_restriction_t::mode::WARN))
         , enable_parallelized_aggregation(true)
+        , batch_size_warn_threshold_in_kb(128)
     {}
 };
 
