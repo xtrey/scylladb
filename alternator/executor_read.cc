@@ -1313,7 +1313,7 @@ static future<executor::request_return_type> query_vector(
         std::string_view num_str = rjson::to_string_view(*n_val);
         float f;
         auto [ptr, ec] = std::from_chars(num_str.data(), num_str.data() + num_str.size(), f);
-        if (ec != std::errc{} || ptr != num_str.data() + num_str.size()) {
+        if (ec != std::errc{} || ptr != num_str.data() + num_str.size() || !std::isfinite(f)) {
             co_return api_error::validation(
                 format("VectorSearch QueryVector element '{}' is not a valid number", num_str));
         }
