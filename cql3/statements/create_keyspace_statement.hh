@@ -30,6 +30,7 @@ class keyspace_metadata;
 namespace cql3 {
 
 class query_processor;
+struct replication_restrictions;
 
 namespace statements {
 
@@ -88,7 +89,8 @@ std::vector<sstring> check_against_restricted_replication_strategies(
     query_processor& qp,
     const sstring& keyspace,
     const ks_prop_defs& attrs,
-    cql_stats& stats);
+    cql_stats& stats,
+    const cql3::replication_restrictions& rr);
 
 }
 

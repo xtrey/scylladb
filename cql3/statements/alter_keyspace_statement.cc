@@ -27,6 +27,7 @@
 #include "data_dictionary/data_dictionary.hh"
 #include "data_dictionary/keyspace_metadata.hh"
 #include "cql3/query_processor.hh"
+#include "cql3/cql_config.hh"
 #include "cql3/statements/ks_prop_defs.hh"
 #include "create_keyspace_statement.hh"
 #include "gms/feature_service.hh"
@@ -267,7 +268,7 @@ cql3::statements::alter_keyspace_statement::prepare(data_dictionary::database db
 
 future<::shared_ptr<cql_transport::messages::result_message>>
 cql3::statements::alter_keyspace_statement::execute(query_processor& qp, service::query_state& state, const query_options& options, std::optional<service::group0_guard> guard) const {
-    std::vector<sstring> warnings = check_against_restricted_replication_strategies(qp, keyspace(), *_attrs, qp.get_cql_stats());
+    std::vector<sstring> warnings = check_against_restricted_replication_strategies(qp, keyspace(), *_attrs, qp.get_cql_stats(), qp.get_cql_config().replication_restrictions);
     return schema_altering_statement::execute(qp, state, options, std::move(guard)).then([warnings = std::move(warnings)] (::shared_ptr<messages::result_message> msg) {
         for (const auto& warning : warnings) {
             msg->add_warning(warning);
