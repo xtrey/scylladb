@@ -197,7 +197,7 @@ void batch_statement::verify_batch_size(query_processor& qp, const utils::chunke
     }
 
     size_t warn_threshold = qp.get_cql_config().batch_size_warn_threshold_in_kb() * 1024;
-    size_t fail_threshold = qp.db().get_config().batch_size_fail_threshold_in_kb() * 1024;
+    size_t fail_threshold = qp.get_cql_config().batch_size_fail_threshold_in_kb() * 1024;
 
     size_t size = 0;
     for (auto&m : mutations) {
