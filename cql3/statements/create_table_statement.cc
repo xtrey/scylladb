@@ -30,7 +30,6 @@
 #include "gms/feature_service.hh"
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
-#include "db/config.hh"
 #include "compaction/time_window_compaction_strategy.hh"
 #include "db/tags/extension.hh"
 #include "db/tags/utils.hh"
@@ -262,7 +261,7 @@ std::unique_ptr<prepared_statement> create_table_statement::raw_statement::prepa
 
     stmt->_use_compact_storage = _properties.use_compact_storage();
     if (stmt->_use_compact_storage) {
-        if (!db.get_config().enable_create_table_with_compact_storage()) {
+        if (!cfg.enable_create_table_with_compact_storage()) {
             throw exceptions::invalid_request_exception("Support for the deprecated feature of 'CREATE TABLE WITH COMPACT STORAGE' is disabled and will eventually be removed in a future version.  To enable, set the 'enable_create_table_with_compact_storage' config option to 'true'.");
         }
         stmt_warning("CREATE TABLE WITH COMPACT STORAGE is deprecated and will eventually be removed in a future version.");
