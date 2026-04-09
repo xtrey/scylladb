@@ -1807,7 +1807,7 @@ future<> storage_service::on_change(gms::inet_address endpoint, locator::host_id
     slogger.debug("endpoint={} on_change:     states={}, permit_id={}", endpoint, states, pid);
 
     auto ep_state = _gossiper.get_endpoint_state_ptr(host_id);
-    if (!ep_state || _gossiper.is_dead_state(*ep_state)) {
+    if (!ep_state || _gossiper.is_left(*ep_state)) {
         slogger.debug("Ignoring state change for dead or unknown endpoint: {}", endpoint);
         co_return;
     }

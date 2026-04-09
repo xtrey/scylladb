@@ -647,7 +647,7 @@ future<> gossiper::do_apply_state_locally(locator::host_id node, endpoint_state 
             }
             // Re-rake after apply_new_states
             es = get_endpoint_state_ptr(node);
-            if (!is_alive(es->get_host_id()) && !is_dead_state(*es) && !shadow_round) { // unless of course, it was dead
+            if (!is_alive(es->get_host_id()) && !is_left(*es) && !shadow_round) { // unless of course, it was dead
                 mark_alive(es);
             }
         } else {
@@ -1656,7 +1656,7 @@ future<> gossiper::handle_major_state_change(endpoint_state eps, permit_id pid, 
 
     endpoint_state_ptr eps_old = get_endpoint_state_ptr(ep);
 
-    if (!is_dead_state(eps) && !shadow_round) {
+    if (!is_left(eps) && !shadow_round) {
         if (_endpoint_state_map.contains(ep))  {
             logger.info("Node {} has restarted, now UP, status = {}", ep, get_gossip_status(eps));
         } else {
@@ -1681,7 +1681,7 @@ future<> gossiper::handle_major_state_change(endpoint_state eps, permit_id pid, 
     if (!ep_state) {
         throw std::out_of_range(format("ep={}", ep));
     }
-    if (!is_dead_state(*ep_state)) {
+    if (!is_left(*ep_state)) {
         mark_alive(ep_state);
     } else {
         logger.debug("Not marking {} alive due to dead state {}", ep, get_gossip_status(eps));
@@ -1698,7 +1698,7 @@ future<> gossiper::handle_major_state_change(endpoint_state eps, permit_id pid, 
     }
 }
 
-bool gossiper::is_dead_state(const endpoint_state& eps) const {
+bool gossiper::is_left(const endpoint_state& eps) const {
     return _topo_sm._topology.left_nodes.contains(raft::server_id(eps.get_host_id().uuid()));
 }
 

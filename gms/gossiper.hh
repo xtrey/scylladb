@@ -454,7 +454,7 @@ private:
 public:
     bool is_alive(locator::host_id id) const;
 
-    bool is_dead_state(const endpoint_state& eps) const;
+    bool is_left(const endpoint_state& eps) const;
     // Wait for nodes to be alive on all shards
     future<> wait_alive(std::vector<gms::inet_address> nodes, std::chrono::milliseconds timeout);
     future<> wait_alive(std::vector<locator::host_id> nodes, std::chrono::milliseconds timeout);
