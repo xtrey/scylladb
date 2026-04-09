@@ -29,6 +29,7 @@ struct cql_config {
     utils::updateable_value<bool> enable_parallelized_aggregation;
     utils::updateable_value<uint32_t> batch_size_warn_threshold_in_kb;
     utils::updateable_value<uint32_t> batch_size_fail_threshold_in_kb;
+    utils::updateable_value<bool> restrict_future_timestamp;
 
     explicit cql_config(const db::config& cfg)
         : restrictions(cfg)
@@ -39,6 +40,7 @@ struct cql_config {
         , enable_parallelized_aggregation(cfg.enable_parallelized_aggregation)
         , batch_size_warn_threshold_in_kb(cfg.batch_size_warn_threshold_in_kb)
         , batch_size_fail_threshold_in_kb(cfg.batch_size_fail_threshold_in_kb)
+        , restrict_future_timestamp(cfg.restrict_future_timestamp)
     {}
     struct default_tag{};
     cql_config(default_tag)
@@ -50,6 +52,7 @@ struct cql_config {
         , enable_parallelized_aggregation(true)
         , batch_size_warn_threshold_in_kb(128)
         , batch_size_fail_threshold_in_kb(1024)
+        , restrict_future_timestamp(true)
     {}
 };
 

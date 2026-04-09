@@ -10,7 +10,6 @@
 #include "batch_statement.hh"
 #include "cql3/util.hh"
 #include "raw/batch_statement.hh"
-#include "db/config.hh"
 #include "cql3/cql_config.hh"
 #include "db/consistency_level_validations.hh"
 #include "data_dictionary/data_dictionary.hh"
@@ -243,7 +242,7 @@ future<shared_ptr<cql_transport::messages::result_message>> batch_statement::exe
 
 future<shared_ptr<cql_transport::messages::result_message>> batch_statement::execute_without_checking_exception_message(
         query_processor& qp, service::query_state& state, const query_options& options, std::optional<service::group0_guard> guard) const {
-    cql3::util::validate_timestamp(qp.db().get_config(), options, _attrs);
+    cql3::util::validate_timestamp(qp.get_cql_config(), options, _attrs);
     return batch_stage(this, seastar::ref(qp), seastar::ref(state),
                        seastar::cref(options), false, options.get_timestamp(state));
 }
