@@ -47,7 +47,6 @@
 #include <seastar/core/coroutine.hh>
 #include <seastar/coroutine/all.hh>
 #include <seastar/coroutine/as_future.hh>
-#include "db/config.hh"
 #include "db/system_keyspace.hh"
 #include "service/storage_proxy.hh"
 #include "db/batchlog_manager.hh"
@@ -287,7 +286,9 @@ mutation_reader repair_reader::make_reader(
     const dht::sharder& remote_sharder,
     unsigned remote_shard,
     gc_clock::time_point compaction_time,
-    incremental_repair_meta inc) {
+    incremental_repair_meta inc,
+    uint64_t multishard_reader_buffer_hint_size,
+    bool multishard_reader_enable_read_ahead) {
     switch (strategy) {
         case read_strategy::local: {
             auto ms = mutation_source([&cf, compaction_time] (
@@ -313,12 +314,11 @@ mutation_reader repair_reader::make_reader(
         }
         case read_strategy::multishard_split: {
             std::optional<size_t> multishard_reader_buffer_size;
-            const auto& dbconfig = db.local().get_config();
-            if (dbconfig.repair_multishard_reader_buffer_hint_size()) {
+            if (multishard_reader_buffer_hint_size) {
                 // Setting the repair buffer size as the multishard reader's buffer
                 // size helps avoid extra cross-shard round-trips and possible
                 // evict-recreate cycles.
-                multishard_reader_buffer_size = dbconfig.repair_multishard_reader_buffer_hint_size();
+                multishard_reader_buffer_size = multishard_reader_buffer_hint_size;
             }
             return make_multishard_streaming_reader(db, _schema, _permit, [this] {
                 auto shard_range = _sharder.next();
@@ -326,7 +326,7 @@ mutation_reader repair_reader::make_reader(
                     return std::optional<dht::partition_range>(dht::to_partition_range(*shard_range));
                 }
                 return std::optional<dht::partition_range>();
-            }, compaction_time, multishard_reader_buffer_size, read_ahead(dbconfig.repair_multishard_reader_enable_read_ahead()));
+            }, compaction_time, multishard_reader_buffer_size, read_ahead(multishard_reader_enable_read_ahead));
         }
         case read_strategy::multishard_filter: {
             return make_filtering_reader(make_multishard_streaming_reader(db, _schema, _permit, _range, compaction_time, {}, read_ahead::yes),
@@ -354,14 +354,17 @@ repair_reader::repair_reader(
     uint64_t seed,
     read_strategy strategy,
     gc_clock::time_point compaction_time,
-    incremental_repair_meta inc)
+    incremental_repair_meta inc,
+    uint64_t multishard_reader_buffer_hint_size,
+    bool multishard_reader_enable_read_ahead)
     : _schema(s)
     , _permit(std::move(permit))
     , _range(dht::to_partition_range(range))
     , _sharder(remote_sharder, range, remote_shard)
     , _seed(seed)
     , _local_read_op(strategy == read_strategy::local ? std::optional(cf.read_in_progress()) : std::nullopt)
-    , _reader(make_reader(db, cf, strategy, remote_sharder, remote_shard, compaction_time, inc))
+    , _reader(make_reader(db, cf, strategy, remote_sharder, remote_shard, compaction_time, inc,
+                          multishard_reader_buffer_hint_size, multishard_reader_enable_read_ahead))
 { }
 
 future<mutation_fragment_opt>
@@ -1321,7 +1324,9 @@ private:
                     return read_strategy;
                 }),
                 _compaction_time,
-                _incremental_repair_meta);
+                _incremental_repair_meta,
+                _rs.get_config().repair_multishard_reader_buffer_hint_size(),
+                bool(_rs.get_config().repair_multishard_reader_enable_read_ahead()));
         }
         try {
             while (cur_size < _max_row_buf_size) {
@@ -2630,7 +2635,7 @@ future<repair_flush_hints_batchlog_response> repair_service::repair_flush_hints_
     auto permit = co_await seastar::get_units(_flush_hints_batchlog_sem, 1);
     bool updated = false;
     auto now = gc_clock::now();
-    auto cache_time = std::chrono::milliseconds(get_db().local().get_config().repair_hints_batchlog_flush_cache_time_in_ms());
+    auto cache_time = std::chrono::milliseconds(_config.repair_hints_batchlog_flush_cache_time_in_ms());
     auto cache_disabled = cache_time == std::chrono::milliseconds(0);
     auto flush_time = now;
     db::all_batches_replayed all_replayed = db::all_batches_replayed::yes;
@@ -3500,7 +3505,7 @@ public:
                     // To save memory and have less different conditions, we
                     // use the estimation for RBNO repair as well.
 
-                    _estimated_partitions *= _shard_task.db.local().get_config().repair_partition_count_estimation_ratio();
+                    _estimated_partitions *= _shard_task.rs.get_config().repair_partition_count_estimation_ratio();
                 }
 
                 parallel_for_each(master.all_nodes(), coroutine::lambda([&] (repair_node_state& ns) -> future<> {
@@ -3636,7 +3641,8 @@ repair_service::repair_service(sharded<service::topology_state_machine>& tsm,
         sharded<db::view::view_building_worker>& vbw,
         tasks::task_manager& tm,
         service::migration_manager& mm,
-        size_t max_repair_memory)
+        size_t max_repair_memory,
+        config cfg)
     : _tsm(tsm)
     , _gossiper(gossiper)
     , _messaging(ms)
@@ -3651,6 +3657,7 @@ repair_service::repair_service(sharded<service::topology_state_machine>& tsm,
     , _node_ops_metrics(_repair_module)
     , _max_repair_memory(max_repair_memory)
     , _memory_sem(max_repair_memory)
+    , _config(std::move(cfg))
 {
     tm.register_module("repair", _repair_module);
     if (this_shard_id() == 0) {
@@ -3661,7 +3668,7 @@ repair_service::repair_service(sharded<service::topology_state_machine>& tsm,
 
 future<> repair_service::start(utils::disk_space_monitor* dsm) {
     if (dsm && (this_shard_id() == 0)) {
-        _out_of_space_subscription = dsm->subscribe(_db.local().get_config().critical_disk_utilization_level, [this] (auto threshold_reached) {
+        _out_of_space_subscription = dsm->subscribe(_config.critical_disk_utilization_level, [this] (auto threshold_reached) {
             if (threshold_reached) {
                 return container().invoke_on_all([] (repair_service& rs) { return rs.drain(); });
             }
