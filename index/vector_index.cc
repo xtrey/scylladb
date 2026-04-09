@@ -18,6 +18,7 @@
 #include "index/secondary_index_manager.hh"
 #include "index/target_parser.hh"
 #include "types/concrete_types.hh"
+#include "utils/UUID_gen.hh"
 #include "types/types.hh"
 #include "utils/managed_string.hh"
 #include <ranges>
@@ -484,11 +485,11 @@ bool vector_index::is_vector_index_on_column(const index_metadata& im, const sst
     return false;
 }
 
-/// Returns the schema version of the base table at which the index was created.
-/// This is used to determine if the index needs to be rebuilt after a schema change.
-/// The CREATE INDEX and DROP INDEX statements does change the schema version.
-table_schema_version vector_index::index_version(const schema& schema) {
-    return schema.version();
+/// Returns a timeuuid representing the time at which the index was created.
+/// This is used to determine if the index needs to be rebuilt, and to enable
+/// routing by creation time when multiple vector indexes exist on the same column.
+utils::UUID vector_index::index_version(const schema& schema) {
+    return utils::UUID_gen::get_time_UUID();
 }
 
 std::unique_ptr<secondary_index::custom_index> vector_index_factory() {

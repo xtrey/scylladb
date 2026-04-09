@@ -286,26 +286,21 @@ def test_vector_index_version_on_recreate(cql, test_keyspace, scylla_only, skip_
     schema = 'p int primary key, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
         _, table_name = table.split('.')
-        base_table_version_query = f"SELECT version FROM system_schema.scylla_tables WHERE keyspace_name = '{test_keyspace}' AND table_name = '{table_name}'"
         index_version_query = f"SELECT * FROM system_schema.indexes WHERE keyspace_name = '{test_keyspace}' AND table_name = '{table_name}' AND index_name = 'abc'"
-
-        # Fetch the base table version.
-        version = str(cql.execute(base_table_version_query).one().version)
 
         # Create the vector index.
         cql.execute(f"CREATE CUSTOM INDEX abc ON {table}(v) USING 'vector_index'")
 
-        # Fetch the index version.
-        # It should be the same as the base table version before the index was created.
+        # Fetch the index version (a timeuuid generated at index creation time).
         result = cql.execute(index_version_query)
         assert len(result.current_rows) == 1
-        assert result.current_rows[0].options['index_version'] == version
+        version = result.current_rows[0].options['index_version']
 
         # Drop and create new index with the same parameters.
         cql.execute(f"DROP INDEX {test_keyspace}.abc")
         cql.execute(f"CREATE CUSTOM INDEX abc ON {table}(v) USING 'vector_index'")
 
-        # Check if the index version changed.
+        # Check that the index version changed after recreation.
         result = cql.execute(index_version_query)
         assert len(result.current_rows) == 1
         assert result.current_rows[0].options['index_version'] != version
@@ -315,25 +310,20 @@ def test_vector_index_version_unaffected_by_alter(cql, test_keyspace, scylla_onl
     schema = 'p int primary key, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
         _, table_name = table.split('.')
-        base_table_version_query = f"SELECT version FROM system_schema.scylla_tables WHERE keyspace_name = '{test_keyspace}' AND table_name = '{table_name}'"
         index_version_query = f"SELECT * FROM system_schema.indexes WHERE keyspace_name = '{test_keyspace}' AND table_name = '{table_name}' AND index_name = 'abc'"
-
-        # Fetch the base table version.
-        version = str(cql.execute(base_table_version_query).one().version)
 
         # Create the vector index.
         cql.execute(f"CREATE CUSTOM INDEX abc ON {table}(v) USING 'vector_index'")
 
-        # Fetch the index version.
-        # It should be the same as the base table version before the index was created.
+        # Fetch the index version (a timeuuid generated at index creation time).
         result = cql.execute(index_version_query)
         assert len(result.current_rows) == 1
-        assert result.current_rows[0].options['index_version'] == version
+        version = result.current_rows[0].options['index_version']
 
         # ALTER the base table.
         cql.execute(f"ALTER TABLE {table} ADD v2 vector<float, 3>")
 
-        # Check if the index version is still the same.
+        # Check that the index version is still the same after ALTER.
         result = cql.execute(index_version_query)
         assert len(result.current_rows) == 1
         assert result.current_rows[0].options['index_version'] == version
