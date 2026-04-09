@@ -14,6 +14,7 @@
 #include "utils/assert.hh"
 #include <seastar/core/coroutine.hh>
 #include "cql3/query_options.hh"
+#include "cql3/cql_config.hh"
 #include "cql3/statements/alter_table_statement.hh"
 #include "cql3/statements/alter_type_statement.hh"
 #include "exceptions/exceptions.hh"
@@ -592,7 +593,7 @@ std::unique_ptr<cql3::statements::prepared_statement>
 alter_table_statement::raw_statement::prepare(data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     auto t = db.try_find_table(keyspace(), column_family());
     std::optional<schema_ptr> s = t ? std::make_optional(t->schema()) : std::nullopt;
-    std::optional<sstring> warning = check_restricted_table_properties(db, s, keyspace(), column_family(), *_properties);
+    std::optional<sstring> warning = check_restricted_table_properties(s, keyspace(), column_family(), *_properties, cfg.twcs_restrictions);
     if (warning) {
         // FIXME: should this warning be returned to the caller?
         // See https://github.com/scylladb/scylladb/issues/20945

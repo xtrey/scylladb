@@ -19,6 +19,7 @@
 #include "cql3/statements/create_table_statement.hh"
 #include "cql3/statements/prepared_statement.hh"
 #include "cql3/query_processor.hh"
+#include "cql3/cql_config.hh"
 
 #include "auth/resource.hh"
 #include "auth/service.hh"
@@ -203,7 +204,7 @@ std::unique_ptr<prepared_statement> create_table_statement::raw_statement::prepa
         }
         stmt_warnings.emplace_back(std::move(msg));
     };
-    std::optional<sstring> warning = check_restricted_table_properties(db, std::nullopt, keyspace(), column_family(), *_properties.properties());
+    std::optional<sstring> warning = check_restricted_table_properties(std::nullopt, keyspace(), column_family(), *_properties.properties(), cfg.twcs_restrictions);
     if (warning) {
         // FIXME: should this warning be returned to the caller?
         // See https://github.com/scylladb/scylladb/issues/20945
@@ -502,10 +503,10 @@ void create_table_statement::raw_statement::add_column_alias(::shared_ptr<column
 // legal but restricted by the configuration. Checks for other of errors
 // in the table's options are done elsewhere.
 std::optional<sstring> check_restricted_table_properties(
-    data_dictionary::database db,
     std::optional<schema_ptr> schema,
     const sstring& keyspace, const sstring& table,
-    const cf_prop_defs& cfprops)
+    const cf_prop_defs& cfprops,
+    const cql3::twcs_restrictions& tr)
 {
     // Note: In the current implementation, CREATE TABLE calls this function
     // after cfprops.validate() was called, but ALTER TABLE calls this
@@ -536,7 +537,7 @@ std::optional<sstring> check_restricted_table_properties(
         std::map<sstring, sstring> options = (strategy) ? cfprops.get_compaction_type_options() : (*schema)->compaction_strategy_options();
         compaction::time_window_compaction_strategy_options twcs_options(options);
         long ttl = (cfprops.has_property(cf_prop_defs::KW_DEFAULT_TIME_TO_LIVE)) ? cfprops.get_default_time_to_live() : current_ttl.count();
-        auto max_windows = db.get_config().twcs_max_window_count();
+        auto max_windows = tr.twcs_max_window_count();
 
         // It may happen that an user tries to update an unrelated table property. Allow the request through.
         if (!cfprops.has_property(cf_prop_defs::KW_DEFAULT_TIME_TO_LIVE) && !strategy) {
@@ -556,7 +557,7 @@ std::optional<sstring> check_restricted_table_properties(
                                                    "highly discouraged.", ttl, twcs_options.get_sstable_window_size().count(), window_count, max_windows));
             }
         } else {
-              switch (db.get_config().restrict_twcs_without_default_ttl()) {
+              switch (tr.restrict_twcs_without_default_ttl()) {
               case db::tri_mode_restriction_t::mode::TRUE:
                   throw exceptions::configuration_exception(
                       "TimeWindowCompactionStrategy tables without a strict default_time_to_live setting "

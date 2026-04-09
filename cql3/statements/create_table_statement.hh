@@ -28,6 +28,7 @@
 namespace cql3 {
 
 class query_processor;
+struct twcs_restrictions;
 class cf_prop_defs;
 
 namespace statements {
@@ -129,10 +130,10 @@ protected:
 };
 
 std::optional<sstring> check_restricted_table_properties(
-    data_dictionary::database db,
     std::optional<schema_ptr> schema,
     const sstring& keyspace, const sstring& table,
-    const cf_prop_defs& cfprops);
+    const cf_prop_defs& cfprops,
+    const twcs_restrictions& tr);
 
 }
 
