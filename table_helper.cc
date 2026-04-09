@@ -30,7 +30,7 @@ static schema_ptr parse_new_cf_statement(cql3::query_processor& qp, const sstrin
     (void)parsed_cf_stmt->keyspace(); // This will SCYLLA_ASSERT if cql statement did not contain keyspace
     ::shared_ptr<cql3::statements::create_table_statement> statement =
                     static_pointer_cast<cql3::statements::create_table_statement>(
-                                    parsed_cf_stmt->prepare(db, qp.get_cql_stats())->statement);
+                                    parsed_cf_stmt->prepare(db, qp.get_cql_stats(), qp.get_cql_config())->statement);
     auto schema = statement->get_cf_meta_data(db);
 
     // Generate the CF UUID based on its KF names. This is needed to ensure that

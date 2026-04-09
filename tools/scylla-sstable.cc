@@ -21,6 +21,7 @@
 #include "compaction/compaction_strategy.hh"
 #include "compaction/compaction_strategy_state.hh"
 #include "cql3/statements/raw/parsed_statement.hh"
+#include "cql3/cql_config.hh"
 #include "cql3/statements/modification_statement.hh"
 #include "cql3/statements/select_statement.hh"
 #include "cql3/query_result_printer.hh"
@@ -1730,7 +1731,7 @@ validate_and_prepare_query(std::string_view query, std::string_view table_name, 
     cql3::cql_stats cql_stats;
 
     try {
-        auto prepared_statement = raw_statement->prepare(db, cql_stats);
+        auto prepared_statement = raw_statement->prepare(db, cql_stats, cql3::default_cql_config);
         return std::move(prepared_statement->statement);
     } catch (...) {
         throw std::invalid_argument(seastar::format("failed to prepare query: {}", std::current_exception()));

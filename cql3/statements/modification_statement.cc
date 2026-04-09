@@ -576,7 +576,7 @@ modification_statement::prepare_for_broadcast_tables() const {
 namespace raw {
 
 std::unique_ptr<prepared_statement>
-modification_statement::prepare(data_dictionary::database db, cql_stats& stats) {
+modification_statement::prepare(data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     schema_ptr schema = validation::validate_column_family(db, keyspace(), column_family());
     auto meta = get_prepare_context();
 

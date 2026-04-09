@@ -441,7 +441,7 @@ void batch_statement::build_cas_result_set_metadata() {
 namespace raw {
 
 std::unique_ptr<prepared_statement>
-batch_statement::prepare(data_dictionary::database db, cql_stats& stats) {
+batch_statement::prepare(data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     auto&& meta = get_prepare_context();
 
     std::optional<sstring> first_ks;

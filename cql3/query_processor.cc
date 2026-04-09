@@ -791,7 +791,7 @@ query_processor::get_statement(const std::string_view& query, const service::cli
         cf_stmt->prepare_keyspace(client_state);
     }
     ++_stats.prepare_invocations;
-    auto p = statement->prepare(_db, _cql_stats);
+    auto p = statement->prepare(_db, _cql_stats, _cql_config);
     p->statement->raw_cql_statement = sstring(query);
     auto audit_info = p->statement->get_audit_info();
     if (audit_info) {
@@ -906,7 +906,7 @@ query_options query_processor::make_internal_options(
 statements::prepared_statement::checked_weak_ptr query_processor::prepare_internal(const sstring& query_string) {
     auto& p = _internal_statements[query_string];
     if (p == nullptr) {
-        auto np = parse_statement(query_string, internal_dialect())->prepare(_db, _cql_stats);
+        auto np = parse_statement(query_string, internal_dialect())->prepare(_db, _cql_stats, _cql_config);
         np->statement->raw_cql_statement = query_string;
         p = std::move(np); // inserts it into map
     }
@@ -1017,7 +1017,7 @@ query_processor::execute_internal(
         return execute_with_params(std::move(p), cl, query_state, values);
     } else {
         // For internal queries, we want the default dialect, not the user provided one
-        auto p = parse_statement(query_string, dialect{})->prepare(_db, _cql_stats);
+        auto p = parse_statement(query_string, dialect{})->prepare(_db, _cql_stats, _cql_config);
         p->statement->raw_cql_statement = query_string;
         auto checked_weak_ptr = p->checked_weak_from_this();
         return execute_with_params(std::move(checked_weak_ptr), cl, query_state, values).finally([p = std::move(p)] {});
