@@ -60,7 +60,6 @@
 #include "utils/result_loop.hh"
 #include "replica/database.hh"
 #include "replica/mutation_dump.hh"
-#include "db/config.hh"
 #include "cql3/cql_config.hh"
 
 
@@ -2470,7 +2469,7 @@ std::unique_ptr<prepared_statement> select_statement::prepare(data_dictionary::d
             )
             && !restrictions->need_filtering()  // No filtering
             && group_by_cell_indices->empty()   // No GROUP BY
-            && db.get_config().enable_parallelized_aggregation()
+            && cfg.enable_parallelized_aggregation()
             && !is_local_table()
             && !( // Do not parallelize the request if it's single partition read
                 restrictions->partition_key_restrictions_is_all_eq() 
