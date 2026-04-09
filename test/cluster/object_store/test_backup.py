@@ -78,33 +78,34 @@ async def test_simple_backup(manager: ManagerClient, object_storage, move_files)
     cmd = ['--logger-log-level', 'snapshots=trace:task_manager=trace:api=info']
     server = await manager.server_add(config=cfg, cmdline=cmd)
     ks, cf = create_ks_and_cf(manager.get_cql())
-    snap_name, files = await take_snapshot_on_one_server(ks, server, manager, logger)
-    assert len(files) > 0
-    workdir = await manager.server_get_workdir(server.server_id)
-    cf_dir = os.listdir(f'{workdir}/data/{ks}')[0]
+    if True:
+        snap_name, files = await take_snapshot_on_one_server(ks, server, manager, logger)
+        assert len(files) > 0
+        workdir = await manager.server_get_workdir(server.server_id)
+        cf_dir = os.listdir(f'{workdir}/data/{ks}')[0]
 
-    print('Backup snapshot')
-    prefix = f'{cf}/backup'
-    tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, prefix, move_files=move_files)
-    print(f'Started task {tid}')
-    status = await manager.api.get_task_status(server.ip_addr, tid)
-    print(f'Status: {status}, waiting to finish')
-    status = await manager.api.wait_task(server.ip_addr, tid)
-    assert (status is not None) and (status['state'] == 'done')
-    assert (status['progress_total'] > 0) and (status['progress_completed'] == status['progress_total'])
+        print('Backup snapshot')
+        prefix = f'{cf}/backup'
+        tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, prefix, move_files=move_files)
+        print(f'Started task {tid}')
+        status = await manager.api.get_task_status(server.ip_addr, tid)
+        print(f'Status: {status}, waiting to finish')
+        status = await manager.api.wait_task(server.ip_addr, tid)
+        assert (status is not None) and (status['state'] == 'done')
+        assert (status['progress_total'] > 0) and (status['progress_completed'] == status['progress_total'])
 
-    # all components in the "backup" snapshot should have been moved into bucket if move_files
-    assert len(os.listdir(f'{workdir}/data/{ks}/{cf_dir}/snapshots/{snap_name}')) == 0 if move_files else len(files)
+        # all components in the "backup" snapshot should have been moved into bucket if move_files
+        assert len(os.listdir(f'{workdir}/data/{ks}/{cf_dir}/snapshots/{snap_name}')) == 0 if move_files else len(files)
 
-    objects = set(o.key for o in object_storage.get_resource().Bucket(object_storage.bucket_name).objects.all())
-    for f in files:
-        print(f'Check {f} is in backup')
-        assert f'{prefix}/{f}' in objects
+        objects = set(o.key for o in object_storage.get_resource().Bucket(object_storage.bucket_name).objects.all())
+        for f in files:
+            print(f'Check {f} is in backup')
+            assert f'{prefix}/{f}' in objects
 
-    # Check that task runs in the streaming sched group
-    log = await manager.server_open_log(server.server_id)
-    res = await log.grep(r'INFO.*\[shard [0-9]:([a-z]+)\] .* Backup sstables from .* to')
-    assert len(res) == 1 and res[0][1].group(1) == 'strm'
+        # Check that task runs in the streaming sched group
+        log = await manager.server_open_log(server.server_id)
+        res = await log.grep(r'INFO.*\[shard [0-9]:([a-z]+)\] .* Backup sstables from .* to')
+        assert len(res) == 1 and res[0][1].group(1) == 'strm'
 
 
 @pytest.mark.asyncio
@@ -121,20 +122,21 @@ async def test_backup_with_non_existing_parameters(manager: ManagerClient, objec
     cmd = ['--logger-log-level', 'snapshots=trace:task_manager=trace:api=info']
     server = await manager.server_add(config=cfg, cmdline=cmd)
     ks, cf = create_ks_and_cf(manager.get_cql())
-    backup_snap_name, files = await take_snapshot_on_one_server(ks, server, manager, logger)
-    assert len(files) > 0
+    if True:
+        backup_snap_name, files = await take_snapshot_on_one_server(ks, server, manager, logger)
+        assert len(files) > 0
 
-    prefix = f'{cf}/backup'
-    tid = await manager.api.backup(server.ip_addr, ks, cf,
-            backup_snap_name if ne_parameter != 'snapshot' else 'no-such-snapshot',
-            object_storage.address if ne_parameter != 'endpoint' else 'no-such-endpoint',
-            object_storage.bucket_name if ne_parameter != 'bucket' else 'no-such-bucket',
-            prefix)
-    status = await manager.api.wait_task(server.ip_addr, tid)
-    assert status is not None
-    assert status['state'] == 'failed'
-    if ne_parameter == 'endpoint':
-        assert status['error'] == 'std::invalid_argument (endpoint no-such-endpoint not found)'
+        prefix = f'{cf}/backup'
+        tid = await manager.api.backup(server.ip_addr, ks, cf,
+                backup_snap_name if ne_parameter != 'snapshot' else 'no-such-snapshot',
+                object_storage.address if ne_parameter != 'endpoint' else 'no-such-endpoint',
+                object_storage.bucket_name if ne_parameter != 'bucket' else 'no-such-bucket',
+                prefix)
+        status = await manager.api.wait_task(server.ip_addr, tid)
+        assert status is not None
+        assert status['state'] == 'failed'
+        if ne_parameter == 'endpoint':
+            assert status['error'] == 'std::invalid_argument (endpoint no-such-endpoint not found)'
 
 
 @pytest.mark.asyncio
@@ -149,32 +151,33 @@ async def test_backup_endpoint_config_is_live_updateable(manager: ManagerClient,
     cmd = ['--logger-log-level', 'sstables_manager=debug']
     server = await manager.server_add(config=cfg, cmdline=cmd)
     ks, cf = create_ks_and_cf(manager.get_cql())
-    snap_name, files = await take_snapshot_on_one_server(ks, server, manager, logger)
+    if True:
+        snap_name, files = await take_snapshot_on_one_server(ks, server, manager, logger)
 
-    prefix = f'{cf}/backup'
+        prefix = f'{cf}/backup'
 
-    tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, prefix)
-    status = await manager.api.wait_task(server.ip_addr, tid)
-    assert status is not None
-    assert status['state'] == 'failed'
-    assert status['error'] == f'std::invalid_argument (endpoint {object_storage.address} not found)'
+        tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, prefix)
+        status = await manager.api.wait_task(server.ip_addr, tid)
+        assert status is not None
+        assert status['state'] == 'failed'
+        assert status['error'] == f'std::invalid_argument (endpoint {object_storage.address} not found)'
 
-    objconf = object_storage.create_endpoint_conf()
-    await manager.server_update_config(server.server_id, 'object_storage_endpoints', objconf)
+        objconf = object_storage.create_endpoint_conf()
+        await manager.server_update_config(server.server_id, 'object_storage_endpoints', objconf)
 
-    async def endpoint_appeared_in_config():
-        await read_barrier(manager.api, server.ip_addr)
-        resp = await manager.api.get_config(server.ip_addr, 'object_storage_endpoints')
-        for ep in objconf:
-            if ep['name'] not in resp:
-                return None
-        return True
-    await wait_for(endpoint_appeared_in_config, deadline=time.time() + 60)
+        async def endpoint_appeared_in_config():
+            await read_barrier(manager.api, server.ip_addr)
+            resp = await manager.api.get_config(server.ip_addr, 'object_storage_endpoints')
+            for ep in objconf:
+                if ep['name'] not in resp:
+                    return None
+            return True
+        await wait_for(endpoint_appeared_in_config, deadline=time.time() + 60)
 
-    tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, prefix)
-    status = await manager.api.wait_task(server.ip_addr, tid)
-    assert status is not None
-    assert status['state'] == 'done'
+        tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, prefix)
+        status = await manager.api.wait_task(server.ip_addr, tid)
+        assert status is not None
+        assert status['state'] == 'done'
 
 async def do_test_backup_helper(manager: ManagerClient, object_storage,
                                 breakpoint_name, handler, num_servers: int = 1):
@@ -189,22 +192,23 @@ async def do_test_backup_helper(manager: ManagerClient, object_storage,
     cmd = ['--logger-log-level', 'snapshots=trace:task_manager=trace:api=info']
     server = (await manager.servers_add(num_servers, config=cfg, cmdline=cmd))[0]
     ks, cf = create_ks_and_cf(manager.get_cql())
-    snap_name, files = await take_snapshot_on_one_server(ks, server, manager, logger)
+    if True:
+        snap_name, files = await take_snapshot_on_one_server(ks, server, manager, logger)
 
-    await manager.api.enable_injection(server.ip_addr, breakpoint_name, one_shot=True)
-    log = await manager.server_open_log(server.server_id)
-    mark = await log.mark()
+        await manager.api.enable_injection(server.ip_addr, breakpoint_name, one_shot=True)
+        log = await manager.server_open_log(server.server_id)
+        mark = await log.mark()
 
-    print('Backup snapshot')
-    # use a unique path, because we're running more than one test using the same minio and ks/cf name.
-    # If we just use {cf}/backup, files like "schema.cql" and "manifest.json" will remain after previous test
-    # case, and we will count these erroneously.
-    prefix = unique_name('backup_')
-    tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, prefix)
+        print('Backup snapshot')
+        # use a unique path, because we're running more than one test using the same minio and ks/cf name.
+        # If we just use {cf}/backup, files like "schema.cql" and "manifest.json" will remain after previous test
+        # case, and we will count these erroneously.
+        prefix = unique_name('backup_')
+        tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, prefix)
 
-    print(f'Started task {tid}, aborting it early')
-    await log.wait_for(breakpoint_name + ': waiting', from_mark=mark)
-    await handler(server, prefix, files, tid)
+        print(f'Started task {tid}, aborting it early')
+        await log.wait_for(breakpoint_name + ': waiting', from_mark=mark)
+        await handler(server, prefix, files, tid)
 
 async def do_test_backup_abort(manager: ManagerClient, object_storage,
                                breakpoint_name, min_files, max_files = None):
@@ -276,90 +280,91 @@ async def test_simple_backup_and_restore(manager: ManagerClient, object_storage,
     # This test is sensitive not to share the bucket with any other test
     # that can run in parallel, so generate some unique name for the snapshot
     ks, cf = create_ks_and_cf(cql)
-    snap_name, toc_names = await take_snapshot_on_one_server(ks, server, manager, logger)
+    if True:
+        snap_name, toc_names = await take_snapshot_on_one_server(ks, server, manager, logger)
 
-    cf_dir = os.listdir(f'{workdir}/data/{ks}')[0]
+        cf_dir = os.listdir(f'{workdir}/data/{ks}')[0]
 
-    def list_sstables():
-        return [f for f in os.scandir(f'{workdir}/data/{ks}/{cf_dir}') if f.is_file()]
+        def list_sstables():
+            return [f for f in os.scandir(f'{workdir}/data/{ks}/{cf_dir}') if f.is_file()]
 
-    orig_res = cql.execute(f"SELECT * FROM {ks}.{cf}")
-    orig_rows = {x.name: x.value for x in orig_res}
+        orig_res = cql.execute(f"SELECT * FROM {ks}.{cf}")
+        orig_rows = {x.name: x.value for x in orig_res}
 
-    # include a "suffix" in the key to mimic the use case where scylla-manager
-    # 1. backups sstables of multiple snapshots, and deduplicate the backup'ed
-    #    sstables by only upload the new sstables
-    # 2. restore a given snapshot by collecting all sstables of this snapshot from
-    #    multiple places
-    #
-    # in this test, we:
-    # 1. upload:
-    #    prefix: {some}/{objects}/{path}
-    #    sstables:
-    #    - 1-TOC.txt
-    #    - 2-TOC.txt
-    #    - ...
-    # 2. download:
-    #    prefix = {some}/{objects}/{path}
-    #    sstables:
-    #    - 1-TOC.txt
-    #    - 2-TOC.txt
-    #    - ...
+        # include a "suffix" in the key to mimic the use case where scylla-manager
+        # 1. backups sstables of multiple snapshots, and deduplicate the backup'ed
+        #    sstables by only upload the new sstables
+        # 2. restore a given snapshot by collecting all sstables of this snapshot from
+        #    multiple places
+        #
+        # in this test, we:
+        # 1. upload:
+        #    prefix: {some}/{objects}/{path}
+        #    sstables:
+        #    - 1-TOC.txt
+        #    - 2-TOC.txt
+        #    - ...
+        # 2. download:
+        #    prefix = {some}/{objects}/{path}
+        #    sstables:
+        #    - 1-TOC.txt
+        #    - 2-TOC.txt
+        #    - ...
 
-    prefix = f'{cf}/{snap_name}'
-    tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, f'{prefix}')
-    status = await manager.api.wait_task(server.ip_addr, tid)
-    assert (status is not None) and (status['state'] == 'done')
-
-    print('Drop the table data and validate it\'s gone')
-    cql.execute(f"TRUNCATE TABLE {ks}.{cf};")
-    files = list_sstables()
-    assert len(files) == 0
-    res = cql.execute(f"SELECT * FROM {ks}.{cf};")
-    assert not res
-    objects = set(o.key for o in object_storage.get_resource().Bucket(object_storage.bucket_name).objects.filter(Prefix=prefix))
-    assert len(objects) > 0
-
-    print('Try to restore')
-    tid = await manager.api.restore(server.ip_addr, ks, cf, object_storage.address, object_storage.bucket_name, prefix, toc_names)
-
-    if do_abort:
-        await manager.api.abort_task(server.ip_addr, tid)
-
-    status = await manager.api.wait_task(server.ip_addr, tid)
-    if not do_abort:
-        assert status is not None
-        assert status['state'] == 'done'
-        assert status['progress_units'] == 'batches'
-        assert status['progress_completed'] == status['progress_total']
-        assert status['progress_completed'] > 0
-
-    print('Check that sstables came back')
-    files = list_sstables()
-
-    sstable_names = [f'{entry.name}' for entry in files if entry.name.endswith('.db')]
-    db_objects = [object for object in objects if object.endswith('.db')]
-
-    if do_abort:
-        assert len(files) >= 0
-        # These checks can be viewed as dubious. We restore (atm) on a mutation basis mostly.
-        # There is no guarantee we'll generate the same amount of sstables as was in the original
-        # backup (?). But, since we are not stressing the server here (not provoking memtable flushes),
-        # we should in principle never generate _more_ sstables than originated the backup.
-        tocs = [f'{entry.name}' for entry in files if entry.name.endswith('TOC.txt')]
-        assert len(toc_names) >= len(tocs)
-        assert len(sstable_names) <= len(db_objects)
-    else:
-        assert len(files) > 0
+        prefix = f'{cf}/{snap_name}'
+        tid = await manager.api.backup(server.ip_addr, ks, cf, snap_name, object_storage.address, object_storage.bucket_name, f'{prefix}')
+        status = await manager.api.wait_task(server.ip_addr, tid)
         assert (status is not None) and (status['state'] == 'done')
-        print(f'Check that data came back too')
-        res = cql.execute(f"SELECT * FROM {ks}.{cf};")
-        rows = { x.name: x.value for x in res }
-        assert rows == orig_rows, "Unexpected table contents after restore"
 
-    print('Check that backup files are still there')  # regression test for #20938
-    post_objects = set(o.key for o in object_storage.get_resource().Bucket(object_storage.bucket_name).objects.filter(Prefix=prefix))
-    assert objects == post_objects
+        print('Drop the table data and validate it\'s gone')
+        cql.execute(f"TRUNCATE TABLE {ks}.{cf};")
+        files = list_sstables()
+        assert len(files) == 0
+        res = cql.execute(f"SELECT * FROM {ks}.{cf};")
+        assert not res
+        objects = set(o.key for o in object_storage.get_resource().Bucket(object_storage.bucket_name).objects.filter(Prefix=prefix))
+        assert len(objects) > 0
+
+        print('Try to restore')
+        tid = await manager.api.restore(server.ip_addr, ks, cf, object_storage.address, object_storage.bucket_name, prefix, toc_names)
+
+        if do_abort:
+            await manager.api.abort_task(server.ip_addr, tid)
+
+        status = await manager.api.wait_task(server.ip_addr, tid)
+        if not do_abort:
+            assert status is not None
+            assert status['state'] == 'done'
+            assert status['progress_units'] == 'batches'
+            assert status['progress_completed'] == status['progress_total']
+            assert status['progress_completed'] > 0
+
+        print('Check that sstables came back')
+        files = list_sstables()
+
+        sstable_names = [f'{entry.name}' for entry in files if entry.name.endswith('.db')]
+        db_objects = [object for object in objects if object.endswith('.db')]
+
+        if do_abort:
+            assert len(files) >= 0
+            # These checks can be viewed as dubious. We restore (atm) on a mutation basis mostly.
+            # There is no guarantee we'll generate the same amount of sstables as was in the original
+            # backup (?). But, since we are not stressing the server here (not provoking memtable flushes),
+            # we should in principle never generate _more_ sstables than originated the backup.
+            tocs = [f'{entry.name}' for entry in files if entry.name.endswith('TOC.txt')]
+            assert len(toc_names) >= len(tocs)
+            assert len(sstable_names) <= len(db_objects)
+        else:
+            assert len(files) > 0
+            assert (status is not None) and (status['state'] == 'done')
+            print(f'Check that data came back too')
+            res = cql.execute(f"SELECT * FROM {ks}.{cf};")
+            rows = { x.name: x.value for x in res }
+            assert rows == orig_rows, "Unexpected table contents after restore"
+
+        print('Check that backup files are still there')  # regression test for #20938
+        post_objects = set(o.key for o in object_storage.get_resource().Bucket(object_storage.bucket_name).objects.filter(Prefix=prefix))
+        assert objects == post_objects
 
 
 async def do_abort_restore(manager: ManagerClient, object_storage):
@@ -755,14 +760,14 @@ async def test_restore_with_non_existing_sstable(manager: ManagerClient, object_
     cql = manager.get_cql()
     print('Create keyspace')
     ks, cf = create_ks_and_cf(cql)
-
-    # The name must be parseable by sstable layer, yet such file shouldn't exist
-    sstable_name = 'me-3gou_0fvw_4r94g2h8nw60b8ly4c-big-TOC.txt'
-    tid = await manager.api.restore(server.ip_addr, ks, cf, object_storage.address, object_storage.bucket_name, 'no_such_prefix', [sstable_name])
-    status = await manager.api.wait_task(server.ip_addr, tid)
-    print(f'Status: {status}')
-    assert 'state' in status and status['state'] == 'failed'
-    assert 'error' in status and 'Not Found' in status['error']
+    if True:
+        # The name must be parseable by sstable layer, yet such file shouldn't exist
+        sstable_name = 'me-3gou_0fvw_4r94g2h8nw60b8ly4c-big-TOC.txt'
+        tid = await manager.api.restore(server.ip_addr, ks, cf, object_storage.address, object_storage.bucket_name, 'no_such_prefix', [sstable_name])
+        status = await manager.api.wait_task(server.ip_addr, tid)
+        print(f'Status: {status}')
+        assert 'state' in status and status['state'] == 'failed'
+        assert 'error' in status and 'Not Found' in status['error']
 
 
 @pytest.mark.asyncio
