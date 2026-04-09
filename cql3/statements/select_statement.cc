@@ -2424,7 +2424,7 @@ std::unique_ptr<prepared_statement> select_statement::prepare(data_dictionary::d
 
     std::vector<sstring> warnings;
     if (!is_ann_query) {
-        check_needs_filtering(*restrictions, db.get_config().strict_allow_filtering(), warnings);
+        check_needs_filtering(*restrictions, cfg.strict_allow_filtering(), warnings);
         ensure_filtering_columns_retrieval(db, *selection, *restrictions);
     }
     auto group_by_cell_indices = ::make_shared<std::vector<size_t>>(prepare_group_by(*schema, *selection));
