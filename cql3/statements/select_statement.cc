@@ -61,6 +61,7 @@
 #include "replica/database.hh"
 #include "replica/mutation_dump.hh"
 #include "db/config.hh"
+#include "cql3/cql_config.hh"
 
 
 template<typename T = void>
@@ -477,7 +478,7 @@ select_statement::do_execute(query_processor& qp,
     const bool aggregate = _selection->is_aggregate() || has_group_by();
     const bool nonpaged_filtering = _restrictions_need_filtering && page_size <= 0;
     if (aggregate || nonpaged_filtering) {
-        page_size = page_size <= 0 ? qp.db().get_config().select_internal_page_size() : page_size;
+        page_size = page_size <= 0 ? qp.get_cql_config().select_internal_page_size : page_size;
     }
 
     auto key_ranges = _restrictions->get_partition_key_ranges(options);
@@ -789,7 +790,7 @@ view_indexed_table_select_statement::execute_base_query(
         gc_clock::time_point now,
         lw_shared_ptr<const service::pager::paging_state> paging_state) const {
     return do_execute_base_query(qp, std::move(partition_ranges), state, options, now, paging_state).then(wrap_result_to_error_message(
-            [this, &state, &options, now, paging_state = std::move(paging_state), internal_page_size = qp.db().get_config().select_internal_page_size()] (std::tuple<foreign_ptr<lw_shared_ptr<query::result>>, lw_shared_ptr<query::read_command>> result_and_cmd) {
+            [this, &state, &options, now, paging_state = std::move(paging_state), internal_page_size = qp.get_cql_config().select_internal_page_size.get()] (std::tuple<foreign_ptr<lw_shared_ptr<query::result>>, lw_shared_ptr<query::read_command>> result_and_cmd) {
         auto&& [result, cmd] = result_and_cmd;
         return process_base_query_results(std::move(result), std::move(cmd), state, options, now, std::move(paging_state), internal_page_size);
     }));
@@ -869,7 +870,7 @@ view_indexed_table_select_statement::execute_base_query(
         gc_clock::time_point now,
         lw_shared_ptr<const service::pager::paging_state> paging_state) const {
     return do_execute_base_query(qp, std::move(primary_keys), state, options, now, paging_state).then(wrap_result_to_error_message(
-            [this, &state, &options, now, paging_state = std::move(paging_state), internal_page_size = qp.db().get_config().select_internal_page_size()] (std::tuple<foreign_ptr<lw_shared_ptr<query::result>>, lw_shared_ptr<query::read_command>> result_and_cmd){
+            [this, &state, &options, now, paging_state = std::move(paging_state), internal_page_size = qp.get_cql_config().select_internal_page_size.get()] (std::tuple<foreign_ptr<lw_shared_ptr<query::result>>, lw_shared_ptr<query::read_command>> result_and_cmd){
         auto&& [result, cmd] = result_and_cmd;
         return process_base_query_results(std::move(result), std::move(cmd), state, options, now, std::move(paging_state), internal_page_size);
     }));
@@ -1261,7 +1262,7 @@ view_indexed_table_select_statement::actually_do_execute(query_processor& qp,
         std::unique_ptr<cql3::query_options> internal_options = std::make_unique<cql3::query_options>(cql3::query_options(options));
         stop_iteration stop;
         // page size is set to the internal count page size, regardless of the user-provided value
-        auto internal_page_size = qp.db().get_config().select_internal_page_size();
+        auto internal_page_size = qp.get_cql_config().select_internal_page_size.get();
         internal_options.reset(new cql3::query_options(std::move(internal_options), options.get_paging_state(), internal_page_size));
         do {
             auto consume_results = [this, &builder, &options, &internal_options, &state, internal_page_size] (foreign_ptr<lw_shared_ptr<query::result>> results, lw_shared_ptr<query::read_command> cmd, lw_shared_ptr<const service::pager::paging_state> paging_state) -> stop_iteration {
@@ -1871,7 +1872,7 @@ mutation_fragments_select_statement::do_execute(query_processor& qp, service::qu
     const bool aggregate = _selection->is_aggregate() || has_group_by();
     const bool nonpaged_filtering = _restrictions_need_filtering && page_size <= 0;
     if (aggregate || nonpaged_filtering) {
-        page_size = qp.db().get_config().select_internal_page_size();
+        page_size = qp.get_cql_config().select_internal_page_size;
     }
 
     auto key_ranges = _restrictions->get_partition_key_ranges(options);
