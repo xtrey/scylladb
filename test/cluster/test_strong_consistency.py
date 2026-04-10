@@ -765,6 +765,61 @@ async def test_forward_cql_exception_passthrough(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="SCYLLADB-1450")
+@pytest.mark.skip_mode("release", "error injections aren't enabled in release mode")
+async def test_drop_table_during_insert(manager: ManagerClient):
+    """Regression test for SCYLLADB-1450: node crashes when DROP TABLE races with
+    an in-flight DML on a strongly-consistent table.
+
+    An error injection pauses INSERT inside create_operation_ctx (after obtaining
+    the ERM but before acquire_server).  While it is paused the table is dropped,
+    which erases the raft group.  Resuming the INSERT used to hit on_internal_error
+    in acquire_server and abort the node."""
+
+    config = {"experimental_features": ["strongly-consistent-tables"]}
+    cmdline = ["--logger-log-level", "sc_groups_manager=debug"]
+    server = await manager.server_add(config=config, cmdline=cmdline)
+    (cql, hosts) = await manager.get_ready_cql([server])
+
+    async with new_test_keyspace(
+        manager,
+        "WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
+        " AND tablets = {'initial': 1} AND consistency = 'global'",
+    ) as ks:
+        table = f"{ks}.tbl"
+        await cql.run_async(f"CREATE TABLE {table} (pk int PRIMARY KEY, v int)")
+
+        log = await manager.server_open_log(server.server_id)
+        mark = await log.mark()
+
+        await manager.api.enable_injection(server.ip_addr, "sc_coordinator_wait_before_acquire_server", one_shot=False)
+
+        # Fire INSERT in the background – it will pause at the injection point.
+        insert_fut = cql.run_async(f"INSERT INTO {table} (pk, v) VALUES (0, 0)")
+
+        # Wait until the injection is actually hit.
+        await log.wait_for("sc_coordinator_wait_before_acquire_server: waiting for message", from_mark=mark, timeout=30)
+
+        # Drop the table while INSERT is paused.
+        await cql.run_async(f"DROP TABLE {table}")
+
+        # Wait for the raft group to be destroyed.
+        await log.wait_for("schedule_raft_group_deletion.*raft server.*is destroyed", from_mark=mark, timeout=30)
+
+        # Resume the INSERT – with the bug present, the node will abort here.
+        await manager.api.message_injection(server.ip_addr, "sc_coordinator_wait_before_acquire_server")
+
+        # The INSERT should fail gracefully, not crash the node.
+        try:
+            await insert_fut
+        except Exception as e:
+            logger.info(f"INSERT failed with expected error: {e}")
+
+        # Verify the node is still alive.
+        await manager.api.get_host_id(server.ip_addr)
+
+
+@pytest.mark.asyncio
 @pytest.mark.skip_mode(mode="release", reason="error injections are not supported in release mode")
 async def test_timed_out_queries(manager: ManagerClient):
     """
