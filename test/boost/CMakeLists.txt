@@ -199,8 +199,6 @@ add_scylla_test(reusable_buffer_test
   KIND SEASTAR)
 add_scylla_test(reservoir_sampling_test
   KIND BOOST)
-add_scylla_test(rolling_max_tracker_test
-  KIND BOOST)
 add_scylla_test(rest_client_test
   KIND SEASTAR)
 add_scylla_test(rolling_max_tracker_test
@@ -266,9 +264,6 @@ add_scylla_test(string_format_test
   KIND BOOST)
 add_scylla_test(summary_test
   KIND BOOST)
-add_scylla_test(symmetric_key_test
-  KIND SEASTAR
-  LIBRARIES encryption)
 add_scylla_test(file_stream_test
   KIND SEASTAR)
 add_scylla_test(tagged_integer_test
