@@ -1283,6 +1283,14 @@ dht::token_range table::get_token_range_after_split(const dht::token& token) con
     return _sg_manager->get_token_range_after_split(token);
 }
 
+counter_id table::get_counter_id(const mutation& m) const {
+    if (uses_tablets()) {
+        return storage_group_for_token(m.token()).main_compaction_group()->get_counter_id();
+    } else {
+        return counter_id(_erm->get_token_metadata().get_my_id().uuid());
+    }
+}
+
 std::unique_ptr<storage_group_manager> table::make_storage_group_manager() {
     std::unique_ptr<storage_group_manager> ret;
     if (uses_tablets()) {
@@ -3499,10 +3507,22 @@ void tablet_storage_group_manager::update_effective_replication_map(
     for_each_storage_group([&] (size_t group_id, storage_group& sg) {
         const locator::tablet_id tid = static_cast<locator::tablet_id>(group_id);
         const locator::tablet_info& tinfo = new_tablet_map->get_tablet_info(tid);
-        const bool tombstone_gc_enabled = std::ranges::contains(tinfo.replicas, this_replica);
+        const bool is_pending_replica = !std::ranges::contains(tinfo.replicas, this_replica);
+        const bool tombstone_gc_enabled = !is_pending_replica;
 
-        sg.for_each_compaction_group([tombstone_gc_enabled] (const compaction_group_ptr& cg_ptr) {
+        // construct a counter id for use in local counter updates.
+        // there is a single replica in a rack, so we can reuse a single counter id for all replicas
+        // in a rack. replicas in different racks use different counter ids.
+        // during migration there are two active counter replicas in a rack, then the pending
+        // replica uses a variation of the rack's counter id, so there are at most two distinct
+        // counter ids per rack.
+        auto rack_uuid = erm.get_topology().get_rack_uuid();
+        auto my_counter_uuid = is_pending_replica ? utils::UUID_gen::negate(rack_uuid) : rack_uuid;
+        counter_id my_counter_id(my_counter_uuid);
+
+        sg.for_each_compaction_group([tombstone_gc_enabled, my_counter_id] (const compaction_group_ptr& cg_ptr) {
             cg_ptr->set_tombstone_gc_enabled(tombstone_gc_enabled);
+            cg_ptr->set_counter_id(my_counter_id);
         });
     });
 

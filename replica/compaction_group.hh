@@ -97,6 +97,8 @@ class compaction_group {
     std::optional<compaction::compaction_backlog_tracker> _backlog_tracker;
     repair_classifier_func _repair_sstable_classifier;
 
+    counter_id _counter_id;
+
     lw_shared_ptr<logstor::segment_set> _logstor_segments;
     std::optional<logstor::separator_buffer> _logstor_separator;
     std::vector<future<>> _separator_flushes;
@@ -190,6 +192,14 @@ public:
     int64_t get_sstables_repaired_at() const noexcept;
 
     future<> update_repaired_at_for_merge();
+
+    void set_counter_id(counter_id cid) noexcept {
+        _counter_id = cid;
+    }
+
+    counter_id get_counter_id() const noexcept {
+        return _counter_id;
+    }
 
     void set_compaction_strategy_state(compaction::compaction_strategy_state compaction_strategy_state) noexcept;
 
