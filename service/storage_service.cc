@@ -20,7 +20,6 @@
 #include "raft/raft.hh"
 #include "auth/cache.hh"
 #include <ranges>
-#include <seastar/core/shard_id.hh>
 #include <seastar/core/sleep.hh>
 #include "service/qos/raft_service_level_distributed_data_accessor.hh"
 #include "service/qos/service_level_controller.hh"
@@ -119,11 +118,9 @@
 #include "service/task_manager_module.hh"
 #include "service/topology_mutation.hh"
 #include "cql3/query_processor.hh"
-#include "service/qos/service_level_controller.hh"
 #include <csignal>
 #include "utils/labels.hh"
 #include "view_info.hh"
-#include "raft/raft.hh"
 #include "debug.hh"
 
 #include <boost/algorithm/string/split.hpp>
@@ -350,30 +347,6 @@ bool storage_service::is_replacing() {
     // That said, we should just stop supporting it and force users
     // to move to the new, replace_node_first_boot config option.
     return !cfg.replace_address().empty();
-}
-
-bool storage_service::is_first_node() {
-    if (is_replacing()) {
-        return false;
-    }
-    auto seeds = _gossiper.get_seeds();
-    if (seeds.empty()) {
-        return false;
-    }
-    // Node with the smallest IP address is chosen as the very first node
-    // in the cluster. The first node is the only node that does not
-    // bootstrap in the cluster. All other nodes will bootstrap.
-    std::vector<gms::inet_address> sorted_seeds(seeds.begin(), seeds.end());
-    std::sort(sorted_seeds.begin(), sorted_seeds.end());
-    if (sorted_seeds.front() == get_broadcast_address()) {
-        slogger.info("I am the first node in the cluster. Skip bootstrap. Node={}", get_broadcast_address());
-        return true;
-    }
-    return false;
-}
-
-bool storage_service::should_bootstrap() {
-    return !_sys_ks.local().bootstrap_complete() && !is_first_node();
 }
 
 /* Broadcasts the chosen tokens through gossip,
@@ -1575,9 +1548,7 @@ future<> storage_service::join_topology(sharded<service::storage_proxy>& proxy,
         raft_replace_info = raft_group0::replace_info {
             .raft_id = raft::server_id{ri->host_id.uuid()},
         };
-    } else if (should_bootstrap()) {
-        co_await check_for_endpoint_collision(initial_contact_nodes);
-    } else {
+    } else if (_sys_ks.local().bootstrap_complete()) {
         slogger.info("Performing gossip shadow round, initial_contact_nodes={}", initial_contact_nodes);
         co_await _gossiper.do_shadow_round(initial_contact_nodes, gms::gossiper::mandatory::no);
         _gossiper.check_snitch_name_matches(_snitch.local()->get_name());
@@ -1833,7 +1804,7 @@ future<> storage_service::on_change(gms::inet_address endpoint, locator::host_id
     slogger.debug("endpoint={} on_change:     states={}, permit_id={}", endpoint, states, pid);
 
     auto ep_state = _gossiper.get_endpoint_state_ptr(host_id);
-    if (!ep_state || _gossiper.is_dead_state(*ep_state)) {
+    if (!ep_state || _gossiper.is_left(*ep_state)) {
         slogger.debug("Ignoring state change for dead or unknown endpoint: {}", endpoint);
         co_return;
     }
@@ -1918,12 +1889,8 @@ std::optional<db::system_keyspace::peer_info> storage_service::get_peer_info_for
 
     auto set_field = [&]<typename T> (std::optional<T>& field,
             const gms::versioned_value& value,
-            std::string_view name,
-            bool managed_by_raft)
+            std::string_view name)
     {
-        if (managed_by_raft) {
-            return;
-        }
         try {
             field = T(value.value());
         } catch (...) {
@@ -1932,31 +1899,17 @@ std::optional<db::system_keyspace::peer_info> storage_service::get_peer_info_for
         }
     };
 
+    // Fields managed by raft are skipped here
     for (const auto& [state, value] : app_state_map) {
         switch (state) {
-        case application_state::DC:
-            set_field(get_peer_info().data_center, value, "data_center", true);
-            break;
         case application_state::INTERNAL_IP:
-            set_field(get_peer_info().preferred_ip, value, "preferred_ip", false);
-            break;
-        case application_state::RACK:
-            set_field(get_peer_info().rack, value, "rack", true);
-            break;
-        case application_state::RELEASE_VERSION:
-            set_field(get_peer_info().release_version, value, "release_version", true);
+            set_field(get_peer_info().preferred_ip, value, "preferred_ip");
             break;
         case application_state::RPC_ADDRESS:
-            set_field(get_peer_info().rpc_address, value, "rpc_address", false);
+            set_field(get_peer_info().rpc_address, value, "rpc_address");
             break;
         case application_state::SCHEMA:
-            set_field(get_peer_info().schema_version, value, "schema_version", false);
-            break;
-        case application_state::TOKENS:
-            // tokens are updated separately
-            break;
-        case application_state::SUPPORTED_FEATURES:
-            set_field(get_peer_info().supported_features, value, "supported_features", true);
+            set_field(get_peer_info().schema_version, value, "schema_version");
             break;
         default:
             break;
@@ -2425,27 +2378,6 @@ future<> storage_service::wait_for_group0_stop() {
     }
 }
 
-future<> storage_service::check_for_endpoint_collision(std::unordered_set<gms::inet_address> initial_contact_nodes) {
-    slogger.debug("Starting shadow gossip round to check for endpoint collision");
-
-    return seastar::async([this, initial_contact_nodes] {
-        bool found_bootstrapping_node = false;
-        auto local_features = _feature_service.supported_feature_set();
-        do {
-            slogger.info("Performing gossip shadow round");
-            _gossiper.do_shadow_round(initial_contact_nodes, gms::gossiper::mandatory::yes).get();
-            _gossiper.check_snitch_name_matches(_snitch.local()->get_name());
-            auto addr = get_broadcast_address();
-            if (!_gossiper.is_safe_for_bootstrap(addr)) {
-                throw std::runtime_error(::format("A node with address {} already exists, cancelling join. "
-                    "Use replace_address if you want to replace this node.", addr));
-            }
-        } while (found_bootstrapping_node);
-        slogger.info("Checking bootstrapping/leaving/moving nodes: ok (check_for_endpoint_collision)");
-        _gossiper.reset_endpoint_state_map().get();
-    });
-}
-
 future<> storage_service::remove_endpoint(inet_address endpoint, gms::permit_id pid) {
     auto host_id_opt = _gossiper.try_get_host_id(endpoint);
     if (host_id_opt) {
@@ -2496,17 +2428,6 @@ storage_service::prepare_replacement_info(std::unordered_set<gms::inet_address> 
         replace_address = *node;
     } else {
         replace_host_id = _gossiper.get_host_id(replace_address);
-    }
-
-    auto state = _gossiper.get_endpoint_state_ptr(replace_host_id);
-    if (!state) {
-        throw std::runtime_error(::format("Cannot replace_address {} because it doesn't exist in gossip", replace_address));
-    }
-
-    // Reject to replace a node that has left the ring
-    auto status = _gossiper.get_gossip_status(replace_host_id);
-    if (status == gms::versioned_value::STATUS_LEFT || status == gms::versioned_value::REMOVED_TOKEN) {
-        throw std::runtime_error(::format("Cannot replace_address {} because it has left the ring, status={}", replace_address, status));
     }
 
     auto dc_rack = get_dc_rack_for(replace_host_id).value_or(locator::endpoint_dc_rack::default_location);
@@ -2802,12 +2723,7 @@ future<> storage_service::raft_decommission() {
     rtlogger.info("decommission: waiting for completion (request ID: {})", request_id);
     auto error = co_await wait_for_topology_request_completion(request_id);
 
-    if (error.empty()) {
-        // Need to set it otherwise gossiper will try to send shutdown on exit
-        rtlogger.info("decommission: successfully removed from topology (request ID: {}), updating gossip status", request_id);
-        co_await _gossiper.add_local_application_state(std::pair(gms::application_state::STATUS, gms::versioned_value::left({}, _gossiper.now().time_since_epoch().count())));
-        rtlogger.info("Decommission succeeded. Request ID: {}", request_id);
-    } else  {
+    if (!error.empty()) {
         auto err = fmt::format("Decommission failed. See earlier errors ({}). Request ID: {}", error, request_id);
         rtlogger.error("{}", err);
         throw std::runtime_error(err);

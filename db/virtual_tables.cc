@@ -99,7 +99,7 @@ public:
 
                 set_cell(cr, "up", gossiper.is_alive(hostid));
                 if (gossiper.is_shutdown(endpoint)) {
-                    set_cell(cr, "status", gossiper.get_gossip_status(endpoint));
+                    set_cell(cr, "status", "shutdown");
                 } else {
                     set_cell(cr, "status", boost::to_upper_copy<std::string>(fmt::format("{}", ss.get_node_state(hostid))));
                 }
