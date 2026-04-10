@@ -765,7 +765,6 @@ async def test_forward_cql_exception_passthrough(manager: ManagerClient):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="SCYLLADB-1450")
 @pytest.mark.skip_mode("release", "error injections aren't enabled in release mode")
 async def test_drop_table_during_insert(manager: ManagerClient):
     """Regression test for SCYLLADB-1450: node crashes when DROP TABLE races with

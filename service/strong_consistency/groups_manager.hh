@@ -110,7 +110,7 @@ public:
     void update(locator::token_metadata_ptr new_tm);
 
     // The raft_server instance is used to submit write commands and perform read_barrier() before reads.
-    future<raft_server> acquire_server(raft::group_id group_id, abort_source& as);
+    future<raft_server> acquire_server(table_id table_id, raft::group_id group_id, abort_source& as);
 
     // Called during node boot. Waits for all raft::server instances corresponding
     // to the latest group0 state to start.
