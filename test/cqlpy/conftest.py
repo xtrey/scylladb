@@ -252,6 +252,14 @@ def skip_without_tablets(scylla_only, has_tablets):
     if not has_tablets:
         pytest.skip("Test needs tablets experimental feature on")
 
+
+# Like skip_without_tablets but does not require scylla_only, so Cassandra
+# tests using this fixture will run (Cassandra has no tablet prerequisite).
+@pytest.fixture(scope="function")
+def skip_on_scylla_vnodes(cql, has_tablets):
+    if is_scylla(cql) and not has_tablets:
+        pytest.skip("Test needs tablets experimental feature on")
+
 # Recent versions of Scylla deprecated the "WITH COMPACT STORAGE" feature,
 # but it can be enabled temporarily for a test. So to keep our old compact
 # storage tests alive for a while longer (at least until this feature is

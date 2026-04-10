@@ -104,7 +104,11 @@ const static std::unordered_map<sstring, std::function<void(const sstring&, cons
         {"oversampling", std::bind_front(validate_factor_option, 1.0f, 100.0f)},
         // 'rescoring' enables recalculating of similarity scores of candidates retrieved from vector store when quantization is used.
         {"rescoring", std::bind_front(validate_enumerated_option, boolean_values)},
-};
+        // 'source_model' is a Cassandra SAI option specifying the embedding model name.
+        // Used by Cassandra libraries (e.g., CassIO) to tag indexes with the model that produced the vectors.
+        // Accepted for compatibility but not used by ScyllaDB.
+        {"source_model", [](const sstring&, const sstring&) { /* accepted for Cassandra compatibility */ }},
+    };
 
 static constexpr auto TC_TARGET_KEY = "tc";
 static constexpr auto PK_TARGET_KEY = "pk";
@@ -250,10 +254,36 @@ bool vector_index::view_should_exist() const {
 }
 
 std::optional<cql3::description> vector_index::describe(const index_metadata& im, const schema& base_schema) const {
+    static const std::unordered_set<sstring> system_options = {
+        cql3::statements::index_target::target_option_name,
+        db::index::secondary_index::custom_class_option_name,
+        db::index::secondary_index::index_version_option_name,
+    };
+
     fragmented_ostringstream os;
     os << "CREATE CUSTOM INDEX " << cql3::util::maybe_quote(im.name()) << " ON " << cql3::util::maybe_quote(base_schema.ks_name()) << "."
        << cql3::util::maybe_quote(base_schema.cf_name()) << "(" << targets_to_cql(im.options().at(cql3::statements::index_target::target_option_name)) << ")"
        << " USING 'vector_index'";
+
+    // Collect user-provided options (excluding system keys like target, class_name, index_version).
+    std::map<sstring, sstring> user_options;
+    for (const auto& [key, value] : im.options()) {
+        if (!system_options.contains(key)) {
+            user_options.emplace(key, value);
+        }
+    }
+    if (!user_options.empty()) {
+        os << " WITH OPTIONS = {";
+        bool first = true;
+        for (const auto& [key, value] : user_options) {
+            if (!first) {
+                os << ", ";
+            }
+            os << "'" << key << "': '" << value << "'";
+            first = false;
+        }
+        os << "}";
+    }
 
     return cql3::description{
         .keyspace = base_schema.ks_name(),
