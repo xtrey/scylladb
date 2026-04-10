@@ -731,7 +731,20 @@ bool index_metadata::operator==(const index_metadata& other) const {
 }
 
 bool index_metadata::equals_noname(const index_metadata& other) const {
-    return _kind == other._kind && _options == other._options;
+    if (_kind != other._kind || _options.size() != other._options.size()) {
+        return false;
+    }
+    for (const auto& [key, value] : _options) {
+        // The index_version is unique for each index creation
+        if (key == "index_version") {
+            continue;
+        }
+        auto it = other._options.find(key);
+        if (it == other._options.end() || it->second != value) {
+            return false;
+        }
+    }
+    return true;
 }
 
 const table_id& index_metadata::id() const {
