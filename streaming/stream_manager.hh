@@ -101,8 +101,6 @@ private:
 
     scheduling_group _streaming_group;
     utils::updateable_value<uint32_t> _io_throughput_mbs;
-    serialized_action _io_throughput_updater = serialized_action([this] { return update_io_throughput(_io_throughput_mbs()); });
-    std::optional<utils::observer<uint32_t>> _io_throughput_option_observer;
 
 public:
     stream_manager(db::config& cfg, sharded<replica::database>& db,
