@@ -1533,6 +1533,11 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                         "Cannot start - cluster is not yet upgraded to use service levels v2 and this version does not support legacy service levels. "
                         "If you are trying to upgrade the node then first upgrade the cluster to use service levels v2.");
                 }
+                if (sys_ks.local().get_view_builder_version().get() != db::system_keyspace::view_builder_version_t::v2) {
+                    throw std::runtime_error(
+                        "Cannot start - view builder has not been migrated to v2 and this version does not support legacy view builder. "
+                        "If you are trying to upgrade the node then first upgrade the cluster to use view builder v2.");
+                }
             }
 
             const auto listen_address = utils::resolve(cfg->listen_address, family).get();
@@ -1841,7 +1846,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             });
 
             checkpoint(stop_signal, "starting the view builder");
-            view_builder.start(std::ref(db), std::ref(sys_ks), std::ref(sys_dist_ks), std::ref(mm_notifier), std::ref(view_update_generator), std::ref(group0_client), std::ref(qp)).get();
+            view_builder.start(std::ref(db), std::ref(sys_ks), std::ref(mm_notifier), std::ref(view_update_generator), std::ref(group0_client), std::ref(qp)).get();
             auto stop_view_builder = defer_verbose_shutdown("view builder", [cfg] {
                 view_builder.stop().get();
             });

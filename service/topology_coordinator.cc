@@ -4022,32 +4022,6 @@ future<std::optional<group0_guard>> topology_coordinator::maybe_migrate_system_t
     // it's in `topology_coordinator::enable_features` ,so  topology_coordinator will re-run its loop
     // and `maybe_migrate_system_tables` will be called.
 
-    // Check if we can upgrade the view_build_status table to v2, being managed by group0.
-    // First we upgrade to an intermediate version v1_5 where we write to both tables, then
-    // we upgrade to v2.
-    const auto view_builder_version = co_await _sys_ks.get_view_builder_version();
-    if (view_builder_version == db::system_keyspace::view_builder_version_t::v1 && _feature_service.view_build_status_on_group0) {
-        rtlogger.info("Migrating view_builder to v1_5");
-        auto tmptr = get_token_metadata_ptr();
-        co_await db::view::view_builder::migrate_to_v1_5(tmptr, _sys_ks, _sys_ks.query_processor(), _group0.client(), _as, std::move(guard));
-        co_return std::nullopt;
-    }
-
-    if (view_builder_version == db::system_keyspace::view_builder_version_t::v1_5) {
-        if (!get_dead_nodes().empty()) {
-            rtlogger.debug("Not all nodes are alive. Skipping system table migration until there are any dead nodes.");
-            co_return std::move(guard);
-        }
-
-        rtlogger.info("Migrating view_builder to v2");
-        // do a barrier to ensure all nodes applied the migration to v1_5 before we continue to v2
-        guard = co_await exec_global_command(std::move(guard), raft_topology_cmd::command::barrier, {_raft.id()});
-
-        auto tmptr = get_token_metadata_ptr();
-        co_await db::view::view_builder::migrate_to_v2(tmptr, _sys_ks, _sys_ks.query_processor(), _group0.client(), _as, std::move(guard));
-        co_return std::nullopt;
-    }
-
     if (_feature_service.driver_service_level) {
         const auto sl_driver_created = co_await _sys_ks.get_service_level_driver_created();
         if (!sl_driver_created.value_or(false)) {

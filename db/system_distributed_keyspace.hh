@@ -87,11 +87,6 @@ public:
 
     bool started() const { return _started; }
 
-    future<std::unordered_map<locator::host_id, sstring>> view_status(sstring ks_name, sstring view_name) const;
-    future<> start_view_build(sstring ks_name, sstring view_name) const;
-    future<> finish_view_build(sstring ks_name, sstring view_name) const;
-    future<> remove_view(sstring ks_name, sstring view_name) const;
-
     future<> insert_cdc_generation(utils::UUID, const cdc::topology_description&, context);
     future<std::optional<cdc::topology_description>> read_cdc_generation(utils::UUID);
 
