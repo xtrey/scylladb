@@ -339,7 +339,7 @@ static storage_options::object_storage object_storage_from_map(std::string_view 
     }
     if (values.size() > allowed_options.size()) {
         throw std::runtime_error(fmt::format("Extraneous options for {}: {}; allowed: {}",
-            fmt::join(values | std::views::keys, ","), type,
+            type, fmt::join(values | std::views::keys, ","),
             fmt::join(allowed_options | std::views::keys, ",")));
     }
     options.type = std::string(type);
