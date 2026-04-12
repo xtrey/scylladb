@@ -616,7 +616,7 @@ future<rjson::value> encryption::kms_host::impl::do_post(std::string_view target
             static auto get_xml_node = [](node_type* node, const char* what) {
                 auto res = node->first_node(what);
                 if (!res) {
-                    throw malformed_response_error(fmt::format("XML parse error", what));
+                    throw malformed_response_error(fmt::format("XML parse error: {}", what));
                 }
                 return res;
             };
