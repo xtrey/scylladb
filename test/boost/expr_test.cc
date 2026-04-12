@@ -1,5 +1,5 @@
 // Copyright (C) 2023-present ScyllaDB
-// SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
+// SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.1
 
 #include "cql3/column_identifier.hh"
 #include "cql3/util.hh"

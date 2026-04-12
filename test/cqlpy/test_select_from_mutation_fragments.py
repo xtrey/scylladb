@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Copyright 2023-present ScyllaDB
 #
-# SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
+# SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.1
 
 # Tests concerning the SELECT * FROM MUTATION_FRAGMENTS($table) statement, which allows dumping
 # the underlying mutation fragment data stream, for a table.

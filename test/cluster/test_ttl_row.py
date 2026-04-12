@@ -1,6 +1,6 @@
 # Copyright (C) 2025-present ScyllaDB
 #
-# SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
+# SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.1
 
 # Multi-node tests for the CQL per-row TTL feature. Note that this is a
 # distinct feature from CQL's traditional per-write (per-cell) TTL.
