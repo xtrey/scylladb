@@ -629,7 +629,7 @@ future<> utils::gcp::storage::client::object_data_sink::remove_upload() {
         co_return;
     }
 
-    gcp_storage.debug("Removing incomplete upload {}:{} ()", _bucket, _object_name, _session_path);
+    gcp_storage.debug("Removing incomplete upload {}:{} ({})", _bucket, _object_name, _session_path);
 
     auto res = co_await _impl->send_with_retry(_session_path
         , GCP_OBJECT_SCOPE_READ_WRITE
