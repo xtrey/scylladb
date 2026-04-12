@@ -3054,7 +3054,7 @@ future<service::topology> system_keyspace::load_topology_state(const std::unorde
         co_return ret;
     }
 
-    const bool tablet_balancing_not_supported = _db.features().strongly_consistent_tables || _db.features().logstor;
+    const bool tablet_balancing_not_supported = _db.features().strongly_consistent_tables;
 
     for (auto& row : *rs) {
         if (!row.has("host_id")) {

@@ -52,6 +52,22 @@ size_t logstor::get_memory_usage() const {
     return _segment_manager.get_memory_usage();
 }
 
+segment_manager& logstor::get_segment_manager() noexcept {
+    return _segment_manager;
+}
+
+const segment_manager& logstor::get_segment_manager() const noexcept {
+    return _segment_manager;
+}
+
+compaction_manager& logstor::get_compaction_manager() noexcept {
+    return _segment_manager.get_compaction_manager();
+}
+
+const compaction_manager& logstor::get_compaction_manager() const noexcept {
+    return _segment_manager.get_compaction_manager();
+}
+
 future<> logstor::write(const mutation& m, compaction_group& cg, seastar::gate::holder cg_holder) {
     primary_index_key key(m.decorated_key());
     table_id table = m.schema()->id();
@@ -125,22 +141,6 @@ future<std::optional<canonical_mutation>> logstor::read(const schema& s, const p
 
         return std::optional<canonical_mutation>(std::move(record.mut));
     });
-}
-
-segment_manager& logstor::get_segment_manager() noexcept {
-    return _segment_manager;
-}
-
-const segment_manager& logstor::get_segment_manager() const noexcept {
-    return _segment_manager;
-}
-
-compaction_manager& logstor::get_compaction_manager() noexcept {
-    return _segment_manager.get_compaction_manager();
-}
-
-const compaction_manager& logstor::get_compaction_manager() const noexcept {
-    return _segment_manager.get_compaction_manager();
 }
 
 mutation_reader logstor::make_reader(schema_ptr schema,
