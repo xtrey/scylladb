@@ -707,9 +707,10 @@ struct fmt::formatter<shadowable_tombstone> : fmt::formatter<string_view> {
     template <typename FormatContext>
     auto format(const shadowable_tombstone& t, FormatContext& ctx) const {
         if (t) {
+            auto& tomb = t.tomb();
             return fmt::format_to(ctx.out(),
                                   "{{shadowable tombstone: timestamp={}, deletion_time={}}}",
-                                  t.tomb().timestamp, t.tomb(), t.tomb().deletion_time.time_since_epoch().count());
+                                  tomb.timestamp, tomb.deletion_time.time_since_epoch().count());
         } else {
             return fmt::format_to(ctx.out(),
                                   "{{shadowable tombstone: none}}");
