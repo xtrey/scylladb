@@ -715,7 +715,7 @@ future<> view_building_worker::do_build_range(table_id base_id, std::vector<tabl
             vbw_logger.info("Building range {} for base table {} and views {} was aborted.", range, base_id, views_ids);
         } catch (...) {
             eptr = std::current_exception();
-            vbw_logger.warn("Error during processing range {} for base table {} and views {}: ", range, base_id, views_ids, eptr);
+            vbw_logger.warn("Error during processing range {} for base table {} and views {}: {}", range, base_id, views_ids, eptr);
         }
         reader.close().get();
 
