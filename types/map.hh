@@ -84,12 +84,12 @@ bytes map_type_impl::serialize_to_bytes(const Range& map_range) {
     for (const std::pair<const bytes, bytes>& elem : map_range) {
         if (elem.first.size() > std::numeric_limits<int32_t>::max()) {
             throw exceptions::invalid_request_exception(
-                fmt::format("Map key size too large: {} bytes > {}", map_size, std::numeric_limits<int32_t>::max()));
+                fmt::format("Map key size too large: {} bytes > {}", elem.first.size(), std::numeric_limits<int32_t>::max()));
         }
 
         if (elem.second.size() > std::numeric_limits<int32_t>::max()) {
             throw exceptions::invalid_request_exception(
-                fmt::format("Map value size too large: {} bytes > {}", map_size, std::numeric_limits<int32_t>::max()));
+                fmt::format("Map value size too large: {} bytes > {}", elem.second.size(), std::numeric_limits<int32_t>::max()));
         }
 
         write_collection_value(out, elem.first);
@@ -121,12 +121,12 @@ managed_bytes map_type_impl::serialize_to_managed_bytes(const Range& map_range) 
     for (const std::pair<const managed_bytes, managed_bytes>& elem : map_range) {
         if (elem.first.size() > std::numeric_limits<int32_t>::max()) {
             throw exceptions::invalid_request_exception(
-                fmt::format("Map key size too large: {} bytes > {}", map_size, std::numeric_limits<int32_t>::max()));
+                fmt::format("Map key size too large: {} bytes > {}", elem.first.size(), std::numeric_limits<int32_t>::max()));
         }
 
         if (elem.second.size() > std::numeric_limits<int32_t>::max()) {
             throw exceptions::invalid_request_exception(
-                fmt::format("Map value size too large: {} bytes > {}", map_size, std::numeric_limits<int32_t>::max()));
+                fmt::format("Map value size too large: {} bytes > {}", elem.second.size(), std::numeric_limits<int32_t>::max()));
         }
 
         write_collection_value(out, elem.first);
