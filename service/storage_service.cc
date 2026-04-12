@@ -496,7 +496,7 @@ future<storage_service::nodes_to_notify_after_sync> storage_service::sync_raft_t
     };
 
     auto process_normal_node = [&] (raft::server_id id, locator::host_id host_id, std::optional<gms::inet_address> ip, const replica_state& rs) -> future<> {
-        rtlogger.trace("loading topology: raft id={} ip={} node state={} dc={} rack={} tokens state={} tokens={} shards={}",
+        rtlogger.trace("loading topology: raft id={} ip={} node state={} dc={} rack={} tokens state={} tokens={} shards={} cleanup={}",
                       id, ip, rs.state, rs.datacenter, rs.rack, _topology_state_machine._topology.tstate, rs.ring.value().tokens, rs.shard_count, rs.cleanup);
         // Save tokens, not needed for raft topology management, but needed by legacy
         // Also ip -> id mapping is needed for address map recreation on reboot
@@ -5961,18 +5961,12 @@ future<join_node_request_result> storage_service::join_node_request_handler(join
         if (const auto *p = _topology_state_machine._topology.find(params.host_id)) {
             const auto& rs = p->second;
             if (rs.state == node_state::left) {
-                rtlogger.warn("the node {} attempted to join",
-                        " but it was removed from the cluster. Rejecting"
-                        " the node",
-                        params.host_id);
+                rtlogger.warn("the node {} attempted to join but it was removed from the cluster. Rejecting the node", params.host_id);
                 result.result = join_node_request_result::rejected{
                     .reason = "The node has already been removed from the cluster",
                 };
             } else {
-                rtlogger.warn("the node {} attempted to join",
-                        " again after an unfinished attempt but it is no longer"
-                        " allowed to do so. Rejecting the node",
-                        params.host_id);
+                rtlogger.warn("the node {} attempted to join again after an unfinished attempt but it is no longer allowed to do so. Rejecting the node", params.host_id);
                 result.result = join_node_request_result::rejected{
                     .reason = "The node requested to join before but didn't finish the procedure. "
                               "Please clear the data directory and restart.",
