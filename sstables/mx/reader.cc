@@ -505,7 +505,7 @@ public:
             return consume_range_tombstone_boundary(std::move(pos), end_tombstone, start_tombstone);
         }
         default:
-            on_parse_error(format("Invalid boundary type", static_cast<std::underlying_type<sstables::bound_kind_m>::type>(kind)), _sst->get_filename());
+            on_parse_error(format("Invalid boundary type {}", static_cast<std::underlying_type<sstables::bound_kind_m>::type>(kind)), _sst->get_filename());
         }
     }
 
@@ -2221,7 +2221,7 @@ public:
         case bound_kind_m::excl_end_incl_start:
             return consume_range_tombstone(ecp, bound_kind::incl_start, start_tombstone);
         default:
-            on_parse_error(format("Invalid boundary type", static_cast<std::underlying_type_t<bound_kind_m>>(kind)), {});
+            on_parse_error(format("Invalid boundary type {}", static_cast<std::underlying_type_t<bound_kind_m>>(kind)), {});
         }
     }
 
