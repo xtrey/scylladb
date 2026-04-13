@@ -4291,6 +4291,9 @@ future<> storage_service::process_tablet_split_candidate(table_id table) noexcep
 
             if (co_await all_compaction_groups_split()) {
                 slogger.debug("All compaction groups of table {} are split ready.", table);
+                if (_topology_state_machine.on_tablet_split_ready) {
+                    _topology_state_machine.on_tablet_split_ready();
+                }
                 release_guard(std::move(guard));
                 break;
             } else {

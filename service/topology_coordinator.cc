@@ -24,6 +24,7 @@
 #include <variant>
 
 #include "auth/service.hh"
+#include "cdc/cdc_options.hh"
 #include "cdc/generation.hh"
 #include "cdc/generation_service.hh"
 #include "cql3/statements/ks_prop_defs.hh"
@@ -4071,6 +4072,15 @@ public:
         , _async_gate("topology_coordinator")
     {
         _db.get_notifier().register_listener(this);
+        // When the delay_cdc_stream_finalization error injection is disabled
+        // (test releases it), wake the topology coordinator so it retries
+        // maybe_finalize_pending_stream_enables promptly.
+        utils::get_local_injector().register_on_disable("delay_cdc_stream_finalization", [this] {
+            _topo_sm.event.broadcast();
+        });
+        _topo_sm.on_tablet_split_ready = [this] {
+            trigger_load_stats_refresh();
+        };
     }
 
     future<> run();
@@ -4554,6 +4564,8 @@ future<> topology_coordinator::run() {
 
 future<> topology_coordinator::stop() {
     co_await _db.get_notifier().unregister_listener(this);
+    utils::get_local_injector().unregister_on_disable("delay_cdc_stream_finalization");
+    _topo_sm.on_tablet_split_ready = nullptr;
 
     // if topology_coordinator::run() is aborted either because we are not a
     // leader anymore, or we are shutting down as a leader, we have to handle
