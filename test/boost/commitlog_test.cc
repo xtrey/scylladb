@@ -10,6 +10,8 @@
 #include <boost/test/unit_test.hpp>
 
 #include <stdlib.h>
+#include <sstream>
+#include <regex>
 #include <iostream>
 #include <unordered_map>
 #include <unordered_set>
@@ -2332,6 +2334,76 @@ SEASTAR_TEST_CASE(test_segment_end_on_entry_end) {
         co_await log.sync_all_segments();
         // Without the fix, this will throw.
         co_await replay_segment(segment_path);
+    });
+}
+
+
+// Verify that commitlog segments are replayed in ascending segment ID
+// order within each shard. The replayer distributes segments by shard and
+// iterates them per-shard; this test captures the "Replaying" debug log
+// messages and checks that segment IDs appear in strictly ascending order.
+//
+SEASTAR_TEST_CASE(test_commitlog_replay_segment_order) {
+    return do_with_cql_env_thread([](cql_test_env& env) {
+        env.execute_cql("create table t (pk text primary key, v text)").get();
+
+        auto& db = env.local_db();
+        auto& table = db.find_column_family("ks", "t");
+        auto& cl = *table.commitlog();
+        auto s = table.schema();
+
+        // Write a mutation and force a new segment, repeat several
+        // times to produce multiple segments on the current shard.
+        // Keep rp_handles alive so segments are not recycled.
+        constexpr int num_segments = 4;
+        auto uuid = s->id();
+        sstring tmp = "test mutation data";
+        std::vector<rp_handle> handles;
+        for (int i = 0; i < num_segments; ++i) {
+            auto h = cl.add_mutation(uuid, tmp.size(), db::commitlog::force_sync::yes, [&tmp](db::commitlog::output& dst) {
+                           dst.write(tmp.data(), tmp.size());
+                       }).get();
+            handles.push_back(std::move(h));
+            cl.force_new_active_segment().get();
+        }
+
+        cl.sync_all_segments().get();
+        auto paths = cl.get_active_segment_names();
+        BOOST_REQUIRE_GE(paths.size(), num_segments);
+
+        // Enable debug logging for the replayer and capture output.
+        auto prev_level = logging::logger_registry().get_logger_level("commitlog_replayer");
+        logging::logger_registry().set_logger_level("commitlog_replayer", logging::log_level::debug);
+
+        std::ostringstream captured;
+        seastar::logger::set_ostream(captured);
+
+        auto rp = db::commitlog_replayer::create_replayer(env.db(), env.get_system_keyspace()).get();
+        rp.recover(paths, db::commitlog::descriptor::FILENAME_PREFIX).get();
+
+        // Restore logger state.
+        seastar::logger::set_ostream(std::cerr);
+        logging::logger_registry().set_logger_level("commitlog_replayer", prev_level);
+
+        // Parse captured log lines for per-segment "Replaying <path>"
+        // debug messages and extract segment IDs.
+        auto log_output = captured.str();
+        std::vector<segment_id_type> replayed_ids;
+        std::regex re(R"(DEBUG.*Replaying (\S+))");
+        std::sregex_iterator it(log_output.begin(), log_output.end(), re);
+        std::sregex_iterator end;
+        for (; it != end; ++it) {
+            auto fname = (*it)[1].str();
+            commitlog::descriptor desc(fname, db::commitlog::descriptor::FILENAME_PREFIX);
+            replayed_ids.push_back(desc.id);
+        }
+
+        BOOST_REQUIRE_GE(replayed_ids.size(), num_segments);
+
+        // Check strictly ascending order.
+        for (size_t i = 1; i < replayed_ids.size(); ++i) {
+            BOOST_CHECK_GT(replayed_ids[i], replayed_ids[i - 1]);
+        }
     });
 }
 
