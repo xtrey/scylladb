@@ -179,6 +179,54 @@ def test_list_streams_paged(dynamodb, dynamodbstreams):
                         break
                     streams = dynamodbstreams.list_streams(Limit=1, ExclusiveStartStreamArn=streams['LastEvaluatedStreamArn'])
 
+# The previous test (test_list_streams_paged) verifies that paging in
+# ListStreams works by passing the cookie returned as LastEvaluatedStreamArn
+# from one call, into ExclusiveStartStreamArn given to the next call. But that
+# test did not check what the value of this "ExclusiveStartStreamArn" looks
+# like. The DynamoDB documentation says that it should be "The stream ARN of
+# the item where the operation stopped", so in this test we check that it
+# indeed is the last returned ARN - and not some opaque cookie of a different
+# form.
+# This test also verifies that the final page has no LastEvaluatedStreamArn,
+# something which test_list_streams_paged also did not check.
+def test_list_streams_paged_cookie(dynamodb, dynamodbstreams):
+    with create_stream_test_table(dynamodb, StreamViewType='KEYS_ONLY') as table1:
+        with create_stream_test_table(dynamodb, StreamViewType='KEYS_ONLY') as table2:
+            wait_for_active_stream(dynamodbstreams, table1)
+            wait_for_active_stream(dynamodbstreams, table2)
+            # Page through all streams one at a time, checking on every page
+            # that LastEvaluatedStreamArn equals the StreamArn of the last
+            # returned stream. The DynamoDB documentation says it should be
+            # "The stream ARN of the item where the operation stopped" - i.e.,
+            # the actual ARN, not an opaque cookie of a different form.
+            # We also verify that the final page has no LastEvaluatedStreamArn,
+            # indicating the end of the list.
+            seen_arns = []
+            response = dynamodbstreams.list_streams(Limit=1)
+            while True:
+                assert 'Streams' in response
+                # All but the last page must return exactly one stream because
+                # we used Limit=1, but the last page may return 0 or 1 stream.
+                if 'LastEvaluatedStreamArn' not in response:
+                    # Reached the last page.
+                    assert len(response['Streams']) <= 1
+                    if response['Streams']:
+                        seen_arns.append(response['Streams'][0]['StreamArn'])
+                    break
+                assert len(response['Streams']) == 1
+                seen_arns.append(response['Streams'][0]['StreamArn'])
+                # The cookie must equal the StreamArn of the last returned item.
+                assert response['LastEvaluatedStreamArn'] == response['Streams'][-1]['StreamArn']
+                response = dynamodbstreams.list_streams(
+                    Limit=1, ExclusiveStartStreamArn=response['LastEvaluatedStreamArn'])
+            # For completeness, validate that both test tables were listed in
+            # the result, and there were no duplicates.
+            assert len(seen_arns) == len(set(seen_arns))
+            for table in [table1, table2]:
+                table_arns = [s['StreamArn'] for s in
+                    dynamodbstreams.list_streams(TableName=table.name)['Streams']]
+                assert any(arn in seen_arns for arn in table_arns)
+
 # ListStreams with paging should be able correctly return a full list of
 # pre-existing streams even if additional tables were added between pages
 # and caused Scylla's hash table of tables to be reorganized.
