@@ -209,6 +209,8 @@ public:
         return _proxy;
     }
 
+    service::storage_service& storage_service();
+
     std::pair<std::reference_wrapper<service::strong_consistency::coordinator>, gate::holder>
     acquire_strongly_consistent_coordinator();
 

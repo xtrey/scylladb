@@ -560,6 +560,11 @@ query_processor::acquire_strongly_consistent_coordinator() {
     return {remote_.get().sc_coordinator, std::move(holder)};
 }
 
+service::storage_service& query_processor::storage_service() {
+    auto [remote_, holder] = remote();
+    return remote_.get().ss;
+}
+
 void query_processor::start_remote(service::migration_manager& mm, service::mapreduce_service& mapreducer,
                                    service::storage_service& ss, service::raft_group0_client& group0_client,
                                    service::strong_consistency::coordinator& sc_coordinator) {
