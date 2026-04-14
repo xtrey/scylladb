@@ -167,46 +167,8 @@ static schema_ptr get_schema_from_arn(service::storage_proxy& proxy, const strea
     }
 }
 
-// ShardId. Must be between 28 and 65 characters inclusive.
-// UUID is 36 bytes as string (including dashes). 
-// Prepend a version/type marker (`S`) -> 37
-class stream_shard_id : public utils::UUID {
-public:
-    using UUID = utils::UUID;
-    static constexpr char marker = 'S';
-
-    stream_shard_id() = default;
-    stream_shard_id(const UUID& uuid)
-        : UUID(uuid)
-    {}
-    stream_shard_id(const table_id& tid)
-        : UUID(tid.uuid())
-    {}
-    stream_shard_id(std::string_view v)
-        : UUID(v.substr(1))
-    {
-        if (v[0] != marker) {
-            throw std::invalid_argument(std::string(v));
-        }
-    }
-    friend std::ostream& operator<<(std::ostream& os, const stream_shard_id& arn) {
-        const UUID& uuid = arn;
-        return os << marker << uuid;
-    }
-    friend std::istream& operator>>(std::istream& is, stream_shard_id& arn) {
-        std::string s;
-        is >> s;
-        arn = stream_shard_id(s);
-        return is;
-    }
-};
-
 } // namespace alternator
 
-template<typename ValueType>
-struct rapidjson::internal::TypeHelper<ValueType, alternator::stream_shard_id>
-    : public from_string_helper<ValueType, alternator::stream_shard_id>
-{};
 template<typename ValueType>
 struct rapidjson::internal::TypeHelper<ValueType, alternator::stream_arn>
     : public from_string_helper<ValueType, alternator::stream_arn>
