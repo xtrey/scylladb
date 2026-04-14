@@ -2552,6 +2552,14 @@ sstring storage_service::get_schema_version() {
     return _db.local().get_version().to_sstring();
 }
 
+cluster_info storage_service::describe_cluster() const {
+    return cluster_info{
+        .cluster_name = _gossiper.get_cluster_name(),
+        .partitioner = _gossiper.get_partitioner_name(),
+        .snitch_name = _snitch.local()->get_name()
+    };
+}
+
 static constexpr auto UNREACHABLE = "UNREACHABLE";
 
 future<std::unordered_map<sstring, std::vector<sstring>>> storage_service::describe_schema_versions() {
