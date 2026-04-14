@@ -227,6 +227,25 @@ def test_list_streams_paged_cookie(dynamodb, dynamodbstreams):
                     dynamodbstreams.list_streams(TableName=table.name)['Streams']]
                 assert any(arn in seen_arns for arn in table_arns)
 
+# If the last page of ListStreams results is not full because there are no
+# more streams to list, it shouldn't have LastEvaluatedStreamArn: It's silly
+# to return one and then force the user to retrieve another empty page).
+# Note that we focus on the case of the last page not being full because if
+# the last page *is* full (list Limit streams), the implementation may not be
+# aware that there are no more streams to list.
+def test_list_streams_unfull_last_page_no_cookie(dynamodb, dynamodbstreams):
+    with create_stream_test_table(dynamodb, StreamViewType='KEYS_ONLY') as table:
+        wait_for_active_stream(dynamodbstreams, table)
+        # With a very high Limit the page is definitely not full, so
+        # LastEvaluatedStreamArn must be absent. Limit=100 is not very
+        # high, but DynamoDB doesn't allow any higher and it is very
+        # unlikely we'll ever run this test with 100 live streams so
+        # we can expect the page to not be full.
+        response = dynamodbstreams.list_streams(Limit=100)
+        assert 'Streams' in response
+        assert len(response['Streams']) >= 1
+        assert 'LastEvaluatedStreamArn' not in response
+
 # ListStreams with paging should be able correctly return a full list of
 # pre-existing streams even if additional tables were added between pages
 # and caused Scylla's hash table of tables to be reorganized.

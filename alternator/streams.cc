@@ -259,7 +259,11 @@ future<alternator::executor::request_return_type> alternator::executor::list_str
 
     rjson::add(ret, "Streams", std::move(streams));
 
-    if (last) {
+    // Only emit LastEvaluatedStreamArn when we stopped because we hit the
+    // limit (limit == 0), meaning there may be more streams to list.
+    // If we exhausted all tables naturally (limit > 0), there are no more
+    // streams, so we must not emit a cookie.
+    if (last && limit == 0) {
         rjson::add(ret, "LastEvaluatedStreamArn", rjson::from_string(*last));
     }
     return make_ready_future<executor::request_return_type>(rjson::print(std::move(ret)));
