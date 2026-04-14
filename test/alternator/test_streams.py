@@ -361,6 +361,36 @@ def test_describe_nonexistent_stream(dynamodb, dynamodbstreams):
     with pytest.raises(ClientError, match='ResourceNotFoundException' if is_local_java(dynamodbstreams) else 'ValidationException'):
         dynamodbstreams.describe_stream(StreamArn='sdfadfsdfnlfkajakfgjalksfgklasjklasdjfklasdfasdfgasf')
 
+# test_describe_nonexistent_stream checked the case where a StreamArn is
+# completely bogus. Here we want to check well-formed names that point to
+# table names that do not exist. We should return ResourceNotFoundException
+# in this case, not ValidationException.
+# To reduce our assumptions of what valid ARNs look like, we don't hardcode
+# any ARN formats here. Instead, we create a stream, get its real ARN, and
+# then modify it to point to a non-existent table.
+def test_describe_stream_nonexistent_table(dynamodb, dynamodbstreams):
+    with create_stream_test_table(dynamodb, StreamViewType='KEYS_ONLY') as table:
+        streams = dynamodbstreams.list_streams(TableName=table.name)
+        arn = streams['Streams'][0]['StreamArn']
+        # Replace the table name in the ARN with one that doesn't exist.
+        # In both DynamoDB and Alternator, the table name appears in the ARN
+        # at least once, and replacing it yields a well-formed but non-existent
+        # ARN.
+        # In Alternator, the table name appears twice - in both keyspace and
+        # CDC log name parts - so we want to try both replacements to verify
+        # that both incorrect keyspace name and incorrect table names are
+        # handled.
+        nonexistent = table.name + '_nonexistent_' + random_string()
+        count = arn.count(table.name)
+        assert count >= 1  # sanity check that the name appeared in the ARN at all
+        for i in range(count):
+            # Replace only the i-th occurrence of table.name.
+            parts = arn.split(table.name)
+            modified_arn = table.name.join(parts[:i+1]) + nonexistent + table.name.join(parts[i+1:])
+            assert modified_arn != arn
+            with pytest.raises(ClientError, match='ResourceNotFoundException'):
+                dynamodbstreams.describe_stream(StreamArn=modified_arn)
+
 def test_describe_stream_with_nonexistent_last_shard(dynamodb, dynamodbstreams):
     with create_stream_test_table(dynamodb, StreamViewType='KEYS_ONLY') as table:
         streams = dynamodbstreams.list_streams(TableName=table.name)
