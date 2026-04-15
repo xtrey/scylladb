@@ -224,7 +224,7 @@ seastar::future<> local_gcs_wrapper::setup() {
     if (!f) {
         _local = std::make_unique<gcs_fixture>();
         co_await _local->setup();
-        f = gcs_fixture::active();;
+        f = gcs_fixture::active();
     }
 
     endpoint = f->endpoint();

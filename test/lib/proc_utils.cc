@@ -147,7 +147,7 @@ output_stream<char> tests::proc::process_fixture::cin() {
 namespace fs = std::filesystem;
 
 fs::path tests::proc::find_file_in_path(std::string_view name, 
-    const std::vector<fs::path>& path_preprend,
+    const std::vector<fs::path>& path_prepend,
     const std::vector<fs::path>& path_append
 ) {
     static auto get_var = [](const char* name) {
@@ -166,7 +166,7 @@ fs::path tests::proc::find_file_in_path(std::string_view name,
         return res;
     }();
 
-    for (auto& paths : { path_preprend, system_paths, path_append }) {
+    for (auto& paths : { path_prepend, system_paths, path_append }) {
         for (auto& p : paths) {
             auto test = p / name;
             if (fs::exists(test) && !fs::is_directory(test)) {
@@ -268,7 +268,7 @@ future<std::tuple<tests::proc::process_fixture, int>> tests::proc::start_docker_
         bool retry = false;
 
         try {
-            BOOST_TEST_MESSAGE("Waiting for process to laúnch...");
+            BOOST_TEST_MESSAGE("Waiting for process to launch...");
             // arbitrary timeout of 120s for the server to make some output. Very generous.
             // but since we (maybe) run docker, and might need to pull image, this can take
             // some time if we're unlucky.
