@@ -31,7 +31,7 @@ public:
     bool is_custom = false;
     std::optional<sstring> custom_class;
     // The only assumption about the value of `index_version` should be that it is different for every index.
-    std::optional<table_schema_version> index_version;
+    std::optional<utils::UUID> index_version;
 
     void validate() const;
     index_options_map get_raw_options() const;

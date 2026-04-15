@@ -286,26 +286,21 @@ def test_vector_index_version_on_recreate(cql, test_keyspace, scylla_only, skip_
     schema = 'p int primary key, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
         _, table_name = table.split('.')
-        base_table_version_query = f"SELECT version FROM system_schema.scylla_tables WHERE keyspace_name = '{test_keyspace}' AND table_name = '{table_name}'"
         index_version_query = f"SELECT * FROM system_schema.indexes WHERE keyspace_name = '{test_keyspace}' AND table_name = '{table_name}' AND index_name = 'abc'"
-
-        # Fetch the base table version.
-        version = str(cql.execute(base_table_version_query).one().version)
 
         # Create the vector index.
         cql.execute(f"CREATE CUSTOM INDEX abc ON {table}(v) USING 'vector_index'")
 
-        # Fetch the index version.
-        # It should be the same as the base table version before the index was created.
+        # Fetch the index version (a timeuuid generated at index creation time).
         result = cql.execute(index_version_query)
         assert len(result.current_rows) == 1
-        assert result.current_rows[0].options['index_version'] == version
+        version = result.current_rows[0].options['index_version']
 
         # Drop and create new index with the same parameters.
         cql.execute(f"DROP INDEX {test_keyspace}.abc")
         cql.execute(f"CREATE CUSTOM INDEX abc ON {table}(v) USING 'vector_index'")
 
-        # Check if the index version changed.
+        # Check that the index version changed after recreation.
         result = cql.execute(index_version_query)
         assert len(result.current_rows) == 1
         assert result.current_rows[0].options['index_version'] != version
@@ -315,25 +310,20 @@ def test_vector_index_version_unaffected_by_alter(cql, test_keyspace, scylla_onl
     schema = 'p int primary key, v vector<float, 3>'
     with new_test_table(cql, test_keyspace, schema) as table:
         _, table_name = table.split('.')
-        base_table_version_query = f"SELECT version FROM system_schema.scylla_tables WHERE keyspace_name = '{test_keyspace}' AND table_name = '{table_name}'"
         index_version_query = f"SELECT * FROM system_schema.indexes WHERE keyspace_name = '{test_keyspace}' AND table_name = '{table_name}' AND index_name = 'abc'"
-
-        # Fetch the base table version.
-        version = str(cql.execute(base_table_version_query).one().version)
 
         # Create the vector index.
         cql.execute(f"CREATE CUSTOM INDEX abc ON {table}(v) USING 'vector_index'")
 
-        # Fetch the index version.
-        # It should be the same as the base table version before the index was created.
+        # Fetch the index version (a timeuuid generated at index creation time).
         result = cql.execute(index_version_query)
         assert len(result.current_rows) == 1
-        assert result.current_rows[0].options['index_version'] == version
+        version = result.current_rows[0].options['index_version']
 
         # ALTER the base table.
         cql.execute(f"ALTER TABLE {table} ADD v2 vector<float, 3>")
 
-        # Check if the index version is still the same.
+        # Check that the index version is still the same after ALTER.
         result = cql.execute(index_version_query)
         assert len(result.current_rows) == 1
         assert result.current_rows[0].options['index_version'] == version
@@ -404,22 +394,115 @@ def test_vector_index_target_serialization_local_index_with_filtering_columns(cq
         assert len(res) == 1
         assert json.loads(res[0].options['target']) == {"tc": "v", "pk": ["p1", "p2"], "fc": ["f1", "f2"]}
 
-def test_one_vector_index_on_column(cql, test_keyspace, skip_on_scylla_vnodes):
+def test_no_duplicate_named_vector_index_on_column(cql, test_keyspace, skip_on_scylla_vnodes):
+    schema = "p int primary key, v vector<float, 3>"
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(f"CREATE CUSTOM INDEX idx1 ON {table}(v) USING 'sai'")
+        with pytest.raises(InvalidRequest, match=r"already exists"):
+            cql.execute(f"CREATE CUSTOM INDEX idx1 ON {table}(v) USING 'sai'")
+
+
+def test_no_duplicate_unnamed_vector_index_on_column(cql, test_keyspace, skip_on_scylla_vnodes):
     schema = "p int primary key, v vector<float, 3>"
     with new_test_table(cql, test_keyspace, schema) as table:
         cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai'")
-        with pytest.raises(InvalidRequest, match=r"There exists a duplicate custom index|Cannot create more than one storage-attached index on the same column|is a duplicate of existing index"):
+        with pytest.raises(InvalidRequest, match=r"duplicate of existing index"):
             cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai'")
+
+
+def test_no_duplicate_unnamed_vector_index_with_if_not_exists(cql, test_keyspace, skip_on_scylla_vnodes):
+    schema = "p int primary key, v vector<float, 3>"
+    with new_test_table(cql, test_keyspace, schema) as table:
+        ks, cf = table.split(".")
         cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ON {table}(v) USING 'sai'")
+        # Should succeed silently without creating a duplicate
+        cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ON {table}(v) USING 'sai'")
+        rows = list(cql.execute(f"SELECT index_name FROM system_schema.indexes WHERE keyspace_name='{ks}' AND table_name='{cf}'"))
+        index_names = [row.index_name for row in rows]
+        assert len(index_names) == 1
+
+
+def test_no_duplicate_named_vector_index_with_if_not_exists(cql, test_keyspace, skip_on_scylla_vnodes):
+    schema = "p int primary key, v vector<float, 3>"
+    with new_test_table(cql, test_keyspace, schema) as table:
+        ks, cf = table.split(".")
+        cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS idx1 ON {table}(v) USING 'sai'")
+        # Should silently succeed without creating a duplicate
+        cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS idx1 ON {table}(v) USING 'sai'")
+        rows = list(cql.execute(f"SELECT index_name FROM system_schema.indexes WHERE keyspace_name='{ks}' AND table_name='{cf}'"))
+        assert len(rows) == 1
+        assert rows[0].index_name == 'idx1'
+
+
+# Scylla allows creating multiple vector indexes with different names on the same column.
+# Cassandra does not - it rejects the second index with "Cannot create more than one storage-attached index on the same column".
+def test_multiple_vector_indexes_different_names_on_column(cql, test_keyspace, scylla_only, skip_without_tablets):
+    schema = "p int primary key, v vector<float, 3>"
+    with new_test_table(cql, test_keyspace, schema) as table:
+        ks, cf = table.split(".")
+        cql.execute(f"CREATE CUSTOM INDEX idx1 ON {table}(v) USING 'vector_index'")
+        cql.execute(f"CREATE CUSTOM INDEX idx2 ON {table}(v) USING 'vector_index'")
+        # Both indexes should exist in system_schema.indexes
+        rows = list(cql.execute(f"SELECT index_name FROM system_schema.indexes WHERE keyspace_name='{ks}' AND table_name='{cf}'"))
+        index_names = {row.index_name for row in rows}
+        assert 'idx1' in index_names
+        assert 'idx2' in index_names
+
+
+def test_named_vector_index_after_unnamed_on_same_column(cql, test_keyspace, scylla_only, skip_without_tablets):
+    schema = "p int primary key, v vector<float, 3>"
+    with new_test_table(cql, test_keyspace, schema) as table:
+        ks, cf = table.split(".")
+        cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'vector_index'")
+        cql.execute(f"CREATE CUSTOM INDEX idx1 ON {table}(v) USING 'vector_index'")
+        rows = list(cql.execute(f"SELECT index_name FROM system_schema.indexes WHERE keyspace_name='{ks}' AND table_name='{cf}'"))
+        index_names = {row.index_name for row in rows}
+        assert 'idx1' in index_names
+        assert len(index_names) == 2
+
+
+def test_unnamed_vector_index_after_named_on_same_column(cql, test_keyspace, skip_on_scylla_vnodes):
+    schema = "p int primary key, v vector<float, 3>"
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(f"CREATE CUSTOM INDEX idx1 ON {table}(v) USING 'sai'")
+        with pytest.raises(InvalidRequest, match=r"duplicate of existing index"):
+            cql.execute(f"CREATE CUSTOM INDEX ON {table}(v) USING 'sai'")
 
 # Validates fix for issue #26672
-def test_two_same_name_indexes_on_different_tables_with_if_not_exists(cql, test_keyspace, scylla_only, skip_without_tablets):
+def test_two_same_name_indexes_on_different_tables_with_if_not_exists(cql, test_keyspace, skip_on_scylla_vnodes):
     schema = "p int primary key, v vector<float, 3>"
     with new_test_table(cql, test_keyspace, schema) as table:
         schema = "p int primary key, v vector<float, 3>"
         with new_test_table(cql, test_keyspace, schema) as table2:
-            cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ann_index ON {table}(v) USING 'vector_index'")
-            cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ann_index ON {table2}(v) USING 'vector_index'")
+            ks, cf1 = table.split(".")
+            _, cf2 = table2.split(".")
+            cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ann_index ON {table}(v) USING 'sai'")
+            # The query below succeeds although silently does not create a new index.
+            # This is because the IF NOT EXISTS check looks for an existing index with the same name
+            # within the whole keyspace, not just the same table.
+            # Issue: VECTOR-641
+            cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ann_index ON {table2}(v) USING 'sai'")
+            rows1 = list(cql.execute(f"SELECT index_name FROM system_schema.indexes WHERE keyspace_name='{ks}' AND table_name='{cf1}'"))
+            rows2 = list(cql.execute(f"SELECT index_name FROM system_schema.indexes WHERE keyspace_name='{ks}' AND table_name='{cf2}'"))
+            assert len(rows1) == 1
+            assert rows1[0].index_name == 'ann_index'
+            assert len(rows2) == 0
+
+
+def test_two_same_name_indexes_on_different_columns_with_if_not_exists(cql, test_keyspace, skip_on_scylla_vnodes):
+    schema = "p int primary key, v vector<float, 3>, v2 vector<float, 3>"
+    with new_test_table(cql, test_keyspace, schema) as table:
+        ks, cf = table.split(".")
+        cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ann_index ON {table}(v) USING 'sai'")
+        # The query below succeeds although silently does not create a new index.
+        # This is because the IF NOT EXISTS check looks for an existing index with the same name
+        # within the table, not just the same column.
+        # Issue: VECTOR-641
+        cql.execute(f"CREATE CUSTOM INDEX IF NOT EXISTS ann_index ON {table}(v2) USING 'sai'")
+        rows = list(cql.execute(f"SELECT index_name FROM system_schema.indexes WHERE keyspace_name='{ks}' AND table_name='{cf}'"))
+        assert len(rows) == 1
+        assert rows[0].index_name == 'ann_index'
+
 
 ###############################################################################
 # SAI (StorageAttachedIndex) compatibility tests

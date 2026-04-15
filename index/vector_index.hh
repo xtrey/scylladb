@@ -31,7 +31,7 @@ public:
     void validate(const schema &schema, const cql3::statements::index_specific_prop_defs &properties,
             const std::vector<::shared_ptr<cql3::statements::index_target>> &targets, const gms::feature_service& fs,
         const data_dictionary::database& db) const override;
-    table_schema_version index_version(const schema& schema) override;
+    utils::UUID index_version(const schema& schema) override;
     static bool has_vector_index(const schema& s);
     static bool has_vector_index_on_column(const schema& s, const sstring& target_name);
     static bool is_vector_index_on_column(const index_metadata& im, const sstring& target_name);
