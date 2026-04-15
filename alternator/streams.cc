@@ -207,30 +207,29 @@ future<alternator::executor::request_return_type> alternator::executor::list_str
         cfs = db.get_tables();
     }
 
-    // # 12601 (maybe?) - sort the set of tables on ID. This should ensure we never
-    // generate duplicates in a paged listing here. Can obviously miss things if they 
-    // are added between paged calls and end up with a "smaller" UUID/ARN, but that 
-    // is to be expected.
+    // We need to sort the tables to ensure a stable order for paging.
+    // We sort by keyspace and table name, which will also allow us to skip to
+    // the right position by ExclusiveStartStreamArn.
+    auto cmp = [](std::string_view ks1, std::string_view cf1, std::string_view ks2, std::string_view cf2) {
+        return ks1 == ks2 ? cf1 < cf2 : ks1 < ks2;
+    };
     if (std::cmp_less(limit, cfs.size()) || streams_start) {
-        std::sort(cfs.begin(), cfs.end(), [](const data_dictionary::table& t1, const data_dictionary::table& t2) {
-            return t1.schema()->id().uuid() < t2.schema()->id().uuid();
-        });
+        std::sort(cfs.begin(), cfs.end(),
+            [&cmp](const data_dictionary::table& t1, const data_dictionary::table& t2) {
+                return cmp(t1.schema()->ks_name(), t1.schema()->cf_name(),
+                           t2.schema()->ks_name(), t2.schema()->cf_name());
+            });
     }
 
     auto i = cfs.begin();
     auto e = cfs.end();
 
     if (streams_start) {
-        i = std::find_if(i, e, [&](const data_dictionary::table& t) {
-            return t.schema()->ks_name() == streams_start->keyspace_name()
-                && t.schema()->cf_name() == streams_start->table_name()
-                && cdc::get_base_table(db.real_database(), *t.schema())
-                && is_alternator_keyspace(t.schema()->ks_name())
-                ;
-        });
-        if (i != e) {
-            ++i;
-        }
+        i = std::upper_bound(i, e, *streams_start,
+            [&cmp](const stream_arn& arn, const data_dictionary::table& t) {
+                return cmp(arn.keyspace_name(), arn.table_name(),
+                           t.schema()->ks_name(), t.schema()->cf_name());
+            });
     }
 
     auto ret = rjson::empty_object();

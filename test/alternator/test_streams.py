@@ -246,6 +246,69 @@ def test_list_streams_unfull_last_page_no_cookie(dynamodb, dynamodbstreams):
         assert len(response['Streams']) >= 1
         assert 'LastEvaluatedStreamArn' not in response
 
+# Test what happens if we do a paging ListStreams, a page returns as
+# LastEvaluatedStreamArn an ARN of some table's stream, but then we delete
+# that table before retrieving the next page. The paging should be able to
+# continue without error, and see the rest of the streams that we haven't
+# seen yet.
+def test_list_streams_paged_resume_on_deleted_table(dynamodb, dynamodbstreams):
+    with create_stream_test_table(dynamodb, StreamViewType='KEYS_ONLY') as table1:
+        with create_stream_test_table(dynamodb, StreamViewType='KEYS_ONLY') as table2:
+            wait_for_active_stream(dynamodbstreams, table1)
+            wait_for_active_stream(dynamodbstreams, table2)
+            # Page through the streams one at a time (Limit=1), waiting until
+            # we get either table1 or table2.
+            # Set found_table to the table found, other_table to the one not
+            # yet found, and last_arn to LastEvaluatedStreamArn where we stopped.
+            response = dynamodbstreams.list_streams(Limit=1)
+            while True:
+                assert 'Streams' in response
+                assert len(response['Streams']) == 1
+                last_arn = response['LastEvaluatedStreamArn']
+                if response['Streams'][0]['TableName'] == table1.name:
+                    found_table, other_table = table1, table2
+                    break
+                if response['Streams'][0]['TableName'] == table2.name:
+                    found_table, other_table = table2, table1
+                    break
+                response = dynamodbstreams.list_streams(
+                    Limit=1, ExclusiveStartStreamArn=last_arn)
+            # Delete found_table, the one which last_arn that we are holding
+            # refers to.
+            found_table.delete()
+            found_table.meta.client.get_waiter('table_not_exists').wait(TableName=found_table.name)
+            # Try to continue the paging, with last_arn that now refers to the
+            # already deleted table. We expect to be able to continue without
+            # error, and see other_table which we haven't seen yet (and not
+            # see found_table again, of course). Other than that, it's not clear
+            # what we expect to see - it would be nice not to have the list
+            # restarted from scratch, but this test doesn't rule this
+            # implementation out (and I'm not sure we should rule it out).
+            response = dynamodbstreams.list_streams(Limit=1, ExclusiveStartStreamArn=last_arn)
+            found_both = False
+            while True:
+                assert 'Streams' in response
+                if response['Streams']:
+                    assert len(response['Streams']) == 1
+                    assert response['Streams'][0]['TableName'] != found_table.name
+                    if response['Streams'][0]['TableName'] == other_table.name:
+                        found_both = True
+                if 'LastEvaluatedStreamArn' not in response:
+                    break
+                response = dynamodbstreams.list_streams(
+                    Limit=1, ExclusiveStartStreamArn=response['LastEvaluatedStreamArn'])
+            assert found_both
+            # When we'll go out of scope on create_stream_test_table that
+            # create found_table - which we deleted - it will expect this
+            # table to exist and fail when it doesn't. So let's recreate the table.
+            # It doesn't matter which schema we use, it just needs to exist.
+            found_table = dynamodb.create_table(TableName=found_table.name,
+                KeySchema=[ { 'AttributeName': 'p', 'KeyType': 'HASH' } ],
+                AttributeDefinitions=[ { 'AttributeName': 'p', 'AttributeType': 'S' } ],
+                BillingMode='PAY_PER_REQUEST')
+            found_table.meta.client.get_waiter('table_exists').wait(TableName=found_table.name)
+
+
 # ListStreams with paging should be able correctly return a full list of
 # pre-existing streams even if additional tables were added between pages
 # and caused Scylla's hash table of tables to be reorganized.
