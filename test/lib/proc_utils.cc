@@ -200,6 +200,11 @@ future<std::tuple<tests::proc::process_fixture, int>> tests::proc::start_docker_
     }
 
     static int counter = 0;
+
+    struct in_use{};
+    constexpr auto max_retries = 8;
+
+    for (int retries = 0;; ++retries) {
     container_name = fmt::format("{}-{}-{}", name, ::getpid(), ++counter);
 
     // publish port ephemeral, allows parallel instances
@@ -219,10 +224,6 @@ future<std::tuple<tests::proc::process_fixture, int>> tests::proc::start_docker_
     params.emplace_back(image);
     params.append_range(image_args);
 
-    struct in_use{};
-    constexpr auto max_retries = 8;
-
-    for (int retries = 0;; ++retries) {
         BOOST_TEST_MESSAGE(fmt::format("Will run {}", params));
 
         std::vector<std::string> env;
