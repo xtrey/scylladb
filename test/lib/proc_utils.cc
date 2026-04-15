@@ -253,8 +253,8 @@ future<std::tuple<tests::proc::process_fixture, int>> tests::proc::start_docker_
             return std::make_tuple(std::move(h), std::move(f));
         };
 
-        auto [out_h, out_fut] = create_handler(std::move(stdout_parse), std::cout);
-        auto [err_h, err_fut] = create_handler(std::move(stderr_parse), std::cerr);
+        auto [out_h, out_fut] = create_handler(stdout_parse, std::cout);
+        auto [err_h, err_fut] = create_handler(stderr_parse, std::cerr);
 
         auto ps = co_await process_fixture::create(exec
             , params
