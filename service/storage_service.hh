@@ -157,6 +157,12 @@ struct token_metadata_change {
     future<> destroy();
 };
 
+struct cluster_info {
+    sstring cluster_name;
+    sstring partitioner;
+    sstring snitch_name;
+};
+
 class schema_getter {
 public:
     virtual flat_hash_map<sstring, locator::replication_strategy_ptr> get_keyspaces_replication() const = 0;
@@ -643,6 +649,8 @@ public:
     sstring get_release_version();
 
     sstring get_schema_version();
+
+    cluster_info describe_cluster() const;
 
     future<std::unordered_map<sstring, std::vector<sstring>>> describe_schema_versions();
 
