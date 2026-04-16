@@ -2357,14 +2357,22 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             startlog.info("Verifying that all of the tablet keyspaces use rack list replication factors");
             db.local().check_rack_list_everywhere(cfg->enforce_rack_list());
 
-            // Start audit service after join_cluster so that the table-based audit backend
-            // can properly create its keyspace and table.
             checkpoint(stop_signal, "starting audit service");
             audit::audit::start_audit(*cfg, token_metadata, qp, mm).handle_exception([&] (auto&& e) {
                 startlog.error("audit start failed: {}", e);
             }).get();
             auto audit_stop = defer([] {
                 audit::audit::stop_audit().get();
+            });
+
+            // The table-based audit backend needs Raft (via join_cluster)
+            // to create its keyspace and table.
+            checkpoint(stop_signal, "starting audit storage");
+            audit::audit::start_storage(*cfg).handle_exception([&] (auto&& e) {
+                startlog.error("audit storage start failed: {}", e);
+            }).get();
+            auto audit_storage_stop = defer([] {
+                audit::audit::stop_storage().get();
             });
 
             // Semantic validation of sstable compression parameters from config.
