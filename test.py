@@ -392,7 +392,6 @@ def run_pytest(options: argparse.Namespace) -> tuple[int, list[SimpleNamespace]]
         args.extend(['--collect-only', '--quiet', '--no-header'])
     else:
         args.extend([
-            "--log-level=DEBUG",  # Capture logs
             f'--junit-xml={junit_output_file}',
             "-rf",
             '--test-py-init',

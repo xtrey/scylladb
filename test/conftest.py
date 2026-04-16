@@ -6,7 +6,6 @@
 
 import allure
 import pytest
-
 from test import TEST_RUNNER
 from test.pylib.report_plugin import ReportPlugin
 from test.pylib.skip_reason_plugin import SkipReasonPlugin
