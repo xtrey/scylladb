@@ -205,24 +205,24 @@ future<std::tuple<tests::proc::process_fixture, int>> tests::proc::start_docker_
     constexpr auto max_retries = 8;
 
     for (int retries = 0;; ++retries) {
-    container_name = fmt::format("{}-{}-{}", name, ::getpid(), ++counter);
+        container_name = fmt::format("{}-{}-{}", name, ::getpid(), ++counter);
 
-    // publish port ephemeral, allows parallel instances
-    std::vector<std::string> params = {
-        exec.string(),
-        "run", "--rm", 
-        "--name", container_name,
-    };
+        // publish port ephemeral, allows parallel instances
+        std::vector<std::string> params = {
+            exec.string(),
+            "run", "--rm", 
+            "--name", container_name,
+        };
 
-    if (service_port == 0) {
-        params.emplace_back("-P");
-    } else {
-        params.emplace_back("-p");
-        params.emplace_back(std::to_string(service_port));
-    }
-    params.append_range(docker_args);
-    params.emplace_back(image);
-    params.append_range(image_args);
+        if (service_port == 0) {
+            params.emplace_back("-P");
+        } else {
+            params.emplace_back("-p");
+            params.emplace_back(std::to_string(service_port));
+        }
+        params.append_range(docker_args);
+        params.emplace_back(image);
+        params.append_range(image_args);
 
         BOOST_TEST_MESSAGE(fmt::format("Will run {}", params));
 
