@@ -76,11 +76,11 @@ class DockerizedServer:
         # thus ensuring the coro runs forever, sort of... However, 
         # this currently breaks, probably due to some part of the 
         # machinery/tests that don't async fully, causing us to not
-        # process the log, and thus hand/fail, bla bla.
+        # process the log, and thus hang/fail, bla bla.
         # The solution is to make the process synced, and use a 
         # background thread (execution pool) for the processing.
         # This way we know the pipe reader will not suddenly get
-        # blocked at inconvinient times.
+        # blocked at inconvenient times.
         proc = subprocess.Popen(args, stderr=subprocess.PIPE)
         loop = asyncio.get_running_loop()
         ready_fut = loop.create_future()

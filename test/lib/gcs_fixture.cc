@@ -44,7 +44,7 @@ static future<std::optional<google_credentials>> credentials(const std::string& 
 }
 
 static future<std::tuple<tp::process_fixture, int>> start_fake_gcs_server(const tmpdir& tmp) {
-    return tp::start_docker_service("local-kms"
+    return tp::start_docker_service("fake-gcs-server"
         , "docker.io/fsouza/fake-gcs-server:1.52.3"
         , {}
         , [](std::string_view line) {
@@ -224,7 +224,7 @@ seastar::future<> local_gcs_wrapper::setup() {
     if (!f) {
         _local = std::make_unique<gcs_fixture>();
         co_await _local->setup();
-        f = gcs_fixture::active();;
+        f = gcs_fixture::active();
     }
 
     endpoint = f->endpoint();

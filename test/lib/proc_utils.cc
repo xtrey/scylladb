@@ -147,7 +147,7 @@ output_stream<char> tests::proc::process_fixture::cin() {
 namespace fs = std::filesystem;
 
 fs::path tests::proc::find_file_in_path(std::string_view name, 
-    const std::vector<fs::path>& path_preprend,
+    const std::vector<fs::path>& path_prepend,
     const std::vector<fs::path>& path_append
 ) {
     static auto get_var = [](const char* name) {
@@ -166,7 +166,7 @@ fs::path tests::proc::find_file_in_path(std::string_view name,
         return res;
     }();
 
-    for (auto& paths : { path_preprend, system_paths, path_append }) {
+    for (auto& paths : { path_prepend, system_paths, path_append }) {
         for (auto& p : paths) {
             auto test = p / name;
             if (fs::exists(test) && !fs::is_directory(test)) {
@@ -200,29 +200,30 @@ future<std::tuple<tests::proc::process_fixture, int>> tests::proc::start_docker_
     }
 
     static int counter = 0;
-    container_name = fmt::format("{}-{}-{}", name, ::getpid(), ++counter);
-
-    // publish port ephemeral, allows parallel instances
-    std::vector<std::string> params = {
-        exec.string(),
-        "run", "--rm", 
-        "--name", container_name,
-    };
-
-    if (service_port == 0) {
-        params.emplace_back("-P");
-    } else {
-        params.emplace_back("-p");
-        params.emplace_back(std::to_string(service_port));
-    }
-    params.append_range(docker_args);
-    params.emplace_back(image);
-    params.append_range(image_args);
 
     struct in_use{};
     constexpr auto max_retries = 8;
 
     for (int retries = 0;; ++retries) {
+        container_name = fmt::format("{}-{}-{}", name, ::getpid(), ++counter);
+
+        // publish port ephemeral, allows parallel instances
+        std::vector<std::string> params = {
+            exec.string(),
+            "run", "--rm", 
+            "--name", container_name,
+        };
+
+        if (service_port == 0) {
+            params.emplace_back("-P");
+        } else {
+            params.emplace_back("-p");
+            params.emplace_back(std::to_string(service_port));
+        }
+        params.append_range(docker_args);
+        params.emplace_back(image);
+        params.append_range(image_args);
+
         BOOST_TEST_MESSAGE(fmt::format("Will run {}", params));
 
         std::vector<std::string> env;
@@ -253,8 +254,8 @@ future<std::tuple<tests::proc::process_fixture, int>> tests::proc::start_docker_
             return std::make_tuple(std::move(h), std::move(f));
         };
 
-        auto [out_h, out_fut] = create_handler(std::move(stdout_parse), std::cout);
-        auto [err_h, err_fut] = create_handler(std::move(stderr_parse), std::cerr);
+        auto [out_h, out_fut] = create_handler(stdout_parse, std::cout);
+        auto [err_h, err_fut] = create_handler(stderr_parse, std::cerr);
 
         auto ps = co_await process_fixture::create(exec
             , params
@@ -267,7 +268,7 @@ future<std::tuple<tests::proc::process_fixture, int>> tests::proc::start_docker_
         bool retry = false;
 
         try {
-            BOOST_TEST_MESSAGE("Waiting for process to laúnch...");
+            BOOST_TEST_MESSAGE("Waiting for process to launch...");
             // arbitrary timeout of 120s for the server to make some output. Very generous.
             // but since we (maybe) run docker, and might need to pull image, this can take
             // some time if we're unlucky.
