@@ -92,6 +92,10 @@ test/boost/querier_cache_test.cc @denesb
 # PYTEST-BASED CQL TESTS
 test/cqlpy/* @nyh
 
+# TEST FRAMEWORK
+test/pylib/* @xtrey
+test.py @xtrey
+
 # RAFT
 raft/* @kbr-scylla @gleb-cloudius @kostja
 test/raft/* @kbr-scylla @gleb-cloudius @kostja
