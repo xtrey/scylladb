@@ -88,7 +88,7 @@ sstring single_quote(const std::string_view s);
 
 // Check whether timestamp is not too far in the future as this probably
 // indicates its incorrectness (for example using other units than microseconds).
-void validate_timestamp(const db::config& config, const query_options& options, const std::unique_ptr<attributes>& attrs);
+void validate_timestamp(const cql_config& cql_cfg, const query_options& options, const std::unique_ptr<attributes>& attrs);
 
 template<typename T>
 std::vector<T> to_vector(const std::vector<data_value>& values) {

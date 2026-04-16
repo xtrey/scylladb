@@ -35,6 +35,7 @@
 #include "replica/database.hh"
 #include "keys/clustering_bounds_comparator.hh"
 #include "cql3/statements/select_statement.hh"
+#include "cql3/cql_config.hh"
 #include "cql3/util.hh"
 #include "cql3/restrictions/statement_restrictions.hh"
 #include "cql3/expr/expr-utils.hh"
@@ -129,7 +130,7 @@ cql3::statements::select_statement& view_info::select_statement(data_dictionary:
         raw->prepare_keyspace(_schema.ks_name());
         raw->set_bound_variables({});
         cql3::cql_stats ignored;
-        auto prepared = raw->prepare(db, ignored, true);
+        auto prepared = raw->prepare(db, ignored, cql3::default_cql_config, true);
         _select_statement = static_pointer_cast<cql3::statements::select_statement>(prepared->statement);
     }
     return *_select_statement;

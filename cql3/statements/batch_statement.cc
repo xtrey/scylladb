@@ -10,7 +10,7 @@
 #include "batch_statement.hh"
 #include "cql3/util.hh"
 #include "raw/batch_statement.hh"
-#include "db/config.hh"
+#include "cql3/cql_config.hh"
 #include "db/consistency_level_validations.hh"
 #include "data_dictionary/data_dictionary.hh"
 #include <seastar/core/execution_stage.hh>
@@ -195,8 +195,8 @@ void batch_statement::verify_batch_size(query_processor& qp, const utils::chunke
         return;     // We only warn for batch spanning multiple mutations
     }
 
-    size_t warn_threshold = qp.db().get_config().batch_size_warn_threshold_in_kb() * 1024;
-    size_t fail_threshold = qp.db().get_config().batch_size_fail_threshold_in_kb() * 1024;
+    size_t warn_threshold = qp.get_cql_config().batch_size_warn_threshold_in_kb() * 1024;
+    size_t fail_threshold = qp.get_cql_config().batch_size_fail_threshold_in_kb() * 1024;
 
     size_t size = 0;
     for (auto&m : mutations) {
@@ -242,7 +242,7 @@ future<shared_ptr<cql_transport::messages::result_message>> batch_statement::exe
 
 future<shared_ptr<cql_transport::messages::result_message>> batch_statement::execute_without_checking_exception_message(
         query_processor& qp, service::query_state& state, const query_options& options, std::optional<service::group0_guard> guard) const {
-    cql3::util::validate_timestamp(qp.db().get_config(), options, _attrs);
+    cql3::util::validate_timestamp(qp.get_cql_config(), options, _attrs);
     return batch_stage(this, seastar::ref(qp), seastar::ref(state),
                        seastar::cref(options), false, options.get_timestamp(state));
 }
@@ -441,7 +441,7 @@ void batch_statement::build_cas_result_set_metadata() {
 namespace raw {
 
 std::unique_ptr<prepared_statement>
-batch_statement::prepare(data_dictionary::database db, cql_stats& stats) {
+batch_statement::prepare(data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     auto&& meta = get_prepare_context();
 
     std::optional<sstring> first_ks;

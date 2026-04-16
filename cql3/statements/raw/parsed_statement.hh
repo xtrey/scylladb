@@ -23,6 +23,7 @@ namespace cql3 {
 
 class column_identifier;
 class cql_stats;
+class cql_config;
 
 namespace statements {
 
@@ -42,7 +43,7 @@ public:
 
     void set_bound_variables(const std::vector<::shared_ptr<column_identifier>>& bound_names);
 
-    virtual std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats) = 0;
+    virtual std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats, const cql_config& cfg) = 0;
 
 protected:
     virtual audit::statement_category category() const = 0;

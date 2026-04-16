@@ -30,6 +30,7 @@ class keyspace_metadata;
 namespace cql3 {
 
 class query_processor;
+struct replication_restrictions;
 
 namespace statements {
 
@@ -71,7 +72,7 @@ public:
 
     future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, utils::chunked_vector<mutation>, cql3::cql_warnings_vec>> prepare_schema_mutations(query_processor& qp, const query_options& options, api::timestamp_type) const override;
 
-    virtual std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats) override;
+    virtual std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats, const cql_config& cfg) override;
 
     virtual future<> grant_permissions_to_creator(const service::client_state&, service::group0_batch&) const override;
 
@@ -88,7 +89,8 @@ std::vector<sstring> check_against_restricted_replication_strategies(
     query_processor& qp,
     const sstring& keyspace,
     const ks_prop_defs& attrs,
-    cql_stats& stats);
+    cql_stats& stats,
+    const cql3::replication_restrictions& rr);
 
 }
 

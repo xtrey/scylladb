@@ -68,7 +68,7 @@ static auth::authentication_options extract_authentication_options(const cql3::r
 //
 
 std::unique_ptr<prepared_statement> create_role_statement::prepare(
-                data_dictionary::database db, cql_stats& stats) {
+                data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     return std::make_unique<prepared_statement>(audit_info(), ::make_shared<create_role_statement>(*this));
 }
 
@@ -203,7 +203,7 @@ void create_role_statement::sanitize_audit_info() {
 //
 
 std::unique_ptr<prepared_statement> alter_role_statement::prepare(
-                data_dictionary::database db, cql_stats& stats) {
+                data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     return std::make_unique<prepared_statement>(audit_info(), ::make_shared<alter_role_statement>(*this));
 }
 
@@ -289,7 +289,7 @@ void alter_role_statement::sanitize_audit_info() {
 //
 
 std::unique_ptr<prepared_statement> drop_role_statement::prepare(
-                data_dictionary::database db, cql_stats& stats) {
+                data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     return std::make_unique<prepared_statement>(audit_info(), ::make_shared<drop_role_statement>(*this));
 }
 
@@ -344,7 +344,7 @@ drop_role_statement::execute(query_processor&, service::query_state& state, cons
 //
 
 std::unique_ptr<prepared_statement> list_roles_statement::prepare(
-                data_dictionary::database db, cql_stats& stats) {
+                data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     return std::make_unique<prepared_statement>(audit_info(), ::make_shared<list_roles_statement>(*this));
 }
 
@@ -474,7 +474,7 @@ list_roles_statement::execute(query_processor& qp, service::query_state& state, 
 //
 
 std::unique_ptr<prepared_statement> grant_role_statement::prepare(
-                data_dictionary::database db, cql_stats& stats) {
+                data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     return std::make_unique<prepared_statement>(audit_info(), ::make_shared<grant_role_statement>(*this));
 }
 
@@ -504,7 +504,7 @@ grant_role_statement::execute(query_processor&, service::query_state& state, con
 //
 
 std::unique_ptr<prepared_statement> revoke_role_statement::prepare(
-                data_dictionary::database db, cql_stats& stats) {
+                data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     return std::make_unique<prepared_statement>(audit_info(), ::make_shared<revoke_role_statement>(*this));
 }
 

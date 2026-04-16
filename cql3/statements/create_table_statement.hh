@@ -28,6 +28,7 @@
 namespace cql3 {
 
 class query_processor;
+struct twcs_restrictions;
 class cf_prop_defs;
 
 namespace statements {
@@ -73,7 +74,7 @@ public:
 
     future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, utils::chunked_vector<mutation>, cql3::cql_warnings_vec>> prepare_schema_mutations(query_processor& qp, const query_options& options, api::timestamp_type) const override;
 
-    virtual std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats) override;
+    virtual std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats, const cql_config& cfg) override;
 
     virtual future<> grant_permissions_to_creator(const service::client_state&, service::group0_batch&) const override;
 
@@ -111,7 +112,7 @@ private:
 public:
     raw_statement(cf_name name, bool if_not_exists);
 
-    virtual std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats) override;
+    virtual std::unique_ptr<prepared_statement> prepare(data_dictionary::database db, cql_stats& stats, const cql_config& cfg) override;
 
     cf_properties& properties() {
         return _properties;
@@ -129,10 +130,10 @@ protected:
 };
 
 std::optional<sstring> check_restricted_table_properties(
-    data_dictionary::database db,
     std::optional<schema_ptr> schema,
     const sstring& keyspace, const sstring& table,
-    const cf_prop_defs& cfprops);
+    const cf_prop_defs& cfprops,
+    const twcs_restrictions& tr);
 
 }
 

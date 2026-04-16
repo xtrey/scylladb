@@ -20,6 +20,7 @@
 #include "service/migration_manager.hh"
 #include "service/storage_proxy.hh"
 #include "cql3/query_processor.hh"
+#include "cql3/cql_config.hh"
 #include "db/config.hh"
 #include "gms/feature_service.hh"
 #include "replica/database.hh"
@@ -158,7 +159,7 @@ future<std::tuple<::shared_ptr<cql_transport::event::schema_change>, utils::chun
 }
 
 std::unique_ptr<cql3::statements::prepared_statement>
-cql3::statements::create_keyspace_statement::prepare(data_dictionary::database db, cql_stats& stats) {
+cql3::statements::create_keyspace_statement::prepare(data_dictionary::database db, cql_stats& stats, const cql_config& cfg) {
     _attrs->set_default_replication_strategy_class_option();
     return std::make_unique<prepared_statement>(audit_info(), make_shared<create_keyspace_statement>(*this));
 }
@@ -188,7 +189,8 @@ std::vector<sstring> check_against_restricted_replication_strategies(
     query_processor& qp,
     const sstring& keyspace,
     const ks_prop_defs& attrs,
-    cql_stats& stats)
+    cql_stats& stats,
+    const cql3::replication_restrictions& rr)
 {
     if (!attrs.get_replication_strategy_class()) {
         return {};
@@ -201,11 +203,11 @@ std::vector<sstring> check_against_restricted_replication_strategies(
             locator::abstract_replication_strategy::to_qualified_class_name(
                     *attrs.get_replication_strategy_class()), params,
                     qp.db().real_database().get_token_metadata().get_topology())->get_type();
-    auto rs_warn_list = qp.db().get_config().replication_strategy_warn_list();
-    auto rs_fail_list = qp.db().get_config().replication_strategy_fail_list();
+    auto rs_warn_list = rr.replication_strategy_warn_list();
+    auto rs_fail_list = rr.replication_strategy_fail_list();
 
     if (replication_strategy == locator::replication_strategy_type::simple) {
-        if (auto simple_strategy_restriction = qp.db().get_config().restrict_replication_simplestrategy();
+        if (auto simple_strategy_restriction = rr.restrict_replication_simplestrategy();
                 simple_strategy_restriction == db::tri_mode_restriction_t::mode::TRUE) {
             rs_fail_list.emplace_back(locator::replication_strategy_type::simple);
         } else if (simple_strategy_restriction == db::tri_mode_restriction_t::mode::WARN) {
@@ -251,7 +253,7 @@ std::vector<sstring> check_against_restricted_replication_strategies(
             }
 
             if (rf > 0) {
-                if (auto min_fail = qp.proxy().data_dictionary().get_config().minimum_replication_factor_fail_threshold();
+                if (auto min_fail = rr.minimum_replication_factor_fail_threshold();
                     min_fail >= 0 && rf < min_fail) {
                     ++stats.minimum_replication_factor_fail_violations;
                     throw exceptions::configuration_exception(format(
@@ -259,9 +261,9 @@ std::vector<sstring> check_against_restricted_replication_strategies(
                             "configuration setting of minimum_replication_factor_fail_threshold={}. Please "
                             "increase replication factor, or lower minimum_replication_factor_fail_threshold "
                             "set in the configuration.", opt.first, rf,
-                            qp.proxy().data_dictionary().get_config().minimum_replication_factor_fail_threshold()));
+                            rr.minimum_replication_factor_fail_threshold()));
                 }
-                else if (auto max_fail = qp.proxy().data_dictionary().get_config().maximum_replication_factor_fail_threshold();
+                else if (auto max_fail = rr.maximum_replication_factor_fail_threshold();
                          max_fail >= 0 && rf > max_fail) {
                     ++stats.maximum_replication_factor_fail_violations;
                     throw exceptions::configuration_exception(format(
@@ -269,23 +271,23 @@ std::vector<sstring> check_against_restricted_replication_strategies(
                             "configuration setting of maximum_replication_factor_fail_threshold={}. Please "
                             "decrease replication factor, or increase maximum_replication_factor_fail_threshold "
                             "set in the configuration.", opt.first, rf,
-                            qp.proxy().data_dictionary().get_config().maximum_replication_factor_fail_threshold()));
+                            rr.maximum_replication_factor_fail_threshold()));
                 }
-                else if (auto min_warn = qp.proxy().data_dictionary().get_config().minimum_replication_factor_warn_threshold();
+                else if (auto min_warn = rr.minimum_replication_factor_warn_threshold();
                          min_warn >= 0 && rf < min_warn)
                 {
                     ++stats.minimum_replication_factor_warn_violations;
                     warnings.push_back(format("Using Replication Factor {}={} lower than the "
                                               "minimum_replication_factor_warn_threshold={} is not recommended.", opt.first, rf,
-                                              qp.proxy().data_dictionary().get_config().minimum_replication_factor_warn_threshold()));
+                                              rr.minimum_replication_factor_warn_threshold()));
                 }
-                else if (auto max_warn = qp.proxy().data_dictionary().get_config().maximum_replication_factor_warn_threshold();
+                else if (auto max_warn = rr.maximum_replication_factor_warn_threshold();
                         max_warn >= 0 && rf > max_warn)
                 {
                     ++stats.maximum_replication_factor_warn_violations;
                     warnings.push_back(format("Using Replication Factor {}={} greater than the "
                                               "maximum_replication_factor_warn_threshold={} is not recommended.", opt.first, rf,
-                                              qp.proxy().data_dictionary().get_config().maximum_replication_factor_warn_threshold()));
+                                              rr.maximum_replication_factor_warn_threshold()));
                 }
             }
         } catch (std::invalid_argument&) {
@@ -297,7 +299,7 @@ std::vector<sstring> check_against_restricted_replication_strategies(
 
 future<::shared_ptr<messages::result_message>>
 create_keyspace_statement::execute(query_processor& qp, service::query_state& state, const query_options& options, std::optional<service::group0_guard> guard) const {
-    std::vector<sstring> warnings = check_against_restricted_replication_strategies(qp, keyspace(), *_attrs, qp.get_cql_stats());
+    std::vector<sstring> warnings = check_against_restricted_replication_strategies(qp, keyspace(), *_attrs, qp.get_cql_stats(), qp.get_cql_config().replication_restrictions);
         return schema_altering_statement::execute(qp, state, options, std::move(guard)).then([warnings = std::move(warnings)] (::shared_ptr<messages::result_message> msg) {
         for (const auto& warning : warnings) {
             msg->add_warning(warning);

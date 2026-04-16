@@ -18,6 +18,7 @@
 #include "cdc/log.hh"
 #include "cdc/cdc_options.hh"
 #include "cql3/query_processor.hh"
+#include "cql3/cql_config.hh"
 #include "cql3/statements/create_keyspace_statement.hh"
 #include "cql3/statements/create_table_statement.hh"
 #include "cql3/statements/create_type_statement.hh"
@@ -278,7 +279,7 @@ std::vector<schema_ptr> do_load_schemas(const db::config& cfg, std::string_view 
         auto raw_statement = cql3::query_processor::parse_statement(
                 fmt::format("CREATE KEYSPACE {} WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': '1'}}", name),
                 cql3::dialect{});
-        auto prepared_statement = raw_statement->prepare(db, cql_stats);
+        auto prepared_statement = raw_statement->prepare(db, cql_stats, cql3::default_cql_config);
         auto* statement = prepared_statement->statement.get();
         auto p = dynamic_cast<cql3::statements::create_keyspace_statement*>(statement);
         SCYLLA_ASSERT(p);
@@ -302,7 +303,7 @@ std::vector<schema_ptr> do_load_schemas(const db::config& cfg, std::string_view 
             throw std::runtime_error("tools::do_load_schemas(): CQL statement does not have keyspace specified");
         }
         auto ks = find_or_create_keyspace(cf_statement->keyspace());
-        auto prepared_statement = cf_statement->prepare(db, cql_stats);
+        auto prepared_statement = cf_statement->prepare(db, cql_stats, cql3::default_cql_config);
         auto* statement = prepared_statement->statement.get();
 
         if (auto p = dynamic_cast<cql3::statements::create_keyspace_statement*>(statement)) {
@@ -320,7 +321,7 @@ std::vector<schema_ptr> do_load_schemas(const db::config& cfg, std::string_view 
             }
             real_db.tables.emplace_back(dd_impl, dd_impl.unwrap(ks), std::move(schema), true);
         } else if (auto p = dynamic_cast<cql3::statements::create_view_statement*>(statement)) {
-            auto&& [view, warnings] = p->prepare_view(db, token_metadata.local().get());
+            auto&& [view, warnings] = p->prepare_view(db, token_metadata.local().get(), cql3::default_cql_config.view_restrictions);
             auto it = std::find_if(real_db.tables.begin(), real_db.tables.end(), [&] (const table& t) { return t.schema->ks_name() == view->ks_name() && t.schema->cf_name() == view->cf_name(); });
             if (it != real_db.tables.end()) {
                 continue; // view already exists

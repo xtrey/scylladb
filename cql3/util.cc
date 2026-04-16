@@ -6,8 +6,9 @@
 
 #include "utils/assert.hh"
 #include "util.hh"
+#include "cql_config.hh"
 #include "cql3/expr/expr-utils.hh"
-#include "db/config.hh"
+#include "db_clock.hh"
 
 #ifdef DEBUG
 
@@ -117,8 +118,8 @@ void do_with_parser_impl(const std::string_view& cql, dialect d, noncopyable_fun
 
 #endif
 
-void validate_timestamp(const db::config& config, const query_options& options, const std::unique_ptr<attributes>& attrs) {
-    if (attrs->is_timestamp_set() && config.restrict_future_timestamp()) {
+void validate_timestamp(const cql_config& cql_cfg, const query_options& options, const std::unique_ptr<attributes>& attrs) {
+    if (attrs->is_timestamp_set() && cql_cfg.restrict_future_timestamp()) {
         static constexpr int64_t MAX_DIFFERENCE = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::days(3)).count();
         auto now = std::chrono::duration_cast<std::chrono::microseconds>(db_clock::now().time_since_epoch()).count();
 
