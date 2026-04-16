@@ -12,6 +12,7 @@
 #include <seastar/core/when_all.hh>
 #include "db/system_keyspace.hh"
 #include "db/large_data_handler.hh"
+#include "keys/keys.hh"
 #include "sstables/sstables.hh"
 #include "gms/feature_service.hh"
 #include "cql3/untyped_result_set.hh"
@@ -39,19 +40,19 @@ large_data_handler::large_data_handler(uint64_t partition_threshold_bytes, uint6
         partition_threshold_bytes, row_threshold_bytes, cell_threshold_bytes, rows_count_threshold, _collection_elements_count_threshold);
 }
 
-future<large_data_handler::partition_above_threshold> large_data_handler::maybe_record_large_partitions(const sstables::sstable& sst, const sstables::key& key, uint64_t partition_size, uint64_t rows, uint64_t range_tombstones, uint64_t dead_rows) {
+future<large_data_handler::above_threshold_result> large_data_handler::maybe_record_large_partitions(const sstables::sstable& sst, const sstables::key& key, uint64_t partition_size, uint64_t rows, uint64_t range_tombstones, uint64_t dead_rows) {
     SCYLLA_ASSERT(running());
-    partition_above_threshold above_threshold{partition_size > _partition_threshold_bytes, rows > _rows_count_threshold};
+    above_threshold_result above_threshold{.size = partition_size > _partition_threshold_bytes, .elements = rows > _rows_count_threshold};
     static_assert(std::is_same_v<decltype(above_threshold.size), bool>);
     _stats.partitions_bigger_than_threshold += above_threshold.size; // increment if true
-    if (above_threshold.size || above_threshold.rows) [[unlikely]] {
+    if (above_threshold.size || above_threshold.elements) [[unlikely]] {
         return with_sem([&sst, &key, partition_size, rows, range_tombstones, dead_rows, this] {
             return record_large_partitions(sst, key, partition_size, rows, range_tombstones, dead_rows);
         }).then([above_threshold] {
             return above_threshold;
         });
     }
-    return make_ready_future<partition_above_threshold>();
+    return make_ready_future<above_threshold_result>();
 }
 
 void large_data_handler::start() {
@@ -73,10 +74,6 @@ void large_data_handler::plug_system_keyspace(db::system_keyspace& sys_ks) noexc
 
 future<> large_data_handler::unplug_system_keyspace() noexcept {
     co_await _sys_ks.unplug();
-}
-
-template <typename T> static std::string key_to_str(const T& key, const schema& s) {
-    return fmt::to_string(key.with_schema(s));
 }
 
 sstring large_data_handler::sst_filename(const sstables::sstable& sst) {
@@ -145,6 +142,10 @@ future<> large_data_handler::maybe_update_large_data_entries_sstable_name(sstabl
     return when_all(std::move(large_partitions), std::move(large_rows), std::move(large_cells)).discard_result();
 }
 
+bool cql_table_large_data_handler::skip_cql_writes() const {
+    return bool(_feat.large_data_virtual_tables);
+}
+
 cql_table_large_data_handler::cql_table_large_data_handler(gms::feature_service& feat,
         utils::updateable_value<uint32_t> partition_threshold_mb,
         utils::updateable_value<uint32_t> row_threshold_mb,
@@ -183,6 +184,9 @@ future<> cql_table_large_data_handler::do_insert_large_data_entry(std::string_vi
         sstring ks_name, sstring cf_name, sstring sstable_name,
         int64_t size, sstring partition_key, db_clock::time_point compaction_time,
         const std::vector<sstring>& extra_fields, Args&&... args) const {
+    if (skip_cql_writes()) {
+        co_return;
+    }
     auto sys_ks = _sys_ks.get_permit();
     if (!sys_ks) {
         co_return;
@@ -287,6 +291,9 @@ future<> cql_table_large_data_handler::record_large_rows(const sstables::sstable
 }
 
 future<> cql_table_large_data_handler::delete_large_data_entries(const schema& s, sstring sstable_name, std::string_view large_table_name) const {
+    if (skip_cql_writes()) {
+        co_return;
+    }
     auto sys_ks = _sys_ks.get_permit();
     SCYLLA_ASSERT(sys_ks);
     const sstring req =
@@ -332,6 +339,9 @@ cql_table_large_data_handler::row_reinsert_func cql_table_large_data_handler::ma
 }
 
 future<> cql_table_large_data_handler::update_large_data_entries_sstable_name(const schema& s, sstring old_name, sstring new_name, std::string_view large_table_name) const {
+    if (skip_cql_writes()) {
+        co_return;
+    }
     auto sys_ks = _sys_ks.get_permit();
     SCYLLA_ASSERT(sys_ks);
     // sstable_name is a clustering key, so we can't update it in place.

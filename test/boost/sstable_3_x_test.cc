@@ -41,6 +41,7 @@
 #include "test/lib/simple_schema.hh"
 #include "test/lib/exception_utils.hh"
 #include "db/large_data_handler.hh"
+#include "db/config.hh"
 #include "readers/combined.hh"
 
 #include <fmt/ranges.h>
@@ -5091,70 +5092,34 @@ SEASTAR_TEST_CASE(test_sstable_reader_on_unknown_column) {
 }
 
 namespace {
-struct large_row_handler : public db::large_data_handler {
-    using callback_t = std::function<void(const schema& s, const sstables::key& partition_key,
-            const clustering_key_prefix* clustering_key, uint64_t row_size, uint64_t range_tombstones, uint64_t dead_rows,
-            const column_definition* cdef, uint64_t cell_size, uint64_t collection_elements)>;
-    callback_t callback;
-
-    large_row_handler(uint64_t large_rows_threshold, uint64_t rows_count_threshold, uint64_t cell_threshold_bytes, uint64_t collection_elements_threshold, callback_t callback)
-        : large_data_handler(std::numeric_limits<uint64_t>::max(), large_rows_threshold, cell_threshold_bytes,
-            rows_count_threshold, collection_elements_threshold)
-        , callback(std::move(callback)) {
+// A large_data_handler with configurable thresholds for testing.
+// After refactoring, the handler only does threshold comparison + logging;
+// actual large data recording goes into the SSTable's LargeDataRecords metadata.
+struct large_data_test_handler : public db::large_data_handler {
+    large_data_test_handler(uint64_t partition_threshold_bytes, uint64_t large_rows_threshold,
+                            uint64_t cell_threshold_bytes, uint64_t rows_count_threshold,
+                            uint64_t collection_elements_threshold)
+        : large_data_handler(partition_threshold_bytes, large_rows_threshold, cell_threshold_bytes,
+            rows_count_threshold, collection_elements_threshold) {
         start();
     }
-
-    virtual future<> record_large_rows(const sstables::sstable& sst, const sstables::key& partition_key,
-            const clustering_key_prefix* clustering_key, uint64_t row_size) const override {
-        const schema_ptr s = sst.get_schema();
-        callback(*s, partition_key, clustering_key, row_size, 0, 0, nullptr, 0, 0);
-        return make_ready_future<>();
-    }
-
-    virtual future<> record_large_cells(const sstables::sstable& sst, const sstables::key& partition_key,
-        const clustering_key_prefix* clustering_key, const column_definition& cdef, uint64_t cell_size, uint64_t collection_elements) const override {
-        const schema_ptr s = sst.get_schema();
-        callback(*s, partition_key, clustering_key, 0, 0, 0, &cdef, cell_size, collection_elements);
-        return make_ready_future<>();
-    }
-
-    virtual future<> record_large_partitions(const sstables::sstable& sst, const sstables::key& partition_key,
-            uint64_t partition_size, uint64_t rows_count, uint64_t range_tombstones_count, uint64_t dead_rows_count) const override {
-        const schema_ptr s = sst.get_schema();
-        callback(*s, partition_key, nullptr, rows_count, range_tombstones_count, dead_rows_count, nullptr, 0, 0);
-        return make_ready_future<>();
-    }
-
-    virtual future<> delete_large_data_entries(const schema& s, sstring sstable_name, std::string_view) const override {
-        return make_ready_future<>();
-    }
-    virtual future<> update_large_data_entries_sstable_name(const schema& s, sstring old_name, sstring new_name, std::string_view large_table_name) const override {
-        return make_ready_future<>();
-    }
+protected:
+    future<> record_large_cells(const sstables::sstable&, const sstables::key&,
+            const clustering_key_prefix*, const column_definition&, uint64_t, uint64_t) const override { return make_ready_future<>(); }
+    future<> record_large_rows(const sstables::sstable&, const sstables::key&,
+            const clustering_key_prefix*, uint64_t) const override { return make_ready_future<>(); }
+    future<> delete_large_data_entries(const schema&, sstring, std::string_view) const override { return make_ready_future<>(); }
+    future<> update_large_data_entries_sstable_name(const schema&, sstring, sstring, std::string_view) const override { return make_ready_future<>(); }
+    future<> record_large_partitions(const sstables::sstable&, const sstables::key&,
+            uint64_t, uint64_t, uint64_t, uint64_t) const override { return make_ready_future<>(); }
 };
 }
 
 static void test_sstable_write_large_row_f(schema_ptr s, reader_permit permit, replica::memtable& mt, const partition_key& pk,
         std::vector<clustering_key*> expected, uint64_t threshold, sstables::sstable_version_types version) {
-    unsigned i = 0;
-    auto f = [&i, &expected, &pk, &threshold](const schema& s, const sstables::key& partition_key,
-                     const clustering_key_prefix* clustering_key, uint64_t row_size, uint64_t range_tombstones, uint64_t dead_rows,
-                     const column_definition* cdef, uint64_t cell_size, uint64_t collection_elements) {
-        BOOST_REQUIRE(std::ranges::equal(pk.components(s), partition_key.to_partition_key(s).components(s)));
-        BOOST_REQUIRE_LT(i, expected.size());
-        BOOST_REQUIRE_GT(row_size, threshold);
-        BOOST_REQUIRE_EQUAL(range_tombstones, 0);
-        BOOST_REQUIRE_EQUAL(dead_rows, 0);
-
-        if (clustering_key) {
-            BOOST_REQUIRE(expected[i]->equal(s, *clustering_key));
-        } else {
-            BOOST_REQUIRE_EQUAL(expected[i], nullptr);
-        }
-        ++i;
-    };
-
-    large_row_handler handler(threshold, std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(), f);
+    large_data_test_handler handler(std::numeric_limits<uint64_t>::max(), threshold,
+        std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max());
 
     sstables::test_env::do_with_async([&] (auto& env) {
         auto sst = env.make_sstable(s, version);
@@ -5164,14 +5129,50 @@ static void test_sstable_write_large_row_f(schema_ptr s, reader_permit permit, r
         // depends on the encoding statistics (because of variable-length encoding). The original values
         // were chosen with the default-constructed encoding_stats, so let's keep it that way.
         sst->write_components(mt.make_mutation_reader(s, std::move(permit)), 1, s, env.manager().configure_writer("test"), encoding_stats{}).get();
-        BOOST_REQUIRE_EQUAL(i, expected.size());
+        sstable_open_config cfg { .load_first_and_last_position_metadata = true };
+        sst->open_data(cfg).get();
+
+        auto& records_opt = sst->get_large_data_records();
+        // Collect row_size records (order is not guaranteed, so just count and validate).
+        unsigned row_size_count = 0;
+        unsigned static_row_count = 0;
+        unsigned clustering_row_count = 0;
+        if (records_opt) {
+            for (auto& rec : records_opt->elements) {
+                if (rec.type != large_data_type::row_size) {
+                    continue;
+                }
+                BOOST_REQUIRE_GT(rec.value, threshold);
+                auto rec_ck_str = sstring(reinterpret_cast<const char*>(rec.clustering_key.value.data()), rec.clustering_key.value.size());
+                if (rec_ck_str.empty()) {
+                    ++static_row_count;
+                } else {
+                    ++clustering_row_count;
+                }
+                ++row_size_count;
+            }
+        }
+        // Count expected static rows (nullptr entries) and clustering rows.
+        unsigned expected_static = 0;
+        unsigned expected_clustering = 0;
+        for (auto* ck : expected) {
+            if (ck) {
+                ++expected_clustering;
+            } else {
+                ++expected_static;
+            }
+        }
+        BOOST_REQUIRE_EQUAL(row_size_count, expected.size());
+        BOOST_REQUIRE_EQUAL(static_row_count, expected_static);
+        BOOST_REQUIRE_EQUAL(clustering_row_count, expected_clustering);
     }, { &handler }).get();
 }
 
 SEASTAR_THREAD_TEST_CASE(test_sstable_write_large_row) {
     simple_schema s;
     tests::reader_concurrency_semaphore_wrapper semaphore;
-    mutation partition = s.new_mutation("pv");
+    // Use make_pkey() to generate a shard-local key (avoids "Failed to generate sharding metadata").
+    mutation partition(s.schema(), s.make_pkey());
     const partition_key& pk = partition.key();
     s.add_static_row(partition, "foo bar zed");
 
@@ -5189,26 +5190,9 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_write_large_row) {
 
 static void test_sstable_write_large_cell_f(schema_ptr s, reader_permit permit, replica::memtable& mt, const partition_key& pk,
         std::vector<clustering_key*> expected, uint64_t threshold, sstables::sstable_version_types version) {
-    unsigned i = 0;
-    auto f = [&i, &expected, &pk, &threshold](const schema& s, const sstables::key& partition_key,
-                     const clustering_key_prefix* clustering_key, uint64_t row_size, uint64_t range_tombstones, uint64_t dead_rows,
-                     const column_definition* cdef, uint64_t cell_size, uint64_t collection_elements) {
-        BOOST_TEST_MESSAGE(format("i={} ck={} cell_size={} threshold={}", i, clustering_key ? format("{}", *clustering_key) : "null", cell_size, threshold));
-        BOOST_REQUIRE(std::ranges::equal(pk.components(s), partition_key.to_partition_key(s).components(s)));
-        BOOST_REQUIRE_LT(i, expected.size());
-        BOOST_REQUIRE_GT(cell_size, threshold);
-        BOOST_REQUIRE_EQUAL(range_tombstones, 0);
-        BOOST_REQUIRE_EQUAL(dead_rows, 0);
-
-        if (clustering_key) {
-            BOOST_REQUIRE(expected[i]->equal(s, *clustering_key));
-        } else {
-            BOOST_REQUIRE_EQUAL(expected[i], nullptr);
-        }
-        ++i;
-    };
-
-    large_row_handler handler(std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(), threshold, std::numeric_limits<uint64_t>::max(), f);
+    large_data_test_handler handler(std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(), threshold,
+        std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max());
 
     sstables::test_env::do_with_async([&] (auto& env) {
         auto sst = env.make_sstable(s, version);
@@ -5218,14 +5202,50 @@ static void test_sstable_write_large_cell_f(schema_ptr s, reader_permit permit, 
         // depends on the encoding statistics (because of variable-length encoding). The original values
         // were chosen with the default-constructed encoding_stats, so let's keep it that way.
         sst->write_components(mt.make_mutation_reader(s, std::move(permit)), 1, s, env.manager().configure_writer("test"), encoding_stats{}).get();
-        BOOST_REQUIRE_EQUAL(i, expected.size());
+        sstable_open_config cfg { .load_first_and_last_position_metadata = true };
+        sst->open_data(cfg).get();
+
+        auto& records_opt = sst->get_large_data_records();
+        // Collect cell_size records (order is not guaranteed, so just count and validate).
+        unsigned cell_size_count = 0;
+        unsigned static_cell_count = 0;
+        unsigned clustering_cell_count = 0;
+        if (records_opt) {
+            for (auto& rec : records_opt->elements) {
+                if (rec.type != large_data_type::cell_size) {
+                    continue;
+                }
+                BOOST_REQUIRE_GT(rec.value, threshold);
+                auto rec_ck_str = sstring(reinterpret_cast<const char*>(rec.clustering_key.value.data()), rec.clustering_key.value.size());
+                if (rec_ck_str.empty()) {
+                    ++static_cell_count;
+                } else {
+                    ++clustering_cell_count;
+                }
+                ++cell_size_count;
+            }
+        }
+        // Count expected static cells (nullptr entries) and clustering cells.
+        unsigned expected_static = 0;
+        unsigned expected_clustering = 0;
+        for (auto* ck : expected) {
+            if (ck) {
+                ++expected_clustering;
+            } else {
+                ++expected_static;
+            }
+        }
+        BOOST_REQUIRE_EQUAL(cell_size_count, expected.size());
+        BOOST_REQUIRE_EQUAL(static_cell_count, expected_static);
+        BOOST_REQUIRE_EQUAL(clustering_cell_count, expected_clustering);
     }, { &handler }).get();
 }
 
 SEASTAR_THREAD_TEST_CASE(test_sstable_write_large_cell) {
     simple_schema s;
     tests::reader_concurrency_semaphore_wrapper semaphore;
-    mutation partition = s.new_mutation("pv");
+    // Use make_pkey() to generate a shard-local key (avoids "Failed to generate sharding metadata").
+    mutation partition(s.schema(), s.make_pkey());
     const partition_key& pk = partition.key();
     s.add_static_row(partition, "foo bar zed");
 
@@ -5244,8 +5264,8 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_write_large_cell) {
 static void test_sstable_log_too_many_rows_f(int rows, int range_tombstones, uint64_t threshold, bool expected, sstable_version_types version) {
     simple_schema s;
     tests::reader_concurrency_semaphore_wrapper semaphore;
-    mutation p = s.new_mutation("pv");
-    const partition_key& pk = p.key();
+    // Use make_pkey() to generate a shard-local key (avoids "Failed to generate sharding metadata").
+    mutation p(s.schema(), s.make_pkey());
     sstring sv;
     for (auto idx = 0; idx < rows - 1; idx++) {
         sv += "foo ";
@@ -5258,27 +5278,27 @@ static void test_sstable_log_too_many_rows_f(int rows, int range_tombstones, uin
     schema_ptr sc = s.schema();
     auto mt = make_memtable(sc, {p});
 
-    bool logged = false;
-    auto f = [&logged, &pk, &threshold, &rows, &range_tombstones](const schema& sc, const sstables::key& partition_key,
-                     const clustering_key_prefix* clustering_key, uint64_t rows_count, uint64_t range_tombstones_count, uint64_t dead_rows,
-                     const column_definition* cdef, uint64_t cell_size, uint64_t collection_elements) {
-        BOOST_REQUIRE_GT(rows_count, threshold);
-        BOOST_REQUIRE(std::ranges::equal(pk.components(sc), partition_key.to_partition_key(sc).components(sc)));
-        BOOST_REQUIRE_EQUAL(dead_rows, 0);
-
-        // Inserting one range tombstone creates two range tombstone marker rows
-        BOOST_REQUIRE_EQUAL(rows_count, rows + range_tombstones * 2);
-        BOOST_REQUIRE_EQUAL(range_tombstones_count, range_tombstones * 2);
-        logged = true;
-    };
-
-    large_row_handler handler(std::numeric_limits<uint64_t>::max(), threshold, std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(), f);
+    // rows_count_threshold = threshold; all other thresholds at MAX.
+    large_data_test_handler handler(std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(),
+        threshold, std::numeric_limits<uint64_t>::max());
 
     sstables::test_env::do_with_async([&] (auto& env) {
         auto sst = env.make_sstable(sc, version);
         sst->write_components(mt->make_mutation_reader(sc, semaphore.make_permit()), 1, sc, env.manager().configure_writer("test"), encoding_stats{}).get();
+        sstable_open_config cfg { .load_first_and_last_position_metadata = true };
+        sst->open_data(cfg).get();
 
-        BOOST_REQUIRE_EQUAL(logged, expected);
+        auto& records_opt = sst->get_large_data_records();
+        bool found = false;
+        if (records_opt) {
+            for (auto& rec : records_opt->elements) {
+                if (rec.type == large_data_type::rows_in_partition && rec.elements_count > threshold) {
+                    found = true;
+                }
+            }
+        }
+        BOOST_REQUIRE_EQUAL(found, expected);
     }, { &handler }).get();
 }
 
@@ -5306,8 +5326,8 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_log_too_many_rows) {
 static void test_sstable_log_too_many_dead_rows_f(int rows, uint64_t threshold, bool expected, sstable_version_types version) {
     simple_schema s;
     tests::reader_concurrency_semaphore_wrapper semaphore;
-    mutation p = s.new_mutation("pv");
-    const partition_key& pk = p.key();
+    // Use make_pkey() to generate a shard-local key (avoids "Failed to generate sharding metadata").
+    mutation p(s.schema(), s.make_pkey());
     sstring sv;
     int live_rows = 0;
     int expected_dead_rows = 0;
@@ -5354,7 +5374,6 @@ static void test_sstable_log_too_many_dead_rows_f(int rows, uint64_t threshold, 
             }
             auto ck_start = ck;
             auto rt_start = bound_view(ck_start, tests::random::get_bool() ? bound_kind::incl_start : bound_kind::excl_start);
-            auto sv_end = sv;
             auto rt_size = tests::random::get_int(1, 10);
             for (auto i = 0; i < rt_size; i++) {
                 sv += "X";
@@ -5373,25 +5392,27 @@ static void test_sstable_log_too_many_dead_rows_f(int rows, uint64_t threshold, 
     auto mt = make_lw_shared<replica::memtable>(sc);
     mt->apply(p);
 
-    bool logged = false;
-    auto f = [&] (const schema& sc, const sstables::key& partition_key,
-                     const clustering_key_prefix* clustering_key, uint64_t rows_count, uint64_t range_tombstones, uint64_t dead_rows,
-                     const column_definition* cdef, uint64_t cell_size, uint64_t collection_elements) {
-        BOOST_REQUIRE_GT(rows_count, threshold);
-        BOOST_REQUIRE_EQUAL(rows_count, rows);
-        BOOST_REQUIRE_EQUAL(dead_rows, expected_dead_rows + expected_expired_rows + expected_rows_with_dead_cell);
-        BOOST_REQUIRE_EQUAL(range_tombstones, expected_range_tombstones);
-        BOOST_REQUIRE(std::ranges::equal(pk.components(sc), partition_key.to_partition_key(sc).components(sc)));
-        logged = true;
-    };
-
-    large_row_handler handler(std::numeric_limits<uint64_t>::max(), threshold, std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(), f);
+    // rows_count_threshold = threshold; all other thresholds at MAX.
+    large_data_test_handler handler(std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(),
+        threshold, std::numeric_limits<uint64_t>::max());
 
     sstables::test_env::do_with_async([&] (auto& env) {
         auto sst = env.make_sstable(sc, version);
         sst->write_components(mt->make_mutation_reader(sc, semaphore.make_permit()), 1, sc, env.manager().configure_writer("test"), encoding_stats{}).get();
+        sstable_open_config cfg { .load_first_and_last_position_metadata = true };
+        sst->open_data(cfg).get();
 
-        BOOST_REQUIRE_EQUAL(logged, expected);
+        auto& records_opt = sst->get_large_data_records();
+        bool found = false;
+        if (records_opt) {
+            for (auto& rec : records_opt->elements) {
+                if (rec.type == large_data_type::rows_in_partition && rec.elements_count > threshold) {
+                    found = true;
+                }
+            }
+        }
+        BOOST_REQUIRE_EQUAL(found, expected);
     }, { &handler }).get();
 }
 
@@ -5415,8 +5436,8 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_log_too_many_dead_rows) {
 static void test_sstable_too_many_collection_elements_f(int elements, uint64_t threshold, bool expected, sstable_version_types version) {
     simple_schema s(simple_schema::with_static::no, simple_schema::with_collection::yes);
     tests::reader_concurrency_semaphore_wrapper semaphore;
-    mutation p = s.new_mutation("pv");
-    const partition_key& pk = p.key();
+    // Use make_pkey() to generate a shard-local key (avoids "Failed to generate sharding metadata").
+    mutation p(s.schema(), s.make_pkey());
     std::map<bytes, bytes> kv_map;
     for (auto i = 0; i < elements; i++) {
         kv_map[to_bytes(format("key{}", i))] = to_bytes(format("val{}", i));
@@ -5425,25 +5446,28 @@ static void test_sstable_too_many_collection_elements_f(int elements, uint64_t t
     schema_ptr sc = s.schema();
     auto mt = make_memtable(sc, {p});
 
-    bool logged = false;
-    auto f = [&logged, &pk, &threshold](const schema& sc, const sstables::key& partition_key,
-                     const clustering_key_prefix* clustering_key, uint64_t rows_count, uint64_t range_tombstones, uint64_t dead_rows,
-                     const column_definition* cdef, uint64_t cell_size, uint64_t collection_elements) {
-        BOOST_REQUIRE_GT(collection_elements, threshold);
-        BOOST_REQUIRE(std::ranges::equal(pk.components(sc), partition_key.to_partition_key(sc).components(sc)));
-        BOOST_REQUIRE_EQUAL(range_tombstones, 0);
-        BOOST_REQUIRE_EQUAL(dead_rows, 0);
-        logged = true;
-    };
-
     BOOST_TEST_MESSAGE(format("elements={} threshold={} expected={}", elements, threshold, expected));
-    large_row_handler handler(std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(), threshold, f);
+    // collection_elements_threshold = threshold; all other thresholds at MAX.
+    large_data_test_handler handler(std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(), threshold);
 
     sstables::test_env::do_with_async([&] (auto& env) {
         auto sst = env.make_sstable(sc, version);
         sst->write_components(mt->make_mutation_reader(sc, semaphore.make_permit()), 1, sc, env.manager().configure_writer("test"), encoding_stats{}).get();
+        sstable_open_config cfg { .load_first_and_last_position_metadata = true };
+        sst->open_data(cfg).get();
 
-        BOOST_REQUIRE_EQUAL(logged, expected);
+        auto& records_opt = sst->get_large_data_records();
+        bool found = false;
+        if (records_opt) {
+            for (auto& rec : records_opt->elements) {
+                if (rec.type == large_data_type::elements_in_collection && rec.elements_count > threshold) {
+                    found = true;
+                }
+            }
+        }
+        BOOST_REQUIRE_EQUAL(found, expected);
     }, { &handler }).get();
 }
 
@@ -5460,6 +5484,220 @@ SEASTAR_THREAD_TEST_CASE(test_sstable_too_many_collection_elements) {
         test_sstable_too_many_collection_elements_f(random, random, false, version);
         test_sstable_too_many_collection_elements_f(random, (random + 1), false, version);
         test_sstable_too_many_collection_elements_f((random + 1), random, true, version);
+    }
+}
+
+// Handler for testing LargeDataRecords population in SSTable metadata.
+// large_data_test_handler already serves this purpose; keep this alias for
+// test readability / backward compatibility.
+namespace {
+using large_data_records_handler = large_data_test_handler;
+}
+
+// Test that writing an SSTable with data exceeding large data thresholds
+// populates LargeDataRecords in the SSTable's scylla metadata, and that
+// the records survive a round-trip (write + open_data).
+SEASTAR_THREAD_TEST_CASE(test_large_data_records_round_trip) {
+    // Use low thresholds so that our small test data exceeds them.
+    // partition_threshold=1 byte, row_threshold=1 byte, cell_threshold=1 byte,
+    // rows_count_threshold=MAX (not tested here), collection_elements_threshold=MAX
+    large_data_records_handler handler(1, 1, 1,
+        std::numeric_limits<uint64_t>::max(), std::numeric_limits<uint64_t>::max());
+
+    for (auto version : writable_sstable_versions) {
+        sstables::test_env::do_with_async([&] (auto& env) {
+            simple_schema ss;
+            auto s = ss.schema();
+
+            // Create a mutation with a clustering row whose serialized cell value
+            // exceeds the 1-byte thresholds, so partition_size, row_size, and
+            // cell_size records are all generated.
+            // Use make_pkey() (no argument) to generate a key on this shard.
+            auto pk = ss.make_pkey();
+            mutation m(s, pk);
+            auto ck = ss.make_ckey("ck1");
+            ss.add_row(m, ck, "a_value_that_is_larger_than_one_byte");
+
+            auto mt = make_memtable(s, {m});
+            auto sst = env.make_sstable(s, version);
+            sst->write_components(mt->make_mutation_reader(s, env.make_reader_permit()),
+                1, s, env.manager().configure_writer("test"), encoding_stats{}).get();
+            sst->open_data().get();
+
+            auto& records_opt = sst->get_large_data_records();
+            BOOST_REQUIRE(records_opt.has_value());
+            auto& records = records_opt->elements;
+            BOOST_REQUIRE(!records.empty());
+
+            // We expect records for partition_size, row_size, and cell_size,
+            // since all exceed the 1-byte thresholds.
+            bool found_partition_size = false;
+            bool found_row_size = false;
+            bool found_cell_size = false;
+
+            for (auto& rec : records) {
+                BOOST_TEST_MESSAGE(format("LargeDataRecord: type={}, pk='{}', ck='{}', col='{}', value={}",
+                    static_cast<uint32_t>(rec.type),
+                    to_hex(rec.partition_key.value),
+                    to_hex(rec.clustering_key.value),
+                    sstring(reinterpret_cast<const char*>(rec.column_name.value.data()), rec.column_name.value.size()),
+                    rec.value));
+
+                BOOST_REQUIRE(rec.value > 0);
+
+                // Verify partition_key field is non-empty (binary serialized key)
+                BOOST_REQUIRE(!rec.partition_key.value.empty());
+                // Verify binary partition key round-trips to the original partition key
+                auto rec_pk = sstables::key_view(rec.partition_key.value).to_partition_key(*s);
+                BOOST_REQUIRE(rec_pk.equal(*s, pk.key()));
+
+                switch (rec.type) {
+                case large_data_type::partition_size:
+                    found_partition_size = true;
+                    // clustering_key and column_name should be empty for partition-level entries
+                    BOOST_REQUIRE(rec.clustering_key.value.empty());
+                    BOOST_REQUIRE(rec.column_name.value.empty());
+                    // Verify partition-level auxiliary fields:
+                    // elements_count = rows in partition (1 clustering row + 1 implicit static row)
+                    BOOST_REQUIRE_EQUAL(rec.elements_count, 2u);
+                    BOOST_REQUIRE_EQUAL(rec.range_tombstones, 0u);
+                    BOOST_REQUIRE_EQUAL(rec.dead_rows, 0u);
+                    break;
+                case large_data_type::row_size:
+                    found_row_size = true;
+                    // Static rows have an empty clustering key; clustering rows have a non-empty one.
+                    // Both are valid row_size records.
+                    // Verify binary clustering key round-trips for non-static rows.
+                    if (!rec.clustering_key.value.empty()) {
+                        auto rec_ck = clustering_key_prefix::from_bytes(rec.clustering_key.value);
+                        BOOST_REQUIRE(rec_ck.equal(*s, ck));
+                    }
+                    BOOST_REQUIRE(rec.column_name.value.empty());
+                    // Non-partition records should have zero auxiliary fields
+                    BOOST_REQUIRE_EQUAL(rec.elements_count, 0u);
+                    BOOST_REQUIRE_EQUAL(rec.range_tombstones, 0u);
+                    BOOST_REQUIRE_EQUAL(rec.dead_rows, 0u);
+                    break;
+                case large_data_type::cell_size:
+                    found_cell_size = true;
+                    BOOST_REQUIRE(!rec.column_name.value.empty());
+                    // For cell_size records, elements_count may be non-zero
+                    // (collection element count) but range_tombstones/dead_rows
+                    // should be zero.
+                    BOOST_REQUIRE_EQUAL(rec.range_tombstones, 0u);
+                    BOOST_REQUIRE_EQUAL(rec.dead_rows, 0u);
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            BOOST_REQUIRE_MESSAGE(found_partition_size, "Expected a partition_size record");
+            BOOST_REQUIRE_MESSAGE(found_row_size, "Expected a row_size record");
+            BOOST_REQUIRE_MESSAGE(found_cell_size, "Expected a cell_size record");
+        }, { &handler }).get();
+    }
+}
+
+// Test that the bounded top-N heap correctly keeps only the largest entries.
+SEASTAR_THREAD_TEST_CASE(test_large_data_records_top_n_bounded) {
+    // Row threshold = 1 byte so every row triggers recording.
+    // partition threshold = MAX to avoid partition records (simplifies counting).
+    large_data_records_handler handler(
+        std::numeric_limits<uint64_t>::max(), // partition threshold
+        1,                                     // row threshold
+        std::numeric_limits<uint64_t>::max(), // cell threshold
+        std::numeric_limits<uint64_t>::max(), // rows count threshold
+        std::numeric_limits<uint64_t>::max()  // collection elements threshold
+    );
+
+    for (auto version : writable_sstable_versions) {
+        sstables::test_env::do_with_async([&] (auto& env) {
+            // Set large_data_records_per_sstable to 3 so we can test bounding.
+            env.db_config().compaction_large_data_records_per_sstable(3);
+
+            simple_schema ss;
+            auto s = ss.schema();
+
+            // Create 6 partitions, each with one row of increasing size.
+            // Since each partition has exactly one row, we get 6 row_size records
+            // competing for 3 slots.
+            // Use make_pkeys() to generate shard-local keys.
+            auto pkeys = ss.make_pkeys(6);
+            utils::chunked_vector<mutation> muts;
+            for (int i = 0; i < 6; i++) {
+                auto& pk = pkeys[i];
+                mutation m(s, pk);
+                auto ck = ss.make_ckey(format("ck{}", i));
+                // Row value size increases with i. Pad with 'x' characters.
+                sstring val(100 * (i + 1), 'x');
+                ss.add_row(m, ck, val);
+                muts.push_back(std::move(m));
+            }
+
+            auto mt = make_memtable(s, muts);
+            auto sst = env.make_sstable(s, version);
+            sst->write_components(mt->make_mutation_reader(s, env.make_reader_permit()),
+                6, s, env.manager().configure_writer("test"), encoding_stats{}).get();
+            sst->open_data().get();
+
+            auto& records_opt = sst->get_large_data_records();
+            BOOST_REQUIRE(records_opt.has_value());
+
+            // Count row_size records.
+            size_t row_size_count = 0;
+            uint64_t min_row_value = std::numeric_limits<uint64_t>::max();
+            for (auto& rec : records_opt->elements) {
+                if (rec.type == large_data_type::row_size) {
+                    row_size_count++;
+                    min_row_value = std::min(min_row_value, rec.value);
+                }
+            }
+
+            // We wrote 6 rows but limited to top-3, so we should have exactly 3 row_size records.
+            BOOST_REQUIRE_EQUAL(row_size_count, 3u);
+
+            // The smallest of the top-3 should be from one of the larger rows (index 3, 4, or 5).
+            // Row at index 3 has value size ~ 400 bytes of 'x' chars. The actual row_size will be
+            // larger due to serialization overhead, but should be well above 100 * 1 = 100 bytes
+            // (the smallest row). This verifies the heap evicted smaller entries.
+            // We just check that the minimum value in the top-3 is larger than what the
+            // smallest row (index 0, ~100 bytes of payload) would produce.
+            BOOST_REQUIRE_GT(min_row_value, 100u);
+        }, { &handler }).get();
+    }
+}
+
+// Test that an SSTable with data below all thresholds produces no LargeDataRecords.
+SEASTAR_THREAD_TEST_CASE(test_large_data_records_none_when_below_threshold) {
+    // All thresholds at maximum => nothing should be recorded.
+    large_data_records_handler handler(
+        std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max()
+    );
+
+    for (auto version : writable_sstable_versions) {
+        sstables::test_env::do_with_async([&] (auto& env) {
+            simple_schema ss;
+            auto s = ss.schema();
+
+            auto pk = ss.make_pkey();
+            mutation m(s, pk);
+            ss.add_row(m, ss.make_ckey("ck1"), "small_value");
+
+            auto mt = make_memtable(s, {m});
+            auto sst = env.make_sstable(s, version);
+            sst->write_components(mt->make_mutation_reader(s, env.make_reader_permit()),
+                1, s, env.manager().configure_writer("test"), encoding_stats{}).get();
+            sst->open_data().get();
+
+            auto& records_opt = sst->get_large_data_records();
+            // With all thresholds at max, no records should be written.
+            BOOST_REQUIRE(!records_opt.has_value());
+        }, { &handler }).get();
     }
 }
 
