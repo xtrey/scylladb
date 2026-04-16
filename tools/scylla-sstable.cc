@@ -2972,11 +2972,14 @@ $ scylla sstable validate /path/to/md-123456-big-Data.db /path/to/md-123457-big-
         sstables::directory_semaphore dir_sem(1);
         abort_source abort;
 
+        bool ignore_component_digest_mismatch = app_config.contains("ignore-component-digest-mismatch");
+
         sstables::sstables_manager::config sm_cfg {
             .available_memory = 1_GiB,
             .enable_sstable_key_validation = dbcfg.enable_sstable_key_validation(),
             .data_file_directories = dbcfg.data_file_directories(),
             .format = dbcfg.sstable_format,
+            .ignore_component_digest_mismatch = ignore_component_digest_mismatch,
         };
         sstables::storage_manager::config stm_cfg;
         stm_cfg.object_storage_clients_memory = 100_MiB;
