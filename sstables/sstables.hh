@@ -639,7 +639,7 @@ private:
     // Total memory reclaimed so far from this sstable
     size_t _total_memory_reclaimed{0};
     bool _unlinked{false};
-    bool _ignore_component_digest_mismatch{false};
+    const bool _ignore_component_digest_mismatch;
 
     // The mutate semaphore is used to serialize operations like rewrite_statistics
     // with linking or moving the sstable between directories.
