@@ -661,7 +661,6 @@ schema_ptr load_system_schema(const db::config& cfg, std::string_view keyspace, 
         {db::schema_tables::NAME, db::schema_tables::all_tables(db::schema_features::full())},
         {db::system_keyspace::NAME, db::system_keyspace::all_tables(cfg)},
         {db::system_distributed_keyspace::NAME, db::system_distributed_keyspace::all_distributed_tables()},
-        {db::system_distributed_keyspace::NAME_EVERYWHERE, db::system_distributed_keyspace::all_everywhere_tables()},
     };
     auto ks_it = schemas.find(keyspace);
     if (ks_it == schemas.end()) {

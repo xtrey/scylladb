@@ -35,7 +35,6 @@ namespace db {
 class system_distributed_keyspace {
 public:
     static constexpr auto NAME = "system_distributed";
-    static constexpr auto NAME_EVERYWHERE = "system_distributed_everywhere";
 
     static constexpr auto VIEW_BUILD_STATUS = "view_build_status";
 
@@ -65,7 +64,6 @@ private:
 
 public:
     static std::vector<schema_ptr> all_distributed_tables();
-    static std::vector<schema_ptr> all_everywhere_tables();
 
     system_distributed_keyspace(cql3::query_processor&, service::migration_manager&, service::storage_proxy&);
 

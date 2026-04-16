@@ -122,7 +122,7 @@ future<> service::client_state::check_internal_table_permissions(std::string_vie
                     auth::permission::ALTER, auth::permission::DROP>();
 
     if (forbidden_permissions.contains(cmd.permission)) {
-        if ((ks == db::system_distributed_keyspace::NAME || ks == db::system_distributed_keyspace::NAME_EVERYWHERE)
+        if (ks == db::system_distributed_keyspace::NAME
                 && (table_name == db::system_distributed_keyspace::CDC_DESC_V2
                 || table_name == db::system_distributed_keyspace::CDC_TIMESTAMPS)) {
             return make_exception_future(exceptions::unauthorized_exception(

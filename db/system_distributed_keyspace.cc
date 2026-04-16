@@ -118,10 +118,6 @@ std::vector<schema_ptr> system_distributed_keyspace::all_distributed_tables() {
     return {view_build_status(), cdc_desc(), cdc_timestamps()};
 }
 
-std::vector<schema_ptr> system_distributed_keyspace::all_everywhere_tables() {
-    return {};
-}
-
 system_distributed_keyspace::system_distributed_keyspace(cql3::query_processor& qp, service::migration_manager& mm, service::storage_proxy& sp)
         : _qp(qp)
         , _mm(mm)
@@ -138,7 +134,7 @@ future<> system_distributed_keyspace::create_tables(std::vector<schema_ptr> tabl
 
     while (true) {
         // Check if there is any work to do before taking the group 0 guard.
-        bool keyspaces_setup = db.has_keyspace(NAME) && db.has_keyspace(NAME_EVERYWHERE);
+        bool keyspaces_setup = db.has_keyspace(NAME);
         bool tables_setup = std::all_of(tables.begin(), tables.end(), [db] (schema_ptr t) { return db.has_schema(t->ks_name(), t->cf_name()); } );
         if (keyspaces_setup && tables_setup) {
             dlogger.info("system_distributed(_everywhere) keyspaces and tables are up-to-date. Not creating");
@@ -151,37 +147,22 @@ future<> system_distributed_keyspace::create_tables(std::vector<schema_ptr> tabl
         utils::chunked_vector<mutation> mutations;
         sstring description;
 
-        auto sd_ksm = keyspace_metadata::new_keyspace(
+        auto ksm = keyspace_metadata::new_keyspace(
                 NAME,
                 "org.apache.cassandra.locator.SimpleStrategy",
                 {{"replication_factor", "3"}},
                 std::nullopt, std::nullopt);
         if (!db.has_keyspace(NAME)) {
-            mutations = service::prepare_new_keyspace_announcement(db.real_database(), sd_ksm, ts);
+            mutations = service::prepare_new_keyspace_announcement(db.real_database(), ksm, ts);
             description += format(" create {} keyspace;", NAME);
         } else {
             dlogger.info("{} keyspace is already present. Not creating", NAME);
         }
 
-        auto sde_ksm = keyspace_metadata::new_keyspace(
-                NAME_EVERYWHERE,
-                "org.apache.cassandra.locator.EverywhereStrategy",
-                {},
-                std::nullopt, std::nullopt);
-        if (!db.has_keyspace(NAME_EVERYWHERE)) {
-            auto sde_mutations = service::prepare_new_keyspace_announcement(db.real_database(), sde_ksm, ts);
-            std::move(sde_mutations.begin(), sde_mutations.end(), std::back_inserter(mutations));
-            description += format(" create {} keyspace;", NAME_EVERYWHERE);
-        } else {
-            dlogger.info("{} keyspace is already present. Not creating", NAME_EVERYWHERE);
-        }
-
         // Get mutations for creating tables.
         auto num_keyspace_mutations = mutations.size();
         co_await coroutine::parallel_for_each(ensured_tables(),
-                [this, &mutations, db, ts, sd_ksm, sde_ksm] (auto&& table) -> future<> {
-            auto ksm = table->ks_name() == NAME ? sd_ksm : sde_ksm;
-
+                [this, &mutations, db, ts, ksm] (auto&& table) -> future<> {
             if (!db.has_schema(table->ks_name(), table->cf_name())) {
                 co_return co_await service::prepare_new_column_family_announcement(mutations, _sp, *ksm, std::move(table), ts);
             }
