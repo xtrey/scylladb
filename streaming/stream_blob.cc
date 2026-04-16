@@ -742,11 +742,14 @@ tablet_stream_files(netw::messaging_service& ms, std::list<stream_blob_info> sou
 future<stream_files_response> tablet_stream_files_handler(replica::database& db, netw::messaging_service& ms, streaming::stream_files_request req) {
     stream_files_response resp;
     auto& table = db.find_column_family(req.table);
+    auto table_stream_op = table.stream_in_progress();
     auto files = std::list<stream_blob_info>();
     auto reader = co_await db.obtain_reader_permit(table, "tablet_file_streaming", db::no_timeout, {});
+    bool is_logstor_table = table.uses_logstor();
 
-    if (table.uses_logstor()) {
+    if (is_logstor_table) {
         auto segments = co_await table.take_logstor_snapshot(req.range);
+        co_await utils::get_local_injector().inject("wait_before_tablet_stream_files_after_snapshot", utils::wait_for_message(std::chrono::seconds(60)));
         for (auto& seg : segments) {
             auto& info = files.emplace_back();
             info.filename = format("logstor_segment_{}", seg.segment_id); // used only for logging
@@ -759,6 +762,7 @@ future<stream_files_response> tablet_stream_files_handler(replica::database& db,
                 req.ops_id, segments.size(), req.range);
     } else {
         auto sstables = co_await table.take_storage_snapshot(req.range);
+        co_await utils::get_local_injector().inject("wait_before_tablet_stream_files_after_snapshot", utils::wait_for_message(std::chrono::seconds(60)));
         co_await utils::get_local_injector().inject("order_sstables_for_streaming", [&sstables] (auto& handler) -> future<> {
             if (sstables.size() == 3) {
                 // make sure the sstables are ordered so that the sstable containing shadowed data is streamed last
@@ -807,20 +811,22 @@ future<stream_files_response> tablet_stream_files_handler(replica::database& db,
         // that sstable's content has been fully streamed.
         sstables.clear();
 
+        // Release the table - we don't need to access it anymore and the files are held by the snapshot.
+        table_stream_op = {};
+
         blogger.debug("stream_sstables[{}] Started sending sstable_nr={} files_nr={} files={} range={}",
                 req.ops_id, sstable_nr, files.size(), files, req.range);
     }
     if (files.empty()) {
         co_return resp;
     }
-    co_await utils::get_local_injector().inject("wait_before_tablet_stream_files_after_snapshot", utils::wait_for_message(std::chrono::seconds(60)));
     auto ops_start_time = std::chrono::steady_clock::now();
     auto files_nr = files.size();
     size_t stream_bytes = co_await tablet_stream_files(ms, std::move(files), req.targets, req.table, req.ops_id, req.topo_guard);
     resp.stream_bytes = stream_bytes;
     auto duration = std::chrono::steady_clock::now() - ops_start_time;
     blogger.info("stream_{}[{}] Finished sending files_nr={} range={} stream_bytes={} stream_time={} stream_bw={}",
-            table.uses_logstor() ? "logstor_segments" : "sstables",
+            is_logstor_table ? "logstor_segments" : "sstables",
             req.ops_id, files_nr, req.range, stream_bytes, duration, get_bw(stream_bytes, ops_start_time));
     co_return resp;
 }
