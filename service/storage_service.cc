@@ -4123,7 +4123,7 @@ future<storage_service::keyspace_migration_status> storage_service::get_tablets_
     result.keyspace = ks_name;
 
     if (ks.uses_tablets()) {
-        result.status = "tablets";
+        result.status = migration_status::tablets;
         co_return result;
     }
 
@@ -4138,11 +4138,11 @@ future<storage_service::keyspace_migration_status> storage_service::get_tablets_
     });
 
     if (!has_tablet_maps) {
-        result.status = "vnodes";
+        result.status = migration_status::vnodes;
         co_return result;
     }
 
-    result.status = "migrating_to_tablets";
+    result.status = migration_status::migrating_to_tablets;
 
     // Pick one table and query system.tablet_sizes to find which nodes
     // report tablet sizes (i.e. have loaded tablet-based ERMs).

@@ -297,9 +297,15 @@ public:
         sstring intended_mode; // "vnodes" or "tablets"
     };
 
+    enum class migration_status {
+        vnodes,
+        migrating_to_tablets,
+        tablets,
+    };
+
     struct keyspace_migration_status {
         sstring keyspace;
-        sstring status; // "vnodes", "migrating_to_tablets", or "tablets"
+        migration_status status;
         std::vector<node_migration_status> nodes;
     };
 
@@ -1076,6 +1082,21 @@ struct fmt::formatter<service::storage_service::mode> : fmt::formatter<string_vi
         case DRAINING:       name = "DRAINING"; break;
         case DRAINED:        name = "DRAINED"; break;
         case MAINTENANCE:    name = "MAINTENANCE"; break;
+        }
+        return fmt::format_to(ctx.out(), "{}", name);
+    }
+};
+
+template <>
+struct fmt::formatter<service::storage_service::migration_status> : fmt::formatter<string_view> {
+    template <typename FormatContext>
+    auto format(service::storage_service::migration_status status, FormatContext& ctx) const {
+        std::string_view name;
+        using enum service::storage_service::migration_status;
+        switch (status) {
+        case vnodes:                name = "vnodes"; break;
+        case migrating_to_tablets:  name = "migrating_to_tablets"; break;
+        case tablets:               name = "tablets"; break;
         }
         return fmt::format_to(ctx.out(), "{}", name);
     }
