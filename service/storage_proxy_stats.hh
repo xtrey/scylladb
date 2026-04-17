@@ -18,7 +18,7 @@ namespace locator { class topology; }
 namespace service {
 
 namespace storage_proxy_stats {
-
+using cas_contention_histogram = utils::estimated_histogram_with_max<128>;
 // split statistics counters
 struct split_stats {
     static seastar::metrics::label datacenter_label;
@@ -88,7 +88,7 @@ struct write_stats {
 
     utils::timed_rate_moving_average_summary_and_histogram cas_write;
 
-    utils::estimated_histogram cas_write_contention;
+    cas_contention_histogram cas_write_contention;
 
     uint64_t writes = 0;
     // A CQL write query arrived to a non-replica node and was
@@ -137,7 +137,7 @@ struct stats : public write_stats {
     utils::timed_rate_moving_average cas_read_timeouts;
     utils::timed_rate_moving_average cas_read_unavailables;
 
-    utils::estimated_histogram cas_read_contention;
+    cas_contention_histogram cas_read_contention;
 
     uint64_t read_repair_attempts = 0;
     uint64_t read_repair_repaired_blocking = 0;
