@@ -4881,8 +4881,7 @@ future<> storage_service::clone_locally_tablet_storage(locator::global_tablet_id
     });
     rtlogger.debug("Cloned storage of tablet {} from leaving replica {}, {} sstables were found", tablet, leaving, d.size());
 
-    auto ignore_digest_mismatch = _db.local().get_config().ignore_component_digest_mismatch();
-    auto load_sstable = [leave_unsealed, ignore_digest_mismatch] (const dht::sharder& sharder, replica::table& t, sstables::entry_descriptor d) -> future<sstables::shared_sstable> {
+    auto load_sstable = [leave_unsealed] (const dht::sharder& sharder, replica::table& t, sstables::entry_descriptor d) -> future<sstables::shared_sstable> {
         auto& mng = t.get_sstables_manager();
         auto sst = mng.make_sstable(t.schema(), t.get_storage_options(), d.generation, d.state.value_or(sstables::sstable_state::normal),
                                     d.version, d.format, db_clock::now(), default_io_error_handler_gen());
@@ -4891,8 +4890,7 @@ future<> storage_service::clone_locally_tablet_storage(locator::global_tablet_id
         // SSTables will be loaded at pending replica and migration is retried, so correctness
         // wise, we're good.
         auto cfg = sstables::sstable_open_config{ .current_shard_as_sstable_owner = true,
-                                                  .unsealed_sstable = leave_unsealed,
-                                                  .ignore_component_digest_mismatch = ignore_digest_mismatch };
+                                                  .unsealed_sstable = leave_unsealed };
         co_await sst->load(sharder, cfg);
         co_return sst;
     };

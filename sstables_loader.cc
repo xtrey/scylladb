@@ -222,7 +222,6 @@ private:
         auto units = co_await sst_manager.dir_semaphore().get_units(1);
         sstables::sstable_open_config cfg {
             .unsealed_sstable = true,
-            .ignore_component_digest_mismatch = db.get_config().ignore_component_digest_mismatch(),
         };
         co_await sst->load(table.get_effective_replication_map()->get_sharder(*table.schema()), cfg);
         co_await table.add_new_sstable_and_update_cache(sst, [&sst_manager, sst] (sstables::shared_sstable loading_sst) -> future<> {
@@ -774,7 +773,6 @@ future<> sstables_loader::load_new_sstables(sstring ks_name, sstring cf_name,
             // that might otherwise consume a significant amount of memory.
             sstables::sstable_open_config cfg {
                 .load_bloom_filter = false,
-                .ignore_component_digest_mismatch = _db.local().get_config().ignore_component_digest_mismatch(),
             };
             std::tie(table_id, sstables_on_shards) = co_await replica::distributed_loader::get_sstables_from_upload_dir(_db, ks_name, cf_name, cfg);
             co_await container().invoke_on_all([&sstables_on_shards, ks_name, cf_name, table_id, primary, scope] (sstables_loader& loader) mutable -> future<> {
@@ -901,7 +899,6 @@ future<> sstables_loader::download_task_impl::run() {
     // that might otherwise consume a significant amount of memory.
     sstables::sstable_open_config cfg {
         .load_bloom_filter = false,
-        .ignore_component_digest_mismatch = _loader.local()._db.local().get_config().ignore_component_digest_mismatch(),
     };
     llog.debug("Loading sstables from {}({}/{})", _endpoint, _bucket, _prefix);
 

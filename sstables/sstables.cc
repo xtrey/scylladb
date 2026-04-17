@@ -2018,7 +2018,6 @@ future<> sstable::load_metadata(sstable_open_config cfg) noexcept {
 // This interface is only used during tests, snapshot loading and early initialization.
 // No need to set tunable priorities for it.
 future<> sstable::load(const dht::sharder& sharder, sstable_open_config cfg) noexcept {
-    _ignore_component_digest_mismatch = cfg.ignore_component_digest_mismatch;
     co_await load_metadata(cfg);
     validate_min_max_metadata();
     validate_max_local_deletion_time();
@@ -3895,6 +3894,7 @@ sstable::sstable(schema_ptr schema,
     , _large_data_handler(large_data_handler)
     , _corrupt_data_handler(corrupt_data_handler)
     , _manager(manager)
+    , _ignore_component_digest_mismatch(_manager.get_config().ignore_component_digest_mismatch)
 {
     manager.add(this);
 }

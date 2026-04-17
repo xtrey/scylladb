@@ -324,11 +324,11 @@ std::optional<schema_with_source> try_load_schema_autodetect(const bpo::variable
 }
 
 const std::vector<sstables::shared_sstable> load_sstables(schema_ptr schema, sstables::sstables_manager& sst_man, sstables::storage_manager& sstm,
-        const std::vector<sstring>& sstable_names, bool ignore_component_digest_mismatch) {
+        const std::vector<sstring>& sstable_names) {
     std::vector<sstables::shared_sstable> sstables;
     sstables.resize(sstable_names.size());
 
-    parallel_for_each(sstable_names, [schema, &sst_man, &sstm, &sstable_names, &sstables, ignore_component_digest_mismatch] (const sstring& sst_name) -> future<> {
+    parallel_for_each(sstable_names, [schema, &sst_man, &sstm, &sstable_names, &sstables] (const sstring& sst_name) -> future<> {
         const auto i = std::distance(sstable_names.begin(), std::find(sstable_names.begin(), sstable_names.end(), sst_name));
         auto sst_path = std::filesystem::path(sst_name);
 
@@ -372,7 +372,6 @@ const std::vector<sstables::shared_sstable> load_sstables(schema_ptr schema, sst
             auto open_cfg = sstables::sstable_open_config{
                 .load_first_and_last_position_metadata = false,
                 .keep_sharding_metadata = true,
-                .ignore_component_digest_mismatch = ignore_component_digest_mismatch,
             };
             co_await sst->load(schema->get_sharder(), open_cfg);
         } catch (...) {
@@ -2991,11 +2990,14 @@ $ scylla sstable validate /path/to/md-123456-big-Data.db /path/to/md-123457-big-
         sstables::directory_semaphore dir_sem(1);
         abort_source abort;
 
+        bool ignore_component_digest_mismatch = app_config.contains("ignore-component-digest-mismatch");
+
         sstables::sstables_manager::config sm_cfg {
             .available_memory = 1_GiB,
             .enable_sstable_key_validation = dbcfg.enable_sstable_key_validation(),
             .data_file_directories = dbcfg.data_file_directories(),
             .format = dbcfg.sstable_format,
+            .ignore_component_digest_mismatch = ignore_component_digest_mismatch,
         };
         sstables::storage_manager::config stm_cfg;
         stm_cfg.object_storage_clients_memory = 100_MiB;
@@ -3031,9 +3033,8 @@ $ scylla sstable validate /path/to/md-123456-big-Data.db /path/to/md-123457-big-
                 fmt::print(std::cerr, "error processing arguments: duplicate sstable arguments found\n");
                 return 1;
             }
-            bool ignore_component_digest_mismatch = app_config.contains("ignore-component-digest-mismatch");
             try {
-                sstables = load_sstables(schema, sst_man, sstm.local(), sstable_names, ignore_component_digest_mismatch);
+                sstables = load_sstables(schema, sst_man, sstm.local(), sstable_names);
             } catch (...) {
                 fmt::print(std::cerr, "error loading sstables: {}\n", std::current_exception());
                 return 1;
