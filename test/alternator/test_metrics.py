@@ -35,6 +35,7 @@ from botocore.exceptions import ClientError
 
 from test.alternator.test_cql_rbac import new_dynamodb, new_role
 from test.alternator.util import random_string, new_test_table, is_aws, scylla_config_read, scylla_config_temporary, get_signed_request
+from test.alternator.test_vector import vs
 
 # Fixture for checking if we are able to test Scylla metrics. Scylla metrics
 # are not available on AWS (of course), but may also not be available for
@@ -395,6 +396,29 @@ def test_scan_operations(test_table_s, metrics):
         test_table_s.scan(Limit=1)
         test_table_s.query(Limit=1, KeyConditionExpression='p=:p',
             ExpressionAttributeValues={':p': 'dog'})
+
+def test_table_scan_operations(test_table_s, metrics):
+    with check_table_increases_operation(metrics, ['Query', 'Scan'], test_table_s.name):
+        test_table_s.scan(Limit=1)
+        test_table_s.query(Limit=1, KeyConditionExpression='p=:p',
+            ExpressionAttributeValues={':p': 'dog'})
+
+# Test counter for Query with VectorSearch: both global and per-table.
+def test_query_vector_operations(vs, metrics):
+    with new_test_table(vs,
+            KeySchema=[{'AttributeName': 'p', 'KeyType': 'HASH'}],
+            AttributeDefinitions=[{'AttributeName': 'p', 'AttributeType': 'S'}],
+            VectorIndexes=[{'IndexName': 'vind',
+                'VectorAttribute': {'AttributeName': 'v', 'Dimensions': 3}}]) as table:
+        with check_increases_operation(metrics, ['Query']):
+            with check_table_increases_operation(metrics, ['Query'], table.name):
+                # The vector store may or may not be configured; either way
+                # the Query counter must be incremented.
+                try:
+                    table.query(IndexName='vind',
+                        VectorSearch={'QueryVector': [1, 2, 3]}, Limit=1)
+                except ClientError:
+                    pass
 
 # Test counters for DescribeEndpoints:
 def test_describe_endpoints_operations(dynamodb, metrics):

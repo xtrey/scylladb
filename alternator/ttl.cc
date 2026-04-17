@@ -44,6 +44,7 @@
 #include "cql3/query_options.hh"
 #include "cql3/column_identifier.hh"
 #include "alternator/executor.hh"
+#include "alternator/executor_util.hh"
 #include "alternator/controller.hh"
 #include "alternator/serialization.hh"
 #include "alternator/ttl_tag.hh"

@@ -34,6 +34,7 @@
 
 #include "executor.hh"
 #include "streams.hh"
+#include "alternator/executor_util.hh"
 #include "data_dictionary/data_dictionary.hh"
 #include "utils/rjson.hh"
 
@@ -282,7 +283,7 @@ future<alternator::executor::request_return_type> alternator::executor::list_str
             auto arn = stream_arn{ i->schema(), cdc::get_base_table(db.real_database(), *i->schema()) };
             rjson::add(new_entry, "StreamArn", arn);
             rjson::add(new_entry, "StreamLabel", rjson::from_string(stream_label(*s)));
-            rjson::add(new_entry, "TableName", rjson::from_string(cdc::base_name(table_name(*s))));
+            rjson::add(new_entry, "TableName", rjson::from_string(cdc::base_name(s->cf_name())));
             rjson::push_back(streams, std::move(new_entry));
             --limit;
         }
@@ -883,7 +884,7 @@ future<executor::request_return_type> executor::describe_stream(client_state& cl
 
     rjson::add(stream_desc, "StreamArn", stream_arn);
     rjson::add(stream_desc, "StreamViewType", type);
-    rjson::add(stream_desc, "TableName", rjson::from_string(table_name(*bs)));
+    rjson::add(stream_desc, "TableName", rjson::from_string(bs->cf_name()));
 
     describe_key_schema(stream_desc, *bs);
 
