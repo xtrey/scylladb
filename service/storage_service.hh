@@ -309,7 +309,8 @@ public:
         std::vector<node_migration_status> nodes;
     };
 
-    future<keyspace_migration_status> get_tablets_migration_status(const sstring& ks_name);
+    migration_status get_tablets_migration_status(const sstring& ks_name);
+    future<keyspace_migration_status> get_tablets_migration_status_with_node_details(const sstring& ks_name);
     future<> set_node_intended_storage_mode(intended_storage_mode mode);
     future<> finalize_tablets_migration(const sstring& ks_name);
 

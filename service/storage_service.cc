@@ -4109,22 +4109,12 @@ future<> storage_service::set_node_intended_storage_mode(intended_storage_mode m
     slogger.info("Successfully set intended storage mode for node {} to {}", raft_server.id(), mode);
 }
 
-future<storage_service::keyspace_migration_status> storage_service::get_tablets_migration_status(const sstring& ks_name) {
-    if (this_shard_id() != 0) {
-        co_return co_await container().invoke_on(0, [&ks_name] (auto& ss) {
-            return ss.get_tablets_migration_status(ks_name);
-        });
-    }
-
+storage_service::migration_status storage_service::get_tablets_migration_status(const sstring& ks_name) {
     auto& db = _db.local();
     auto& ks = db.find_keyspace(ks_name);
 
-    keyspace_migration_status result;
-    result.keyspace = ks_name;
-
     if (ks.uses_tablets()) {
-        result.status = migration_status::tablets;
-        co_return result;
+        return migration_status::tablets;
     }
 
     const auto& tm = get_token_metadata();
@@ -4138,14 +4128,31 @@ future<storage_service::keyspace_migration_status> storage_service::get_tablets_
     });
 
     if (!has_tablet_maps) {
-        result.status = migration_status::vnodes;
+        return migration_status::vnodes;
+    }
+
+    return migration_status::migrating_to_tablets;
+}
+
+future<storage_service::keyspace_migration_status> storage_service::get_tablets_migration_status_with_node_details(const sstring& ks_name) {
+    if (this_shard_id() != 0) {
+        co_return co_await container().invoke_on(0, [&ks_name] (auto& ss) {
+            return ss.get_tablets_migration_status_with_node_details(ks_name);
+        });
+    }
+
+    keyspace_migration_status result;
+    result.keyspace = ks_name;
+    result.status = get_tablets_migration_status(ks_name);
+
+    if (result.status != migration_status::migrating_to_tablets) {
         co_return result;
     }
 
-    result.status = migration_status::migrating_to_tablets;
-
     // Pick one table and query system.tablet_sizes to find which nodes
     // report tablet sizes (i.e. have loaded tablet-based ERMs).
+    auto& ks = _db.local().find_keyspace(ks_name);
+    auto tables = ks.metadata()->tables();
     auto sample_table_id = tables.front()->id();
 
     // FIXME: system.tablet_sizes might return stale data (load stats in the topology coordinator are cached).
