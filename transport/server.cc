@@ -1001,8 +1001,6 @@ future<foreign_ptr<std::unique_ptr<cql_server::response>>>
         auto stop_trace = defer([&] {
             tracing::stop_foreground(trace_state);
         });
-        --_server._stats.requests_serving;
-
         return seastar::futurize_invoke([&] () {
             if (f.failed()) {
                 return make_exception_future<foreign_ptr<std::unique_ptr<cql_server::response>>>(std::move(f).get_exception());
@@ -1240,6 +1238,7 @@ future<> cql_server::connection::process_request() {
 
             _pending_requests_gate.enter();
             auto leave = defer([this] {
+                --_server._stats.requests_serving;
                 _shedding_timer.cancel();
                 _shed_incoming_requests = false;
                 _pending_requests_gate.leave();
