@@ -27,7 +27,7 @@ import yaml
 from _pytest.junitxml import xml_key
 
 
-from test import ALL_MODES, DEBUG_MODES, TEST_RUNNER, TOP_SRC_DIR, TESTPY_PREPARED_ENVIRONMENT, HOST_ID
+from test import ALL_MODES, DEBUG_MODES, TEST_RUNNER, TOP_SRC_DIR, HOST_ID
 from test.pylib.scylla_cluster import merge_cmdline_options
 from test.pylib.skip_reason_plugin import skip_marker
 from test.pylib.suite.base import (
@@ -84,7 +84,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     # to run a test.py-compatible pytest session.
     #
     # TODO: remove this when we'll completely switch to bare pytest runner.
-    parser.addoption('--test-py-init', action='store_true', default=False,
+    parser.addoption('--test-py-init', action='store_true', default=False, deprecated=True,
                      help='Run pytest session in test.py-compatible mode.  I.e., start all required services, etc.')
 
     # Options for compatibility with test.py
@@ -133,21 +133,7 @@ def print_scylla_log_filename(request: pytest.FixtureRequest) -> Generator[None]
         logger.info("ScyllaDB log file: %s", scylla_log_filename)
 
 
-def testpy_test_fixture_scope(fixture_name: str, config: pytest.Config) -> _pytest.scope._ScopeName:
-    """Dynamic scope for fixtures which rely on a current test.py suite/test.
-
-    test.py runs tests file-by-file as separate pytest sessions, so, `session` scope is effectively close to be the
-    same as `module` (can be a difference in the order.)  In case of running tests with bare pytest command, we
-    need to use `module` scope to maintain same behavior as test.py, since we run all tests in one pytest session.
-    """
-    if getattr(config.option, "test_py_init", False):
-        return "module"
-    return "session"
-
-testpy_test_fixture_scope.__test__ = False
-
-
-@pytest.fixture(scope=testpy_test_fixture_scope, autouse=True)
+@pytest.fixture(scope="module", autouse=True)
 def build_mode(request: pytest.FixtureRequest) -> str:
     params_stash = get_params_stash(node=request.node)
     if params_stash is None:
@@ -155,7 +141,7 @@ def build_mode(request: pytest.FixtureRequest) -> str:
     return params_stash[BUILD_MODE]
 
 
-@pytest.fixture(scope=testpy_test_fixture_scope)
+@pytest.fixture(scope="module")
 def scale_timeout(build_mode: str) -> Callable[[int | float], int | float]:
     def scale_timeout_inner(timeout: int | float) -> int | float:
         return scale_timeout_by_mode(build_mode, timeout)
@@ -163,7 +149,7 @@ def scale_timeout(build_mode: str) -> Callable[[int | float], int | float]:
     return scale_timeout_inner
 
 
-@pytest.fixture(scope=testpy_test_fixture_scope)
+@pytest.fixture(scope="module")
 async def testpy_test(request: pytest.FixtureRequest, build_mode: str) -> Test | None:
     """Create an instance of Test class for the current test.py test."""
 
@@ -195,21 +181,14 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     if TEST_RUNNER != "pytest" or session.config.getoption("--collect-only"):
         return
 
-    if not session.config.getoption("--test-py-init"):
-        return
-
     # Check if this is an xdist worker
     is_xdist_worker = xdist.is_xdist_worker(request_or_session=session)
 
-    # Always initialize globals in xdist workers (they run in separate processes)
-    # For the main process, only init if test.py hasn't done so already
-    if is_xdist_worker or TESTPY_PREPARED_ENVIRONMENT not in os.environ:
-        init_testsuite_globals()
-        TestSuite.artifacts.add_exit_artifact(None, TestSuite.hosts.cleanup)
+    init_testsuite_globals()
+    TestSuite.artifacts.add_exit_artifact(None, TestSuite.hosts.cleanup)
 
     # Run stuff just once for the main pytest process (not in xdist workers).
-    # Only prepare the environment if it hasn't been prepared by test.py
-    if not is_xdist_worker and TESTPY_PREPARED_ENVIRONMENT not in os.environ:
+    if not is_xdist_worker:
         temp_dir = pathlib.Path(session.config.getoption("--tmpdir")).absolute()
 
         prepare_environment(
@@ -265,21 +244,21 @@ def pytest_runtest_logreport(report):
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
-    if not session.config.getoption("--test-py-init"):
-        return
 
     is_xdist_worker = xdist.is_xdist_worker(request_or_session=session)
     # If all tests passed, remove the log file to save space and avoid confusion with logs from failed runs.
     # We check this at the end of the session to ensure that we have the complete log available for any failed tests.
 
-    if not (not is_xdist_worker and TESTPY_PREPARED_ENVIRONMENT in os.environ): # If this is not an xdist worker and test.py has prepared the environment, there is no separate xdist main process and no pytest_main.log file
+    if not is_xdist_worker: # If this is not an xdist worker there is no separate xdist main process and no pytest_main.log file
         if session.testsfailed == 0 and not session.config.getoption("--save-log-on-success"):
-            os.remove(_pytest_config.stash[PYTEST_LOG_FILE])
+            # Use missing_ok=True because the log file is only created on first write,
+            # so it may never have been written if nothing was logged.
+            pathlib.Path(_pytest_config.stash[PYTEST_LOG_FILE]).unlink(missing_ok=True)
 
     # Check if this is an xdist worker - workers should not clean up (only the main process should)
     # Check if test.py has already prepared the environment, so it should clean up
 
-    if is_xdist_worker or TESTPY_PREPARED_ENVIRONMENT in os.environ:
+    if is_xdist_worker:
         return
     # we only clean up when running with pure pytest
     if getattr(TestSuite, "artifacts", None) is not None:
@@ -296,30 +275,33 @@ def pytest_configure(config: pytest.Config) -> None:
     global _pytest_config
     _pytest_config = config
 
-    if _pytest_config.getoption("--test-py-init"):
-        pytest_log_dir = pathlib.Path(_pytest_config.getoption("--tmpdir")).absolute() / PYTEST_LOG_FOLDER
-        worker_id = os.environ.get("PYTEST_XDIST_WORKER")
-        # If this is an xdist worker, set up logging to a separate file for this worker. Otherwise, set up logging for the main process.
-        if worker_id is not None:
-            _pytest_config.stash[PYTEST_LOG_FILE] = f"{pytest_log_dir}/pytest_{worker_id}_{HOST_ID}.log"
-            logging.basicConfig(
-                format=config.getini("log_file_format"),
-                filename=_pytest_config.stash[PYTEST_LOG_FILE],
-                level=config.getini("log_file_level"),
-            )
-        else:
-            # For the main process, we want to clean up old logs before the run, so we create the log directory and remove any existing log files.
-            pytest_log_dir.mkdir(parents=True, exist_ok=True)
-            if not _pytest_config.getoption("--save-log-on-success"):
-                for file in pytest_log_dir.glob("*"):
-                    file.unlink()
+    pytest_log_dir = pathlib.Path(_pytest_config.getoption("--tmpdir")).absolute() / PYTEST_LOG_FOLDER
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    # If this is an xdist worker, set up logging to a separate file for this worker. Otherwise, set up logging for the main process.
+    if worker_id is not None:
+        _pytest_config.stash[PYTEST_LOG_FILE] = f"{pytest_log_dir}/pytest_{worker_id}_{HOST_ID}.log"
+    else:
+        # For the main process, we want to clean up old logs before the run, so we create the log directory and remove any existing log files.
+        pytest_log_dir.mkdir(parents=True, exist_ok=True)
+        if not _pytest_config.getoption("--save-log-on-success"):
+            for file in pytest_log_dir.glob("*"):
+                file.unlink()
 
-            _pytest_config.stash[PYTEST_LOG_FILE] = f"{pytest_log_dir}/pytest_main_{HOST_ID}.log"
-            logging.basicConfig(
-                format=config.getini("log_file_format"),
-                filename=_pytest_config.stash[PYTEST_LOG_FILE],
-                level=config.getini("log_file_level"),
-            )
+        _pytest_config.stash[PYTEST_LOG_FILE] = f"{pytest_log_dir}/pytest_main_{HOST_ID}.log"
+
+    # Explicitly configure the root logger to write exclusively to a file.
+    # logging.basicConfig() is a no-op when the root logger already has handlers
+    # (e.g. added by pytest or any early import), which would leave a StreamHandler
+    # in place and cause all log records — including noisy third-party DEBUG messages
+    # like urllib3.connectionpool or asyncio — to appear on the terminal.
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        handler.close()
+    file_handler = logging.FileHandler(_pytest_config.stash[PYTEST_LOG_FILE])
+    file_handler.setFormatter(logging.Formatter(config.getini("log_file_format")))
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(config.getini("log_file_level"))
 
     if config.getoption("--exe-url") and config.getoption("--exe-path"):
         raise RuntimeError("Can't use --exe-url and exe-path simultaneously.")
@@ -380,17 +362,16 @@ def pytest_runtest_makereport(item, call):
     # and we use hookwrapper=True to allow us to access the report after it has been generated by other hooks.
     outcome = yield
 
-    if _pytest_config.getoption("--test-py-init"):
-        rep = outcome.get_result()
-        # we only look at actual failing test calls, not setup/teardown
-        pytest_tests_logs = pathlib.Path(_pytest_config.getoption("--tmpdir")).absolute() / PYTEST_TESTS_LOGS_FOLDER
-        if rep.failed or (_pytest_config.getoption("--save-log-on-success") and rep.when == "teardown"):
-            mode = "a" if os.path.exists(pytest_tests_logs) else "w"
-            with open(pytest_tests_logs/ f"{item._nodeid.replace("::", "-").replace("/", "-")}-{rep.when}-{HOST_ID}.log",mode) as f:
-                f.write(rep.longreprtext + "\n")
-                for section in rep.sections:
-                    f.write(section[0] + "\n")
-                    f.write(section[1] + "\n")
+    rep = outcome.get_result()
+    # we only look at actual failing test calls, not setup/teardown
+    pytest_tests_logs = pathlib.Path(_pytest_config.getoption("--tmpdir")).absolute() / PYTEST_TESTS_LOGS_FOLDER
+    if rep.failed or (_pytest_config.getoption("--save-log-on-success") and rep.when == "teardown"):
+        mode = "a" if os.path.exists(pytest_tests_logs) else "w"
+        with open(pytest_tests_logs/ f"{item._nodeid.replace("::", "-").replace("/", "-")}-{rep.when}-{HOST_ID}.log",mode) as f:
+            f.write(rep.longreprtext + "\n")
+            for section in rep.sections:
+                f.write(section[0] + "\n")
+                f.write(section[1] + "\n")
 
 class TestSuiteConfig:
     def __init__(self, config_file: pathlib.Path):
