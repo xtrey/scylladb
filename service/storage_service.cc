@@ -225,6 +225,7 @@ storage_service::storage_service(abort_source& abort_source,
         , _node_ops_module(make_shared<node_ops::task_manager_module>(tm, *this))
         , _tablets_module(make_shared<service::task_manager_module>(tm, *this))
         , _global_topology_requests_module(make_shared<service::topo::task_manager_module>(tm))
+        , _vnodes_to_tablets_migration_module(make_shared<service::vnodes_to_tablets::task_manager_module>(tm, *this))
         , _address_map(address_map)
         , _shared_token_metadata(stm)
         , _erm_factory(erm_factory)
@@ -250,10 +251,12 @@ storage_service::storage_service(abort_source& abort_source,
     tm.register_module(_node_ops_module->get_name(), _node_ops_module);
     tm.register_module(_tablets_module->get_name(), _tablets_module);
     tm.register_module(_global_topology_requests_module->get_name(), _global_topology_requests_module);
+    tm.register_module(_vnodes_to_tablets_migration_module->get_name(), _vnodes_to_tablets_migration_module);
     if (this_shard_id() == 0) {
         _node_ops_module->make_virtual_task<node_ops::node_ops_virtual_task>(*this);
         _tablets_module->make_virtual_task<service::tablet_virtual_task>(*this);
         _global_topology_requests_module->make_virtual_task<service::topo::global_topology_request_virtual_task>(*this);
+        _vnodes_to_tablets_migration_module->make_virtual_task<service::vnodes_to_tablets::migration_virtual_task>(*this);
     }
     register_metrics();
 
@@ -2342,6 +2345,7 @@ future<> storage_service::stop() {
     co_await _tablets_module->stop();
     co_await _node_ops_module->stop();
     co_await _global_topology_requests_module->stop();
+    co_await _vnodes_to_tablets_migration_module->stop();
     co_await _async_gate.close();
     _tablet_split_monitor_event.signal();
     co_await std::move(_tablet_split_monitor);
@@ -4109,22 +4113,12 @@ future<> storage_service::set_node_intended_storage_mode(intended_storage_mode m
     slogger.info("Successfully set intended storage mode for node {} to {}", raft_server.id(), mode);
 }
 
-future<storage_service::keyspace_migration_status> storage_service::get_tablets_migration_status(const sstring& ks_name) {
-    if (this_shard_id() != 0) {
-        co_return co_await container().invoke_on(0, [&ks_name] (auto& ss) {
-            return ss.get_tablets_migration_status(ks_name);
-        });
-    }
-
+storage_service::migration_status storage_service::get_tablets_migration_status(const sstring& ks_name) {
     auto& db = _db.local();
     auto& ks = db.find_keyspace(ks_name);
 
-    keyspace_migration_status result;
-    result.keyspace = ks_name;
-
     if (ks.uses_tablets()) {
-        result.status = "tablets";
-        co_return result;
+        return migration_status::tablets;
     }
 
     const auto& tm = get_token_metadata();
@@ -4138,14 +4132,38 @@ future<storage_service::keyspace_migration_status> storage_service::get_tablets_
     });
 
     if (!has_tablet_maps) {
-        result.status = "vnodes";
+        return migration_status::vnodes;
+    }
+
+    return migration_status::migrating_to_tablets;
+}
+
+future<storage_service::keyspace_migration_status> storage_service::get_tablets_migration_status_with_node_details(const sstring& ks_name) {
+    if (this_shard_id() != 0) {
+        co_return co_await container().invoke_on(0, [&ks_name] (auto& ss) {
+            return ss.get_tablets_migration_status_with_node_details(ks_name);
+        });
+    }
+
+    keyspace_migration_status result;
+    result.keyspace = ks_name;
+    result.status = get_tablets_migration_status(ks_name);
+
+    if (result.status != migration_status::migrating_to_tablets) {
         co_return result;
     }
 
-    result.status = "migrating_to_tablets";
+    // system.tablet_sizes is a group0_virtual_table, so it requires group0 to
+    // be initialized. If this function is called via the task manager API,
+    // group0 may not be initialized yet.
+    if (!_group0 || !_group0->joined_group0()) {
+        throw std::runtime_error(::format("Cannot fetch node statuses for migrating keyspace '{}': group0 is not yet initialized on this node", ks_name));
+    }
 
     // Pick one table and query system.tablet_sizes to find which nodes
     // report tablet sizes (i.e. have loaded tablet-based ERMs).
+    auto& ks = _db.local().find_keyspace(ks_name);
+    auto tables = ks.metadata()->tables();
     auto sample_table_id = tables.front()->id();
 
     // FIXME: system.tablet_sizes might return stale data (load stats in the topology coordinator are cached).

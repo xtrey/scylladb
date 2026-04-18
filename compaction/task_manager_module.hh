@@ -698,12 +698,13 @@ public:
     table_resharding_compaction_task_impl(tasks::task_manager::module_ptr module,
             std::string keyspace,
             std::string table,
+            tasks::task_id parent_id,
             sharded<sstables::sstable_directory>& dir,
             sharded<replica::database>& db,
             compaction_sstable_creator_fn creator,
             compaction::owned_ranges_ptr owned_ranges_ptr,
             bool vnodes_resharding) noexcept
-        : resharding_compaction_task_impl(module, tasks::task_id::create_random_id(), module->new_sequence_number(), "table", std::move(keyspace), std::move(table), "", tasks::task_id::create_null_id())
+        : resharding_compaction_task_impl(module, tasks::task_id::create_random_id(), parent_id ? 0 : module->new_sequence_number(), "table", std::move(keyspace), std::move(table), "", parent_id)
         , _dir(dir)
         , _db(db)
         , _creator(std::move(creator))

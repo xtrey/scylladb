@@ -70,13 +70,14 @@ class distributed_loader {
     static future<> reshape(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, compaction::reshape_mode mode,
             sstring ks_name, sstring table_name, compaction::compaction_sstable_creator_fn creator, std::function<bool (const sstables::shared_sstable&)> filter);
     static future<> reshard(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, compaction::compaction_sstable_creator_fn creator,
-            compaction::owned_ranges_ptr owned_ranges_ptr = nullptr, bool vnodes_resharding = false);
+            compaction::owned_ranges_ptr owned_ranges_ptr = nullptr, bool vnodes_resharding = false, tasks::task_info parent_info = {});
     static future<> process_sstable_dir(sharded<sstables::sstable_directory>& dir, sstables::sstable_directory::process_flags flags);
     static future<> lock_table(global_table_ptr&, sharded<sstables::sstable_directory>& dir);
     static future<size_t> make_sstables_available(sstables::sstable_directory& dir,
             sharded<replica::database>& db, sharded<db::view::view_builder>& vb, sharded<db::view::view_building_worker>& vbw,
             db::view::sstable_destination_decision needs_view_update, sstring ks, sstring cf);
-    static future<> populate_keyspace(sharded<replica::database>& db, sharded<db::system_keyspace>& sys_ks, keyspace& ks, sstring ks_name);
+    static future<> populate_keyspace(sharded<replica::database>& db, sharded<db::system_keyspace>& sys_ks, keyspace& ks, sstring ks_name,
+            std::optional<service::intended_storage_mode> storage_mode = std::nullopt);
     static future<std::tuple<table_id, std::vector<std::vector<sstables::shared_sstable>>>>
         get_sstables_from(sharded<replica::database>& db, sstring ks, sstring cf, sstables::sstable_open_config cfg,
         noncopyable_function<future<>(global_table_ptr&, sharded<sstables::sstable_directory>&)> start_dir);

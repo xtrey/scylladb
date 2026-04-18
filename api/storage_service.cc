@@ -1743,11 +1743,11 @@ rest_get_vnode_tablet_migration(http_context& ctx, sharded<service::storage_serv
         throw std::runtime_error("vnodes-to-tablets migration requires all nodes to support the VNODES_TO_TABLETS_MIGRATIONS cluster feature");
     }
     auto keyspace = validate_keyspace(ctx, req);
-    auto status = co_await ss.local().get_tablets_migration_status(keyspace);
+    auto status = co_await ss.local().get_tablets_migration_status_with_node_details(keyspace);
 
     ss::vnode_tablet_migration_status result;
     result.keyspace = status.keyspace;
-    result.status = status.status;
+    result.status = fmt::format("{}", status.status);
     result.nodes._set = true;
     for (const auto& node : status.nodes) {
         ss::vnode_tablet_migration_node_status n;

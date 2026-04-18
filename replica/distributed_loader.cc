@@ -23,6 +23,7 @@
 #include "db/system_keyspace.hh"
 #include "db/system_distributed_keyspace.hh"
 #include "db/schema_tables.hh"
+#include "service/task_manager_module.hh"
 #include "compaction/compaction_manager.hh"
 #include "compaction/task_manager_module.hh"
 #include "sstables/sstables.hh"
@@ -101,9 +102,9 @@ distributed_loader::lock_table(global_table_ptr& table, sharded<sstables::sstabl
 //  - The second part calls each shard's distributed object to reshard the SSTables they were
 //    assigned.
 future<>
-distributed_loader::reshard(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, compaction::compaction_sstable_creator_fn creator, compaction::owned_ranges_ptr owned_ranges_ptr, bool vnodes_resharding) {
+distributed_loader::reshard(sharded<sstables::sstable_directory>& dir, sharded<replica::database>& db, sstring ks_name, sstring table_name, compaction::compaction_sstable_creator_fn creator, compaction::owned_ranges_ptr owned_ranges_ptr, bool vnodes_resharding, tasks::task_info parent_info) {
     auto& compaction_module = db.local().get_compaction_manager().get_task_manager_module();
-    auto task = co_await compaction_module.make_and_start_task<compaction::table_resharding_compaction_task_impl>({}, std::move(ks_name), std::move(table_name), dir, db, std::move(creator), std::move(owned_ranges_ptr), vnodes_resharding);
+    auto task = co_await compaction_module.make_and_start_task<compaction::table_resharding_compaction_task_impl>(parent_info, std::move(ks_name), std::move(table_name), parent_info.id, dir, db, std::move(creator), std::move(owned_ranges_ptr), vnodes_resharding);
     co_await task->done();
 }
 
@@ -279,21 +280,29 @@ distributed_loader::get_sstables_from(sharded<replica::database>& db, sstring ks
 }
 
 class table_populator {
+public:
+    enum class migration_direction {
+        none, // no migration
+        forward, // vnodes -> tablets
+        rollback // tablets -> vnodes (rollback)
+    };
+
+private:
     sharded<replica::database>& _db;
     sstring _ks;
     sstring _cf;
     global_table_ptr& _global_table;
     std::vector<lw_shared_ptr<sharded<sstables::sstable_directory>>> _sstable_directories;
     sstables::sstable_version_types _version_for_reshaping = sstables::oldest_writable_sstable_format;
-    bool _migrate_to_tablets = false;
+    migration_direction _migration_direction;
 
 public:
-    table_populator(global_table_ptr& ptr, sharded<replica::database>& db, sstring ks, sstring cf, bool migrate_to_tablets = false)
+    table_populator(global_table_ptr& ptr, sharded<replica::database>& db, sstring ks, sstring cf, migration_direction md = migration_direction::none)
         : _db(db)
         , _ks(std::move(ks))
         , _cf(std::move(cf))
         , _global_table(ptr)
-        , _migrate_to_tablets(migrate_to_tablets)
+        , _migration_direction(md)
     {
     }
 
@@ -396,10 +405,13 @@ sstables::shared_sstable make_sstable(replica::table& table, sstables::sstable_s
 
 future<> table_populator::populate_subdir(sharded<sstables::sstable_directory>& directory) {
     auto state = directory.local().state();
-    dblog.debug("Populating {}/{}/{} state={} resharding_mode={}", _ks, _cf, _global_table->get_storage_options(), state, _migrate_to_tablets ? "vnodes-to-tablets" : "normal");
+    bool vnodes_resharding = _migration_direction == migration_direction::forward;
+    dblog.debug("Populating {}/{}/{} state={} resharding_mode={}", _ks, _cf, _global_table->get_storage_options(), state, vnodes_resharding ? "vnodes-to-tablets" : "normal");
 
+    tasks::task_info parent_info;
     compaction::owned_ranges_ptr owned_ranges_ptr = nullptr;
-    if (_migrate_to_tablets) {
+
+    if (vnodes_resharding) {
         // Build owned_ranges from the tablet map.
         auto table_uuid = _global_table->schema()->id();
         auto& tmap = _db.local().get_shared_token_metadata().get()->tablets().get_tablet_map(table_uuid);
@@ -411,13 +423,17 @@ future<> table_populator::populate_subdir(sharded<sstables::sstable_directory>& 
         owned_ranges_ptr = compaction::make_owned_ranges_ptr(std::move(ranges));
     }
 
+    if (_migration_direction != migration_direction::none) {
+        parent_info = tasks::task_info(service::vnodes_to_tablets::migration_virtual_task::make_task_id(_ks), 0);
+    }
+
     co_await distributed_loader::reshard(directory, _db, _ks, _cf, [this, state] (shard_id shard) mutable {
         auto gen = smp::submit_to(shard, [this] () {
             return _global_table->calculate_generation_for_new_table();
         }).get();
 
         return make_sstable(*_global_table, state, gen, _version_for_reshaping);
-    }, owned_ranges_ptr, _migrate_to_tablets);
+    }, owned_ranges_ptr, vnodes_resharding, parent_info);
 
     // The node is offline at this point so we are very lenient with what we consider
     // offstrategy.
@@ -449,7 +465,8 @@ future<> table_populator::populate_subdir(sharded<sstables::sstable_directory>& 
 }
 
 future<> distributed_loader::populate_keyspace(sharded<replica::database>& db,
-        sharded<db::system_keyspace>& sys_ks, keyspace& ks, sstring ks_name)
+        sharded<db::system_keyspace>& sys_ks, keyspace& ks, sstring ks_name,
+        std::optional<service::intended_storage_mode> storage_mode)
 {
     dblog.info("Populating Keyspace {}", ks_name);
 
@@ -461,12 +478,19 @@ future<> distributed_loader::populate_keyspace(sharded<replica::database>& db,
 
         dblog.info("Keyspace {}: Reading CF {} id={} version={} storage={}", ks_name, cfname, uuid, s->version(), cf.get_storage_options());
 
-        bool migrating_to_tablets = cf.uses_tablets() && !ks.uses_tablets();
-        if (migrating_to_tablets) {
-            dblog.info("Keyspace {}: CF {} is in vnodes-to-tablets migration mode", ks_name, cfname);
+        using md = table_populator::migration_direction;
+        auto& tablet_metadata = db.local().get_shared_token_metadata().get()->tablets();
+        auto direction = [&]() {
+            if (ks.uses_tablets()) { return md::none; }
+            if (cf.uses_tablets()) { return md::forward; }
+            if (tablet_metadata.has_tablet_map(uuid) && storage_mode == service::intended_storage_mode::vnodes) { return md::rollback; }
+            return md::none;
+        }();
+        if (direction != md::none) {
+            dblog.info("Keyspace {}: CF {} is in vnodes-to-tablets migration mode (direction: {})", ks_name, cfname, direction == md::forward ? "forward" : "rollback");
         }
 
-        auto metadata = table_populator(gtable, db, ks_name, cfname, migrating_to_tablets);
+        auto metadata = table_populator(gtable, db, ks_name, cfname, direction);
         std::exception_ptr ex;
 
         try {
@@ -583,7 +607,7 @@ future<> distributed_loader::init_non_system_keyspaces(sharded<replica::database
                     continue;
                 }
 
-                futures.emplace_back(distributed_loader::populate_keyspace(db, sys_ks, ks.second, ks_name));
+                futures.emplace_back(distributed_loader::populate_keyspace(db, sys_ks, ks.second, ks_name, storage_mode));
             }
 
             when_all_succeed(futures.begin(), futures.end()).discard_result().get();

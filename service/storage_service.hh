@@ -228,6 +228,7 @@ private:
     shared_ptr<node_ops::task_manager_module> _node_ops_module;
     shared_ptr<service::task_manager_module> _tablets_module;
     shared_ptr<service::topo::task_manager_module> _global_topology_requests_module;
+    shared_ptr<service::vnodes_to_tablets::task_manager_module> _vnodes_to_tablets_migration_module;
     gms::gossip_address_map& _address_map;
     future<service::tablet_operation_result> do_tablet_operation(locator::global_tablet_id tablet,
                                  sstring op_name,
@@ -297,13 +298,20 @@ public:
         sstring intended_mode; // "vnodes" or "tablets"
     };
 
+    enum class migration_status {
+        vnodes,
+        migrating_to_tablets,
+        tablets,
+    };
+
     struct keyspace_migration_status {
         sstring keyspace;
-        sstring status; // "vnodes", "migrating_to_tablets", or "tablets"
+        migration_status status;
         std::vector<node_migration_status> nodes;
     };
 
-    future<keyspace_migration_status> get_tablets_migration_status(const sstring& ks_name);
+    migration_status get_tablets_migration_status(const sstring& ks_name);
+    future<keyspace_migration_status> get_tablets_migration_status_with_node_details(const sstring& ks_name);
     future<> set_node_intended_storage_mode(intended_storage_mode mode);
     future<> finalize_tablets_migration(const sstring& ks_name);
 
@@ -1054,6 +1062,7 @@ public:
     friend class tasks::task_manager;
     friend class tablet_virtual_task;
     friend class topo::global_topology_request_virtual_task;
+    friend class vnodes_to_tablets::migration_virtual_task;
 };
 
 }
@@ -1076,6 +1085,21 @@ struct fmt::formatter<service::storage_service::mode> : fmt::formatter<string_vi
         case DRAINING:       name = "DRAINING"; break;
         case DRAINED:        name = "DRAINED"; break;
         case MAINTENANCE:    name = "MAINTENANCE"; break;
+        }
+        return fmt::format_to(ctx.out(), "{}", name);
+    }
+};
+
+template <>
+struct fmt::formatter<service::storage_service::migration_status> : fmt::formatter<string_view> {
+    template <typename FormatContext>
+    auto format(service::storage_service::migration_status status, FormatContext& ctx) const {
+        std::string_view name;
+        using enum service::storage_service::migration_status;
+        switch (status) {
+        case vnodes:                name = "vnodes"; break;
+        case migrating_to_tablets:  name = "migrating_to_tablets"; break;
+        case tablets:               name = "tablets"; break;
         }
         return fmt::format_to(ctx.out(), "{}", name);
     }

@@ -83,4 +83,42 @@ public:
 
 }
 
+namespace vnodes_to_tablets {
+
+class migration_virtual_task : public tasks::task_manager::virtual_task::impl {
+private:
+    service::storage_service& _ss;
+public:
+    migration_virtual_task(tasks::task_manager::module_ptr module,
+            service::storage_service& ss)
+        : tasks::task_manager::virtual_task::impl(std::move(module))
+        , _ss(ss)
+    {}
+    virtual tasks::task_manager::task_group get_group() const noexcept override;
+    virtual future<std::optional<tasks::virtual_task_hint>> contains(tasks::task_id task_id) const override;
+
+    virtual future<std::optional<tasks::task_status>> get_status(tasks::task_id id, tasks::virtual_task_hint hint) override;
+    virtual future<std::optional<tasks::task_status>> wait(tasks::task_id id, tasks::virtual_task_hint hint) override;
+    virtual future<> abort(tasks::task_id id, tasks::virtual_task_hint hint) noexcept override;
+    virtual future<std::vector<tasks::task_stats>> get_stats() override;
+    static tasks::task_id make_task_id(const sstring& keyspace);
+private:
+    std::optional<sstring> find_keyspace_for_task_id(tasks::task_id id) const;
+    static tasks::task_stats make_task_stats(tasks::task_id id, const sstring& keyspace);
+    static tasks::task_status make_task_status(tasks::task_id id, const sstring& keyspace,
+            tasks::task_manager::task_state state,
+            tasks::task_manager::task::progress progress);
+};
+
+class task_manager_module : public tasks::task_manager::module {
+private:
+    service::storage_service& _ss;
+public:
+    task_manager_module(tasks::task_manager& tm, service::storage_service& ss) noexcept;
+
+    std::set<locator::host_id> get_nodes() const override;
+};
+
+}
+
 }
