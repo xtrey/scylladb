@@ -17,6 +17,7 @@ from itertools import chain
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import logging
 
 from test.cluster.dtest.ccmlib.common import ArgumentError, wait_for, BIN_DIR
 from test.pylib.internal_types import ServerUpState
@@ -26,6 +27,9 @@ if TYPE_CHECKING:
     from test.pylib.internal_types import ServerInfo
     from test.pylib.log_browsing import ScyllaLogFile
     from test.cluster.dtest.ccmlib.scylla_cluster import ScyllaCluster
+
+
+logger = logging.getLogger("scylla_node")
 
 
 NODETOOL_STDERR_IGNORED_PATTERNS = (
@@ -149,15 +153,20 @@ class ScyllaNode:
         return self.cluster.scylla_mode
 
     def set_smp(self, smp: int) -> None:
+        logger.debug(f"Setting smp: {self=} {smp=}")
         self._smp_set_during_test = smp
 
     def smp(self) -> int:
+        logger.debug(f"Getting smp: {self=} _smp_set_during_test={self._smp_set_during_test} _smp={self._smp} {DEFAULT_SMP=}")
         return self._smp_set_during_test or self._smp or DEFAULT_SMP
 
     def memory(self) -> int:
         return self._memory or self.smp() * DEFAULT_MEMORY_PER_CPU
 
     def _adjust_smp_and_memory(self, smp: int | None = None, memory: int | None = None) -> None:
+        if not memory and not smp:
+            return
+        logger.debug(f"Adjusting smp={smp} memory={memory} current_smp={self._smp} current_memory={self._memory}")
         if memory:
             self._memory = memory // (smp or self.smp()) * self.smp()
         if smp:
@@ -445,6 +454,8 @@ class ScyllaNode:
             marks = [(node, node.mark_log()) for node in self.cluster.nodelist() if node.is_live()]
 
         self.mark = self.mark_log()
+
+        logger.debug(f"Starting server: server_id={self.server_id} {scylla_args=} {scylla_env=}")
 
         self.cluster.manager.server_start(
             server_id=self.server_id,
