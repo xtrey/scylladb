@@ -97,6 +97,10 @@ speculative_retry::from_sstring(sstring str) {
     return speculative_retry(t, v);
 }
 
+bool schema::tablet_merges_forbidden() const {
+    return cdc_options().tablet_merge_blocked();
+}
+
 sstring to_sstring(column_kind k) {
     switch (k) {
     case column_kind::partition_key:  return "PARTITION_KEY";

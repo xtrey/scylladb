@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <functional>
 #include <set>
 #include <unordered_set>
 #include <unordered_map>
@@ -268,6 +269,11 @@ struct topology_state_machine {
     topology_type _topology;
     condition_variable event;
     size_t reload_count = 0;
+
+    // Called by the tablet split monitor when all local storage groups
+    // for a table are split-ready, to trigger an early load stats
+    // refresh so the coordinator can finalize the resize promptly.
+    std::function<void()> on_tablet_split_ready;
 
     future<> await_not_busy();
     future<sstring> wait_for_request_completion(db::system_keyspace& sys_ks, utils::UUID id, bool require_entry);

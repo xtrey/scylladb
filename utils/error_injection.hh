@@ -328,6 +328,11 @@ private:
     // Map enabled-injection-name -> is-one-shot
     std::unordered_map<std::string_view, injection_data> _enabled;
 
+    // Callbacks invoked when a specific injection is disabled.
+    // Registered independently of the injection being enabled, so
+    // the callback can be set up before the injection is ever activated.
+    std::unordered_map<sstring, std::function<void()>> _on_disable_callbacks;
+
     bool is_one_shot(const std::string_view& injection_name) const {
         const auto it = _enabled.find(injection_name);
         if (it == _enabled.end()) {
@@ -383,11 +388,19 @@ public:
     void disable(const std::string_view& injection_name) {
         errinj_logger.debug("Disabling injection \"{}\"", injection_name);
         _enabled.erase(injection_name);
+        if (auto it = _on_disable_callbacks.find(sstring(injection_name)); it != _on_disable_callbacks.end()) {
+            it->second();
+        }
     }
 
     void disable_all() {
         errinj_logger.debug("Disabling all injections");
-        _enabled.clear();
+        auto was_enabled = std::move(_enabled);
+        for (auto& [name, _] : was_enabled) {
+            if (auto it = _on_disable_callbacks.find(sstring(name)); it != _on_disable_callbacks.end()) {
+                it->second();
+            }
+        }
     }
 
     std::vector<sstring> enabled_injections() const {
@@ -395,6 +408,20 @@ public:
                 | std::views::filter([] (const auto& pair) { return !pair.second.is_ongoing_oneshot(); })
                 | std::views::keys
                 | std::ranges::to<std::vector<sstring>>();
+    }
+
+    // Register a callback that is invoked when a specific injection is
+    // disabled (via disable() or disable_all()).  The callback is stored
+    // independently of the injection being enabled, so it can be set up
+    // before the injection is ever activated and survives enable/disable
+    // cycles.  Only one callback per injection name is supported; a second
+    // registration for the same name replaces the previous one.
+    void register_on_disable(const sstring& injection_name, std::function<void()> callback) {
+        _on_disable_callbacks[injection_name] = std::move(callback);
+    }
+
+    void unregister_on_disable(const sstring& injection_name) {
+        _on_disable_callbacks.erase(injection_name);
     }
 
     // \brief Inject a lambda call
@@ -611,6 +638,12 @@ public:
 
     [[gnu::always_inline]]
     std::vector<sstring> enabled_injections() const { return {}; };
+
+    [[gnu::always_inline]]
+    void register_on_disable(const sstring&, std::function<void()>) {}
+
+    [[gnu::always_inline]]
+    void unregister_on_disable(const sstring&) {}
 
     // Inject a lambda call
     [[gnu::always_inline]]

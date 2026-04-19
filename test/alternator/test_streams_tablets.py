@@ -182,6 +182,7 @@ def run_parent_children_relationship_test(dynamodb, dynamodbstreams, rest_api, c
 # NOTE: this test assumes starting tablet count is bigger than one
 # NOTE: this test fails if `system:initial_tablets` is set to anything but 0 - maybe because 0 means start with some default
 #       while non-zero means start with this value, but never go any lower?
+@pytest.mark.xfail(reason="Tablet merges are blocked when Alternator Streams are enabled")
 def test_parent_children_merge(dynamodb, dynamodbstreams, rest_api, cql):
     def verify_parent_children_relationship_merge(root_shard_ids, shard_parents_map, shard_children_map):
         # shard_parents_map will contain both generations, so we strip original one
@@ -282,12 +283,12 @@ def test_parent_children_split(dynamodb, dynamodbstreams, rest_api, cql):
 #         of stream shards to be created. Each stream shard from previous generation will point
 #         to at least one stream shard in the next generation and never to some other generation.
 def test_parent_filtering(dynamodb, dynamodbstreams, rest_api, cql):
-    tablet_multipliers = [1, 2, 4, 8, 16, 8, 4, 2, 1]
+    # Only growing tablet count — merges are incompatible with Alternator Streams.
+    tablet_multipliers = [1, 2, 4, 8, 16]
 
     def verify_parent_children_relationship(root_shard_ids, shard_parents_map, shard_children_map):
-        # Verify the split/merge invariant: in a split all children point
-        # back to the same parent; in a merge the child may point to only one
-        # of its two parents, but both parents will have the child in their CHILD_SHARDS result.
+        # Verify the split invariant: all children point
+        # back to the same parent.
         #
         # First, build declared_children from the ParentShardId field recorded
         # in shard_parents_map, then compare against the CHILD_SHARDS filter
@@ -387,14 +388,12 @@ def test_parent_filtering(dynamodb, dynamodbstreams, rest_api, cql):
 #      - all written items are present in the stream (check count and then sorted content)
 #      - within each partition key, the records are in order of writes (check that `e` is monotonically increasing for each record)
 #      - the stream shard parent-child relationships are correct - stream shards create "generations" (all stream shards are split or merged at the same moment,
-#        when tablet count is changed). Every stream shard except first ones has a parent, but not every stream shard is being point to as a parent - when stream shard merge
-#        (let's say A & B merge into C), then next generation stream shard (C) has two parents (A & B), but the DynamoDB API allows to appoint only one - let's say A
-#        (the other one - B - will never be pointed to as a parent by anything else).
-#        NOTE: it's not the same as having no children - the stream shard (B) will have a child (C), but that child (C) will have it's sibling as parent (A).
+#        when tablet count is changed). Every stream shard except first ones has a parent.
 #        Then we try to walk the tree starting from every stream shard that is not pointed to as a parent. Depending on which generation that stream shard is in,
 #        the path will have different length.
 def test_get_records_with_alternating_tablets_count(dynamodb, dynamodbstreams, rest_api, cql):
-    tablet_multipliers = [1, 2, 4, 8, 16, 8, 4, 2, 1]
+    # Only growing tablet count — merges are incompatible with Alternator Streams.
+    tablet_multipliers = [1, 2, 4, 8, 16]
     writes_per_tablet_multiplier = 100
     partition_count = 32
 
