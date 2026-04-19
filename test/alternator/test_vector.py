@@ -18,6 +18,7 @@ from botocore.exceptions import ClientError
 import boto3.dynamodb.types
 
 from .util import random_string, new_test_table, unique_table_name, scylla_config_read, scylla_config_write, client_no_transform, is_aws
+from test.pylib.skip_types import skip_env
 
 # Monkey-patch the boto3 library to stop doing its own error-checking on
 # numbers. This works around a bug https://github.com/boto/boto3/issues/2500
@@ -41,7 +42,7 @@ boto3.dynamodb.types.DYNAMODB_CONTEXT = decimal.Context(prec=100)
 @pytest.fixture(scope="module")
 def vs(new_dynamodb_session, dynamodb):
     if is_aws(dynamodb):
-        pytest.skip('Scylla-only: vector search extensions not available on DynamoDB')
+        skip_env('Scylla-only: vector search extensions not available on DynamoDB')
     resource = new_dynamodb_session()
     client = resource.meta.client
     # Patch the client to support the new APIs:
@@ -1039,7 +1040,7 @@ def vector_store_configured(table_vs):
 @pytest.fixture(scope="module")
 def needs_vector_store(table_vs):
     if not vector_store_configured(table_vs):
-        pytest.skip('Vector Store is not configured (run with --vs)')
+        skip_env('Vector Store is not configured (run with --vs)')
 
 # The context manager unconfigured_vector_store() temporarily (for the
 # duration of the "with" block) un-configures the vector store in Scylla -
@@ -1218,7 +1219,7 @@ def test_wait_for_vector_index_active(vs, needs_vector_store):
 # and this test used to fail before this was fixed.
 # To save a bit of time, we don't test all combinations of hash and range
 # key types but test each type at least once as a hash key and a range key.
-@pytest.mark.skip(reason="Bug in vector store for non-string keys, fails very slowly so let's skip")
+@pytest.mark.skip_bug(reason="Bug in vector store for non-string keys, fails very slowly so let's skip")
 @pytest.mark.parametrize('hash_type,range_type', [
     ('N', None), ('B', None), ('S', 'N'),  ('S', 'B'),
 ], ids=[
@@ -1654,7 +1655,7 @@ def test_deleteitem_vectorindex(vs, needs_vector_store, with_ck):
 def test_vector_with_ttl(vs, needs_vector_store, have_ck):
     period = scylla_config_read(vs, 'alternator_ttl_period_in_seconds')
     if period is None or float(period) > 1:
-        pytest.skip('need alternator_ttl_period_in_seconds <= 1 to run this test quickly')
+        skip_env('need alternator_ttl_period_in_seconds <= 1 to run this test quickly')
     key_schema = [{'AttributeName': 'p', 'KeyType': 'HASH'}]
     attr_defs = [{'AttributeName': 'p', 'AttributeType': 'S'}]
     if have_ck:
