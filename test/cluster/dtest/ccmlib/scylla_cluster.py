@@ -11,13 +11,11 @@ from typing import TYPE_CHECKING
 
 from cassandra.auth import PlainTextAuthProvider
 
-from test.pylib.internal_types import ServerInfo
 from test.pylib.manager_client import ManagerClient
 from test.cluster.dtest.ccmlib.common import logger
 from test.cluster.dtest.ccmlib.scylla_node import ScyllaNode
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
     from typing import Any
 
 
@@ -29,6 +27,10 @@ class ScyllaCluster:
         self.manager = manager
         self.scylla_mode = scylla_mode
         self._config_options = {}
+        # Cached ScyllaNode instances. Nodes are appended by _add_nodes()
+        # in the order they are created by servers_add().
+        self._nodes: list[ScyllaNode] = []
+        self._next_node_num: int = 1
 
         if self.scylla_mode == "debug":
             self.default_wait_other_notice_timeout = 600
@@ -39,19 +41,20 @@ class ScyllaCluster:
 
         self.force_wait_for_cluster_start = force_wait_for_cluster_start
 
-    @staticmethod
-    def _sorted_nodes(servers: Iterable[ServerInfo]) -> list[ServerInfo]:
-        return sorted(servers, key=lambda s: s.server_id)
+    def _add_nodes(self, servers: list) -> None:
+        """Create ScyllaNode instances for the given servers and cache them."""
+        for server in servers:
+            name = f"node{self._next_node_num}"
+            self._next_node_num += 1
+            self._nodes.append(ScyllaNode(
+                cluster=self, server=server, name=name))
 
     @property
     def nodes(self) -> dict[str, ScyllaNode]:
         return {node.name: node for node in self.nodelist()}
 
     def nodelist(self) -> list[ScyllaNode]:
-        return [
-            ScyllaNode(cluster=self, server=server, name=f"node{n}")
-            for n, server in enumerate(self._sorted_nodes(self.manager.all_servers()), start=1)
-        ]
+        return list(self._nodes)
 
     def get_node_ip(self, nodeid: int) -> str:
         return self.nodelist()[nodeid-1].address()
@@ -61,16 +64,16 @@ class ScyllaCluster:
             self.manager.auth_provider = PlainTextAuthProvider(username="cassandra", password="cassandra")
         match nodes:
             case int():
-                self.manager.servers_add(servers_num=nodes, config=self._config_options, start=False, auto_rack_dc="dc1")
+                self._add_nodes(self.manager.servers_add(servers_num=nodes, config=self._config_options, start=False, auto_rack_dc="dc1"))
             case list():
                 for dc, n_nodes in enumerate(nodes, start=1):
                     dc_name = f"dc{dc}"
-                    self.manager.servers_add(
+                    self._add_nodes(self.manager.servers_add(
                         servers_num=n_nodes,
                         config=self._config_options,
                         start=False,
                         auto_rack_dc=dc_name
-                    )
+                    ))
             case dict():
                 # Supported spec: {"dc1": {"rack1": 3, "rack2": 2}, "dc2": {"rack1": 2}}
                 for dc, dc_nodes in nodes.items():
@@ -79,7 +82,7 @@ class ScyllaCluster:
                     for rack, rack_nodes in dc_nodes.items():
                         if not isinstance(rack_nodes, int):
                             raise RuntimeError(f"Unsupported topology specification: {nodes}")
-                        self.manager.servers_add(
+                        self._add_nodes(self.manager.servers_add(
                             servers_num=rack_nodes,
                             config=self._config_options,
                             property_file={
@@ -87,7 +90,7 @@ class ScyllaCluster:
                                 "rack": rack,
                             },
                             start=False,
-                        )
+                        ))
             case _:
                 raise RuntimeError(f"Unsupported topology specification: {nodes}")
 
