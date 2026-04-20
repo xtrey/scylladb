@@ -150,7 +150,7 @@ private:
     template<class T>
     void update_config(const sstring & new_value, std::function<T(const sstring&)> parse_func, T& cfg_parameter);
 
-    bool should_log_table(const sstring& keyspace, const sstring& name) const;
+    bool should_log_table(std::string_view keyspace, std::string_view name) const;
 public:
     static seastar::sharded<audit>& audit_instance() {
         // FIXME: leaked intentionally to avoid shutdown problems, see #293

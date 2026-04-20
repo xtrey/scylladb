@@ -304,7 +304,7 @@ future<> inspect_login(const sstring& username, socket_address client_ip, bool e
     return audit::local_audit_instance().log_login(username, client_ip, error);
 }
 
-bool audit::should_log_table(const sstring& keyspace, const sstring& name) const {
+bool audit::should_log_table(std::string_view keyspace, std::string_view name) const {
     auto keyspace_it = _audited_tables.find(keyspace);
     return keyspace_it != _audited_tables.cend() && keyspace_it->second.find(name) != keyspace_it->second.cend();
 }
@@ -319,8 +319,8 @@ bool audit::will_log(statement_category cat, std::string_view keyspace, std::str
     // so it is logged whenever the category matches.
     return _audited_categories.contains(cat)
            && (keyspace.empty()
-                         || _audited_keyspaces.find(sstring(keyspace)) != _audited_keyspaces.cend()
-                         || should_log_table(sstring(keyspace), sstring(table))
+                         || _audited_keyspaces.find(keyspace) != _audited_keyspaces.cend()
+                         || should_log_table(keyspace, table)
                          || cat == statement_category::AUTH
                          || cat == statement_category::ADMIN
                          || cat == statement_category::DCL);
