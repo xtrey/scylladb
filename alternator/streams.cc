@@ -167,46 +167,8 @@ static schema_ptr get_schema_from_arn(service::storage_proxy& proxy, const strea
     }
 }
 
-// ShardId. Must be between 28 and 65 characters inclusive.
-// UUID is 36 bytes as string (including dashes). 
-// Prepend a version/type marker (`S`) -> 37
-class stream_shard_id : public utils::UUID {
-public:
-    using UUID = utils::UUID;
-    static constexpr char marker = 'S';
-
-    stream_shard_id() = default;
-    stream_shard_id(const UUID& uuid)
-        : UUID(uuid)
-    {}
-    stream_shard_id(const table_id& tid)
-        : UUID(tid.uuid())
-    {}
-    stream_shard_id(std::string_view v)
-        : UUID(v.substr(1))
-    {
-        if (v[0] != marker) {
-            throw std::invalid_argument(std::string(v));
-        }
-    }
-    friend std::ostream& operator<<(std::ostream& os, const stream_shard_id& arn) {
-        const UUID& uuid = arn;
-        return os << marker << uuid;
-    }
-    friend std::istream& operator>>(std::istream& is, stream_shard_id& arn) {
-        std::string s;
-        is >> s;
-        arn = stream_shard_id(s);
-        return is;
-    }
-};
-
 } // namespace alternator
 
-template<typename ValueType>
-struct rapidjson::internal::TypeHelper<ValueType, alternator::stream_shard_id>
-    : public from_string_helper<ValueType, alternator::stream_shard_id>
-{};
 template<typename ValueType>
 struct rapidjson::internal::TypeHelper<ValueType, alternator::stream_arn>
     : public from_string_helper<ValueType, alternator::stream_arn>
@@ -218,7 +180,8 @@ future<alternator::executor::request_return_type> alternator::executor::list_str
     _stats.api_operations.list_streams++;
 
     auto limit = rjson::get_opt<int>(request, "Limit").value_or(100);
-    auto streams_start = rjson::get_opt<stream_shard_id>(request, "ExclusiveStartStreamArn");
+    auto streams_start = rjson::get_opt<stream_arn>(request, "ExclusiveStartStreamArn");
+
     auto table = find_table(_proxy, request);
     auto db = _proxy.data_dictionary();
 
@@ -244,34 +207,34 @@ future<alternator::executor::request_return_type> alternator::executor::list_str
         cfs = db.get_tables();
     }
 
-    // # 12601 (maybe?) - sort the set of tables on ID. This should ensure we never
-    // generate duplicates in a paged listing here. Can obviously miss things if they 
-    // are added between paged calls and end up with a "smaller" UUID/ARN, but that 
-    // is to be expected.
+    // We need to sort the tables to ensure a stable order for paging.
+    // We sort by keyspace and table name, which will also allow us to skip to
+    // the right position by ExclusiveStartStreamArn.
+    auto cmp = [](std::string_view ks1, std::string_view cf1, std::string_view ks2, std::string_view cf2) {
+        return ks1 == ks2 ? cf1 < cf2 : ks1 < ks2;
+    };
     if (std::cmp_less(limit, cfs.size()) || streams_start) {
-        std::sort(cfs.begin(), cfs.end(), [](const data_dictionary::table& t1, const data_dictionary::table& t2) {
-            return t1.schema()->id().uuid() < t2.schema()->id().uuid();
-        });
+        std::sort(cfs.begin(), cfs.end(),
+            [&cmp](const data_dictionary::table& t1, const data_dictionary::table& t2) {
+                return cmp(t1.schema()->ks_name(), t1.schema()->cf_name(),
+                           t2.schema()->ks_name(), t2.schema()->cf_name());
+            });
     }
 
     auto i = cfs.begin();
     auto e = cfs.end();
 
     if (streams_start) {
-        i = std::find_if(i, e, [&](const data_dictionary::table& t) {
-            return t.schema()->id().uuid() == streams_start
-                && cdc::get_base_table(db.real_database(), *t.schema())
-                && is_alternator_keyspace(t.schema()->ks_name())
-                ;
-        });
-        if (i != e) {
-            ++i;
-        }
+        i = std::upper_bound(i, e, *streams_start,
+            [&cmp](const stream_arn& arn, const data_dictionary::table& t) {
+                return cmp(arn.keyspace_name(), arn.table_name(),
+                           t.schema()->ks_name(), t.schema()->cf_name());
+            });
     }
 
     auto ret = rjson::empty_object();
     auto streams = rjson::empty_array();
-    std::optional<stream_shard_id> last;
+    std::optional<std::string> last;
 
     for (;limit > 0 && i != e; ++i) {
         auto s = i->schema();
@@ -282,8 +245,9 @@ future<alternator::executor::request_return_type> alternator::executor::list_str
         }
         if (cdc::is_log_for_some_table(db.real_database(), ks_name, cf_name)) {
             rjson::value new_entry = rjson::empty_object();
-            last = i->schema()->id();
+
             auto arn = stream_arn{ i->schema(), cdc::get_base_table(db.real_database(), *i->schema()) };
+            last = std::string(arn.unparsed());
             rjson::add(new_entry, "StreamArn", arn);
             rjson::add(new_entry, "StreamLabel", rjson::from_string(stream_label(*s)));
             rjson::add(new_entry, "TableName", rjson::from_string(cdc::base_name(s->cf_name())));
@@ -294,8 +258,12 @@ future<alternator::executor::request_return_type> alternator::executor::list_str
 
     rjson::add(ret, "Streams", std::move(streams));
 
-    if (last) {
-        rjson::add(ret, "LastEvaluatedStreamArn", *last);
+    // Only emit LastEvaluatedStreamArn when we stopped because we hit the
+    // limit (limit == 0), meaning there may be more streams to list.
+    // If we exhausted all tables naturally (limit > 0), there are no more
+    // streams, so we must not emit a cookie.
+    if (last && limit == 0) {
+        rjson::add(ret, "LastEvaluatedStreamArn", rjson::from_string(*last));
     }
     return make_ready_future<executor::request_return_type>(rjson::print(std::move(ret)));
 }
