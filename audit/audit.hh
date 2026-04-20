@@ -129,10 +129,15 @@ public:
 class storage_helper;
 
 class audit final : public seastar::async_sharded_service<audit> {
+public:
+    // Transparent comparator (std::less<>) enables heterogeneous lookup with
+    // string_view keys.
+    using audited_keyspaces_t = std::set<sstring, std::less<>>;
+    using audited_tables_t = std::map<sstring, std::set<sstring, std::less<>>, std::less<>>;
+private:
     locator::shared_token_metadata& _token_metadata;
-    std::set<sstring> _audited_keyspaces;
-    // Maps keyspace name to set of table names in that keyspace
-    std::map<sstring, std::set<sstring>> _audited_tables;
+    audited_keyspaces_t _audited_keyspaces;
+    audited_tables_t _audited_tables;
     category_set _audited_categories;
 
     std::unique_ptr<storage_helper> _storage_helper_ptr;
@@ -164,8 +169,8 @@ public:
           cql3::query_processor& qp,
           service::migration_manager& mm,
           std::set<sstring>&& audit_modes,
-          std::set<sstring>&& audited_keyspaces,
-          std::map<sstring, std::set<sstring>>&& audited_tables,
+          audited_keyspaces_t&& audited_keyspaces,
+          audited_tables_t&& audited_tables,
           category_set&& audited_categories,
           const db::config& cfg);
     ~audit();

@@ -113,8 +113,8 @@ static category_set parse_audit_categories(const sstring& data) {
     return result;
 }
 
-static std::map<sstring, std::set<sstring>> parse_audit_tables(const sstring& data) {
-    std::map<sstring, std::set<sstring>> result;
+static audit::audited_tables_t parse_audit_tables(const sstring& data) {
+    audit::audited_tables_t result;
     if (!data.empty()) {
         std::vector<sstring> tokens;
         boost::split(tokens, data, boost::is_any_of(","));
@@ -139,8 +139,8 @@ static std::map<sstring, std::set<sstring>> parse_audit_tables(const sstring& da
     return result;
 }
 
-static std::set<sstring> parse_audit_keyspaces(const sstring& data) {
-    std::set<sstring> result;
+static audit::audited_keyspaces_t parse_audit_keyspaces(const sstring& data) {
+    audit::audited_keyspaces_t result;
     if (!data.empty()) {
         std::vector<sstring> tokens;
         boost::split(tokens, data, boost::is_any_of(","));
@@ -156,8 +156,8 @@ audit::audit(locator::shared_token_metadata& token_metadata,
              cql3::query_processor& qp,
              service::migration_manager& mm,
              std::set<sstring>&& audit_modes,
-             std::set<sstring>&& audited_keyspaces,
-             std::map<sstring, std::set<sstring>>&& audited_tables,
+             audited_keyspaces_t&& audited_keyspaces,
+             audited_tables_t&& audited_tables,
              category_set&& audited_categories,
              const db::config& cfg)
     : _token_metadata(token_metadata)
@@ -165,8 +165,8 @@ audit::audit(locator::shared_token_metadata& token_metadata,
     , _audited_tables(std::move(audited_tables))
     , _audited_categories(std::move(audited_categories))
     , _cfg(cfg)
-    , _cfg_keyspaces_observer(cfg.audit_keyspaces.observe([this] (sstring const& new_value){ update_config<std::set<sstring>>(new_value, parse_audit_keyspaces, _audited_keyspaces); }))
-    , _cfg_tables_observer(cfg.audit_tables.observe([this] (sstring const& new_value){ update_config<std::map<sstring, std::set<sstring>>>(new_value, parse_audit_tables, _audited_tables); }))
+    , _cfg_keyspaces_observer(cfg.audit_keyspaces.observe([this] (sstring const& new_value){ update_config<audited_keyspaces_t>(new_value, parse_audit_keyspaces, _audited_keyspaces); }))
+    , _cfg_tables_observer(cfg.audit_tables.observe([this] (sstring const& new_value){ update_config<audited_tables_t>(new_value, parse_audit_tables, _audited_tables); }))
     , _cfg_categories_observer(cfg.audit_categories.observe([this] (sstring const& new_value){ update_config<category_set>(new_value, parse_audit_categories, _audited_categories); }))
 {
     _storage_helper_ptr = create_storage_helper(std::move(audit_modes), qp, mm);
@@ -181,8 +181,8 @@ future<> audit::start_audit(const db::config& cfg, sharded<locator::shared_token
         return make_ready_future<>();
     }
     category_set audited_categories = parse_audit_categories(cfg.audit_categories());
-    std::map<sstring, std::set<sstring>> audited_tables = parse_audit_tables(cfg.audit_tables());
-    std::set<sstring> audited_keyspaces = parse_audit_keyspaces(cfg.audit_keyspaces());
+    audit::audited_tables_t audited_tables = parse_audit_tables(cfg.audit_tables());
+    audit::audited_keyspaces_t audited_keyspaces = parse_audit_keyspaces(cfg.audit_keyspaces());
 
     logger.info("Audit is enabled. Auditing to: \"{}\", with the following categories: \"{}\", keyspaces: \"{}\", and tables: \"{}\"",
                 cfg.audit(), cfg.audit_categories(), cfg.audit_keyspaces(), cfg.audit_tables());
