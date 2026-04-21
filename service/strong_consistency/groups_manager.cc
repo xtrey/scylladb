@@ -332,10 +332,26 @@ void groups_manager::update(token_metadata_ptr new_tm) {
     schedule_raft_groups_deletion(false);
 }
 
-future<raft_server> groups_manager::acquire_server(raft::group_id group_id, abort_source& as) {
+future<raft_server> groups_manager::acquire_server(table_id table_id, raft::group_id group_id, abort_source& as) {
     if (!_features.strongly_consistent_tables) {
         on_internal_error(logger, "strongly consistent tables are not enabled on this shard");
     }
+
+    // A concurrent DROP TABLE may have already removed the table from database
+    // registries and erased the raft group from _raft_groups via
+    // schedule_raft_group_deletion.  The schema.table() in create_operation_ctx()
+    // might not fail though in this case because someone might be holding
+    // lw_shared_ptr<table>, so that the table is dropped but the table object
+    // is still alive.
+    //
+    // Check that the table still exists in the database to turn the
+    // fatal on_internal_error below into a clean no_such_column_family
+    // exception.
+    //
+    // When the table does exist, we proceed to acquire state.gate->hold().
+    // This prevents schedule_raft_group_deletion (which co_awaits gate::close)
+    // from erasing the group until the DML operation completes.
+    _db.find_column_family(table_id);
 
     const auto it = _raft_groups.find(group_id);
     if (it == _raft_groups.end()) {

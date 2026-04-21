@@ -154,7 +154,7 @@ auto coordinator::create_operation_ctx(const schema& schema, const dht::token& t
     co_await utils::get_local_injector().inject("sc_coordinator_wait_before_acquire_server",
             utils::wait_for_message(5min));
 
-    auto raft_server = co_await _groups_manager.acquire_server(raft_info.group_id, as);
+    auto raft_server = co_await _groups_manager.acquire_server(schema.id(), raft_info.group_id, as);
 
     co_return operation_ctx {
         .erm = std::move(erm),
