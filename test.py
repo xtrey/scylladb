@@ -326,7 +326,10 @@ async def main() -> int:
     except Exception as e:
         print(palette.fail(e))
         raise
-
+    if exit_code == 5:
+        print(palette.fail("No tests were collected. Please check the test names and modes you provided, as well as"
+                           "the test markers if you used the '--markers' option."
+                           "Alternatively you can check with --list option if there any errors."))
     if 'coverage' in options.modes:
         coverage.generate_coverage_report(path_to("coverage", "tests"))
 
