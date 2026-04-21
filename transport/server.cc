@@ -73,6 +73,7 @@
 #include "utils/result.hh"
 #include "utils/reusable_buffer.hh"
 #include "utils/histogram_metrics_helper.hh"
+#include "utils/error_injection.hh"
 
 template<typename T = void>
 using coordinator_result = exceptions::coordinator_result<T>;
@@ -276,6 +277,12 @@ void cql_sg_stats::register_metrics()
             sm::make_gauge("cql_pending_response_memory", [this] { return _pending_response_memory; },
                              sm::description("Holds the total memory in bytes consumed by responses waiting to be sent."),
                              {{"scheduling_group_name", cur_sg_name}}).set_skip_when_empty()
+    );
+
+    transport_metrics.emplace_back(
+            sm::make_gauge("cql_requests_serving", [this] { return _requests_serving; },
+                             sm::description("Holds the number of requests that are being processed right now."),
+                             {{"scheduling_group_name", cur_sg_name}})
     );
 
     new_metrics.add_group("transport", std::move(transport_metrics));
@@ -1001,8 +1008,6 @@ future<foreign_ptr<std::unique_ptr<cql_server::response>>>
         auto stop_trace = defer([&] {
             tracing::stop_foreground(trace_state);
         });
-        --_server._stats.requests_serving;
-
         return seastar::futurize_invoke([&] () {
             if (f.failed()) {
                 return make_exception_future<foreign_ptr<std::unique_ptr<cql_server::response>>>(std::move(f).get_exception());
@@ -1237,9 +1242,13 @@ future<> cql_server::connection::process_request() {
 
             ++_server._stats.requests_served;
             ++_server._stats.requests_serving;
+            ++_server.get_cql_sg_stats()._requests_serving;
 
             _pending_requests_gate.enter();
-            auto leave = defer([this] {
+            auto& sg_stats = _server.get_cql_sg_stats();
+            auto leave = defer([this, &sg_stats] {
+                --_server._stats.requests_serving;
+                --sg_stats._requests_serving;
                 _shedding_timer.cancel();
                 _shed_incoming_requests = false;
                 _pending_requests_gate.leave();
@@ -1844,6 +1853,8 @@ cql_server::process(uint16_t stream, request_reader in, service::client_state& c
             throw std::runtime_error(format("Unsupported opcode for processing: {}", static_cast<int>(op)));
         }
     } (opcode);
+
+    co_await utils::get_local_injector().inject("transport_cql_request_pause", utils::wait_for_message(60s));
 
     bool init_trace = (bool)!bounced; // If the request was bounced, we already started the trace in the handler
     auto msg = co_await coroutine::try_future(process_fn(client_state, _query_processor, in, stream,
