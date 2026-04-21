@@ -1027,7 +1027,7 @@ view_indexed_table_select_statement::prepare(data_dictionary::database db,
                                         uint32_t bound_terms,
                                         lw_shared_ptr<const parameters> parameters,
                                         ::shared_ptr<selection::selection> selection,
-                                        ::shared_ptr<restrictions::statement_restrictions> restrictions,
+                                        ::shared_ptr<const restrictions::statement_restrictions> restrictions,
                                         ::shared_ptr<std::vector<size_t>> group_by_cell_indices,
                                         bool is_reversed,
                                         ordering_comparator_type ordering_comparator,
@@ -1139,7 +1139,7 @@ lw_shared_ptr<const service::pager::paging_state> view_indexed_table_select_stat
     auto& last_base_pk = last_pos.partition;
     auto* last_base_ck = last_pos.position.has_key() ? &last_pos.position.key() : nullptr;
 
-    bytes_opt indexed_column_value = restrictions::value_for(*cdef, _used_index_restrictions, options);
+    bytes_opt indexed_column_value = _restrictions->value_for_index_partition_key(options);
 
     auto index_pk = [&]() {
         if (_index.metadata().local()) {
@@ -1350,12 +1350,7 @@ dht::partition_range_vector view_indexed_table_select_statement::get_partition_r
 dht::partition_range_vector view_indexed_table_select_statement::get_partition_ranges_for_global_index_posting_list(const query_options& options) const {
     dht::partition_range_vector partition_ranges;
 
-    const column_definition* cdef = _schema->get_column_definition(to_bytes(_index.target_column()));
-    if (!cdef) {
-        throw exceptions::invalid_request_exception("Indexed column not found in schema");
-    }
-
-    bytes_opt value = restrictions::value_for(*cdef, _used_index_restrictions, options);
+    bytes_opt value = _restrictions->value_for_index_partition_key(options);
     if (value) {
         auto pk = partition_key::from_single_value(*_view_schema, *value);
         auto dk = dht::decorate_key(*_view_schema, pk);
@@ -1374,11 +1369,11 @@ query::partition_slice view_indexed_table_select_statement::get_partition_slice_
         // Only EQ restrictions on base partition key can be used in an index view query
         if (pk_restrictions_is_single && _restrictions->partition_key_restrictions_is_all_eq()) {
             partition_slice_builder.with_ranges(
-                    _restrictions->get_global_index_clustering_ranges(options, *_view_schema));
+                    _restrictions->get_global_index_clustering_ranges(options));
         } else if (_restrictions->has_token_restrictions()) {
             // Restrictions like token(p1, p2) < 0 have all partition key components restricted, but require special handling.
             partition_slice_builder.with_ranges(
-                    _restrictions->get_global_index_token_clustering_ranges(options, *_view_schema));
+                    _restrictions->get_global_index_token_clustering_ranges(options));
         }
     }
 
@@ -1389,7 +1384,7 @@ query::partition_slice view_indexed_table_select_statement::get_partition_slice_
     partition_slice_builder partition_slice_builder{*_view_schema};
 
     partition_slice_builder.with_ranges(
-        _restrictions->get_local_index_clustering_ranges(options, *_view_schema));
+        _restrictions->get_local_index_clustering_ranges(options));
 
     return partition_slice_builder.build();
 }
@@ -1607,7 +1602,7 @@ public:
         uint32_t bound_terms,
         lw_shared_ptr<const parameters> parameters,
         ::shared_ptr<selection::selection> selection,
-        ::shared_ptr<restrictions::statement_restrictions> restrictions,
+        ::shared_ptr<const restrictions::statement_restrictions> restrictions,
         ::shared_ptr<std::vector<size_t>> group_by_cell_indices,
         bool is_reversed,
         ordering_comparator_type ordering_comparator,
@@ -1645,7 +1640,7 @@ private:
     uint32_t bound_terms,
     lw_shared_ptr<const select_statement::parameters> parameters,
     ::shared_ptr<selection::selection> selection,
-    ::shared_ptr<restrictions::statement_restrictions> restrictions,
+    ::shared_ptr<const restrictions::statement_restrictions> restrictions,
     ::shared_ptr<std::vector<size_t>> group_by_cell_indices,
     bool is_reversed,
     parallelized_select_statement::ordering_comparator_type ordering_comparator,
@@ -2076,7 +2071,7 @@ static select_statement::ordering_comparator_type get_similarity_ordering_compar
 
 ::shared_ptr<cql3::statements::select_statement> vector_indexed_table_select_statement::prepare(data_dictionary::database db, schema_ptr schema,
         uint32_t bound_terms, lw_shared_ptr<const parameters> parameters, ::shared_ptr<selection::selection> selection,
-        ::shared_ptr<restrictions::statement_restrictions> restrictions, ::shared_ptr<std::vector<size_t>> group_by_cell_indices, bool is_reversed,
+        ::shared_ptr<const restrictions::statement_restrictions> restrictions, ::shared_ptr<std::vector<size_t>> group_by_cell_indices, bool is_reversed,
         ordering_comparator_type ordering_comparator, prepared_ann_ordering_type prepared_ann_ordering, std::optional<expr::expression> limit,
         std::optional<expr::expression> per_partition_limit, cql_stats& stats, const secondary_index::index& index, std::unique_ptr<attributes> attrs) {
 
@@ -2589,7 +2584,7 @@ std::unique_ptr<prepared_statement> select_statement::prepare(data_dictionary::d
     return make_unique<prepared_statement>(audit_info(), std::move(stmt), ctx, std::move(partition_key_bind_indices), std::move(warnings));
 }
 
-::shared_ptr<restrictions::statement_restrictions>
+::shared_ptr<const restrictions::statement_restrictions>
 select_statement::prepare_restrictions(data_dictionary::database db,
                                        schema_ptr schema,
                                        prepare_context& ctx,
@@ -2599,8 +2594,8 @@ select_statement::prepare_restrictions(data_dictionary::database db,
                                        restrictions::check_indexes do_check_indexes)
 {
     try {
-        return ::make_shared<restrictions::statement_restrictions>(restrictions::analyze_statement_restrictions(db, schema, statement_type::SELECT, _where_clause, ctx,
-            selection->contains_only_static_columns(), for_view, allow_filtering, do_check_indexes));
+        return restrictions::analyze_statement_restrictions(db, schema, statement_type::SELECT, _where_clause, ctx,
+            selection->contains_only_static_columns(), for_view, allow_filtering, do_check_indexes);
     } catch (const exceptions::unrecognized_entity_exception& e) {
         if (contains_alias(e.entity)) {
             throw exceptions::invalid_request_exception(format("Aliases aren't allowed in the WHERE clause (name: '{}')", e.entity));

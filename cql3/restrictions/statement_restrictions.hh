@@ -23,15 +23,113 @@ namespace cql3 {
 
 namespace restrictions {
 
+/// A set of discrete values.
+using value_list = std::vector<managed_bytes>; // Sorted and deduped using value comparator.
+
+/// General set of values.  Empty set and single-element sets are always value_list.  interval is
+/// never singular and never has start > end.  Universal set is a interval with both bounds null.
+using value_set = std::variant<value_list, interval<managed_bytes>>;
+
+// For some boolean expression (say (X = 3) = TRUE, this represents a function that solves for X.
+// (here, it would return 3). The expression is obtained by equating some factors of the WHERE
+// clause to TRUE.
+using solve_for_t = std::function<value_set (const query_options&)>;
+
+struct on_row {
+    bool operator==(const on_row&) const = default;
+};
+
+struct on_column {
+    const column_definition* column;
+
+    bool operator==(const on_column&) const = default;
+};
+
+// Placeholder type indicating we're solving for the partition key token.
+struct on_partition_key_token {
+    const ::schema* schema;
+
+    bool operator==(const on_partition_key_token&) const = default;
+};
+
+struct on_clustering_key_prefix {
+    std::vector<const column_definition*> columns;
+
+    bool operator==(const on_clustering_key_prefix&) const = default;
+};
+
+// A predicate on a column or a combination of columns. The WHERE clause analyzer
+// will attempt to convert predicates (that return true or false for a particular row)
+// to solvers (that return the set of column values that satisfy the predicate) when possible.
+struct predicate {
+    // A function that returns the set of values that satisfy the filter. Can be unset,
+    // in which case the filter must be interpreted.
+    solve_for_t solve_for;
+    // The original filter for this column.
+    expr::expression filter;
+    // What column the predicate can be solved for
+    std::variant<
+            on_row,                        // cannot determine, so predicate is on entire row
+            on_column,                     // solving for a single column: e.g. c1 = 3
+            on_partition_key_token,        // solving for the token, e.g. token(pk1, pk2) >= :var
+            on_clustering_key_prefix       // solving for a clustering key prefix: e.g. (ck1, ck2) >= (3, 4)
+    > on;
+    // Whether the returned value_set will resolve to a single value.
+    bool is_singleton = false;
+    // Whether the returned value_set follows CQL comparison semantics
+    bool comparable = true;
+    bool is_multi_column = false;
+    bool is_not_null_single_column = false;
+    bool equality = false;        // operator is EQ
+    bool is_in = false;           // operator is IN
+    bool is_slice = false;        // operator is LT/LTE/GT/GTE
+    bool is_upper_bound = false;  // operator is LT/LTE
+    bool is_lower_bound = false;  // operator is GT/GTE
+    expr::comparison_order order = expr::comparison_order::cql;
+    std::optional<expr::oper_t> op;  // the binary operator, if any
+    bool is_subscript = false;       // whether the LHS is a subscript (map element access)
+};
+
 ///In some cases checking if columns have indexes is undesired of even
 ///impossible, because e.g. the query runs on a pseudo-table, which does not
 ///have an index-manager, or even a table object.
 using check_indexes = bool_class<class check_indexes_tag>;
 
+// A function that returns the partition key ranges for a query. It is the solver of
+// WHERE clause fragments such as WHERE token(pk) > 1 or WHERE pk1 IN :list1 AND pk2 IN :list2.
+using get_partition_key_ranges_fn_t = std::function<dht::partition_range_vector (const query_options&)>;
+
+// A function that returns the clustering key ranges for a query. It is the solver of
+// WHERE clause fragments such as WHERE ck > 1 or WHERE (ck1, ck2) > (1, 2).
+using get_clustering_bounds_fn_t = std::function<std::vector<query::clustering_range> (const query_options& options)>;
+
+// A function that returns a singleton value, usable for a key (e.g. bytes_opt)
+using get_singleton_value_fn_t = std::function<bytes_opt (const query_options&)>;
+
+struct no_partition_range_restrictions {
+};
+
+struct token_range_restrictions {
+    predicate token_restrictions;
+};
+
+struct single_column_partition_range_restrictions {
+    std::vector<predicate> per_column_restrictions;
+};
+
+using partition_range_restrictions = std::variant<
+        no_partition_range_restrictions,
+        token_range_restrictions,
+        single_column_partition_range_restrictions>;
+
+// A map of per-column predicate vectors, ordered by schema position.
+using single_column_predicate_vectors = std::map<const column_definition*, std::vector<predicate>, expr::schema_pos_column_definition_comparator>;
+
 /**
  * The restrictions corresponding to the relations specified on the where-clause of CQL query.
  */
 class statement_restrictions {
+    struct private_tag {}; // Tag for private constructor
 private:
     schema_ptr _schema;
 
@@ -81,7 +179,7 @@ private:
     bool _has_queriable_regular_index = false, _has_queriable_pk_index = false, _has_queriable_ck_index = false;
     bool _has_multi_column; ///< True iff _clustering_columns_restrictions has a multi-column restriction.
 
-    std::optional<expr::expression> _where; ///< The entire WHERE clause.
+    std::vector<expr::expression> _where; ///< The entire WHERE clause (factorized).
 
     /// Parts of _where defining the clustering slice.
     ///
@@ -96,7 +194,7 @@ private:
     ///   4.4 elements other than the last have only EQ or IN atoms
     ///   4.5 the last element has only EQ, IN, or is_slice() atoms
     /// 5. if multi-column, then each element is a binary_operator
-    std::vector<expr::expression> _clustering_prefix_restrictions;
+    std::vector<predicate> _clustering_prefix_restrictions;
 
     /// Like _clustering_prefix_restrictions, but for the indexing table (if this is an index-reading statement).
     /// Recall that the index-table CK is (token, PK, CK) of the base table for a global index and (indexed column,
@@ -105,7 +203,7 @@ private:
     /// Elements are conjunctions of single-column binary operators with the same LHS.
     /// Element order follows the indexing-table clustering key.
     /// In case of a global index the first element's (token restriction) RHS is a dummy value, it is filled later.
-    std::optional<std::vector<expr::expression>> _idx_tbl_ck_prefix;
+    std::optional<std::vector<predicate>> _idx_tbl_ck_prefix;
 
     /// Parts of _where defining the partition range.
     ///
@@ -113,16 +211,25 @@ private:
     /// binary_operators on token.  If single-column restrictions define the partition range, each element holds
     /// restrictions for one partition column.  Each partition column has a corresponding element, but the elements
     /// are in arbitrary order.
-    std::vector<expr::expression> _partition_range_restrictions;
+    partition_range_restrictions _partition_range_restrictions;
 
     bool _partition_range_is_simple; ///< False iff _partition_range_restrictions imply a Cartesian product.
 
 
     check_indexes _check_indexes = check_indexes::yes;
+    /// Columns that appear on the LHS of an EQ restriction (not IN).
+    /// For multi-column EQ like (ck1, ck2) = (1, 2), all columns in the tuple are included.
+    std::unordered_set<const column_definition*> _columns_with_eq;
     std::vector<const column_definition*> _column_defs_for_filtering;
     schema_ptr _view_schema;
     std::optional<secondary_index::index> _idx_opt;
     expr::expression _idx_restrictions = expr::conjunction({});
+    get_partition_key_ranges_fn_t _get_partition_key_ranges_fn;
+    get_clustering_bounds_fn_t _get_clustering_bounds_fn;
+    get_clustering_bounds_fn_t _get_global_index_clustering_ranges_fn;
+    get_clustering_bounds_fn_t _get_global_index_token_clustering_ranges_fn;
+    get_clustering_bounds_fn_t _get_local_index_clustering_ranges_fn;
+    get_singleton_value_fn_t _value_for_index_partition_key_fn;
 public:
     /**
      * Creates a new empty <code>StatementRestrictions</code>.
@@ -130,9 +237,10 @@ public:
      * @param cfm the column family meta data
      * @return a new empty <code>StatementRestrictions</code>.
      */
-    statement_restrictions(schema_ptr schema, bool allow_filtering);
+    statement_restrictions(private_tag, schema_ptr schema, bool allow_filtering);
 
-    friend statement_restrictions analyze_statement_restrictions(
+public:
+    friend shared_ptr<const statement_restrictions> analyze_statement_restrictions(
         data_dictionary::database db,
         schema_ptr schema,
         statements::statement_type type,
@@ -142,9 +250,15 @@ public:
         bool for_view,
         bool allow_filtering,
         check_indexes do_check_indexes);
+    friend shared_ptr<const statement_restrictions> make_trivial_statement_restrictions(
+        schema_ptr schema,
+        bool allow_filtering);
 
-private:
-    statement_restrictions(data_dictionary::database db,
+    // Important: objects of this class captures `this` extensively and so must remain non-copyable.
+    statement_restrictions(const statement_restrictions&) = delete;
+    statement_restrictions& operator=(const statement_restrictions&) = delete;
+    statement_restrictions(private_tag,
+        data_dictionary::database db,
         schema_ptr schema,
         statements::statement_type type,
         const expr::expression& where_clause,
@@ -211,10 +325,7 @@ public:
 
     bool has_token_restrictions() const;
 
-    // Checks whether the given column has an EQ restriction.
-    // EQ restriction is `col = ...` or `(col, col2) = ...`
-    // IN restriction is NOT an EQ restriction, this function will not look for IN restrictions.
-    // Uses column_defintion::operator== for comparison, columns with the same name but different schema will not be equal.
+    // Checks whether the given column has an EQ restriction (not IN).
     bool has_eq_restriction_on_column(const column_definition&) const;
 
     /**
@@ -223,12 +334,6 @@ public:
      * @return A list with the column definitions needed for filtering.
      */
     std::vector<const column_definition*> get_column_defs_for_filtering(data_dictionary::database db) const;
-
-    /**
-     * Gives a score that the index has - index with the highest score will be chosen
-     * in find_idx()
-     */
-    int score(const secondary_index::index& index) const;
 
     /**
      * Determines the index to be used with the restriction.
@@ -250,17 +355,7 @@ public:
 
     size_t partition_key_restrictions_size() const;
 
-    bool parition_key_restrictions_have_supporting_index(const secondary_index::secondary_index_manager& index_manager, expr::allow_local_index allow_local) const;
-
     size_t clustering_columns_restrictions_size() const;
-
-    bool clustering_columns_restrictions_have_supporting_index(
-        const secondary_index::secondary_index_manager& index_manager,
-        expr::allow_local_index allow_local) const;
-
-    bool multi_column_clustering_restrictions_are_supported_by(const secondary_index::index& index) const;
-
-    bounds_slice get_clustering_slice() const;
 
     /**
      * Checks if the clustering key has some unrestricted components.
@@ -279,15 +374,6 @@ public:
 
     schema_ptr get_view_schema() const { return _view_schema; }
 private:
-    std::pair<std::optional<secondary_index::index>, expr::expression> do_find_idx(const secondary_index::secondary_index_manager& sim) const;
-    void add_restriction(const expr::binary_operator& restr, schema_ptr schema, bool allow_filtering, bool for_view);
-    void add_is_not_restriction(const expr::binary_operator& restr, schema_ptr schema, bool for_view);
-    void add_single_column_parition_key_restriction(const expr::binary_operator& restr, schema_ptr schema, bool allow_filtering, bool for_view);
-    void add_token_partition_key_restriction(const expr::binary_operator& restr);
-    void add_single_column_clustering_key_restriction(const expr::binary_operator& restr, schema_ptr schema, bool allow_filtering);
-    void add_multi_column_clustering_key_restriction(const expr::binary_operator& restr);
-    void add_single_column_nonprimary_key_restriction(const expr::binary_operator& restr);
-
     void process_partition_key_restrictions(bool for_view, bool allow_filtering, statements::statement_type type);
 
     /**
@@ -315,7 +401,17 @@ private:
     void add_clustering_restrictions_to_idx_ck_prefix(const schema& idx_tbl_schema);
 
     unsigned int num_clustering_prefix_columns_that_need_not_be_filtered() const;
-    void calculate_column_defs_for_filtering_and_erase_restrictions_used_for_index(data_dictionary::database db);
+    void calculate_column_defs_for_filtering_and_erase_restrictions_used_for_index(
+            data_dictionary::database db,
+            const single_column_predicate_vectors& sc_pk_pred_vectors,
+            const single_column_predicate_vectors& sc_ck_pred_vectors,
+            const single_column_predicate_vectors& sc_nonpk_pred_vectors);
+    get_partition_key_ranges_fn_t build_partition_key_ranges_fn() const;
+    get_clustering_bounds_fn_t build_get_clustering_bounds_fn() const;
+    get_clustering_bounds_fn_t build_get_global_index_clustering_ranges_fn() const;
+    get_clustering_bounds_fn_t build_get_global_index_token_clustering_ranges_fn() const;
+    get_clustering_bounds_fn_t build_get_local_index_clustering_ranges_fn() const;
+    get_singleton_value_fn_t build_value_for_index_partition_key_fn() const;
 public:
     /**
      * Returns the specified range of the partition key.
@@ -389,7 +485,10 @@ public:
 private:
     /// Prepares internal data for evaluating index-table queries.  Must be called before
     /// get_local_index_clustering_ranges().
-    void prepare_indexed_local(const schema& idx_tbl_schema);
+    void prepare_indexed_local(const schema& idx_tbl_schema,
+            const single_column_predicate_vectors& sc_pk_pred_vectors,
+            const single_column_predicate_vectors& sc_ck_pred_vectors,
+            const single_column_predicate_vectors& sc_nonpk_pred_vectors);
 
     /// Prepares internal data for evaluating index-table queries.  Must be called before
     /// get_global_index_clustering_ranges() or get_global_index_token_clustering_ranges().
@@ -398,15 +497,18 @@ private:
 public:
     /// Calculates clustering ranges for querying a global-index table.
     std::vector<query::clustering_range> get_global_index_clustering_ranges(
-            const query_options& options, const schema& idx_tbl_schema) const;
+            const query_options& options) const;
 
     /// Calculates clustering ranges for querying a global-index table for queries with token restrictions present.
     std::vector<query::clustering_range> get_global_index_token_clustering_ranges(
-            const query_options& options, const schema& idx_tbl_schema) const;
+            const query_options& options) const;
 
     /// Calculates clustering ranges for querying a local-index table.
     std::vector<query::clustering_range> get_local_index_clustering_ranges(
-            const query_options& options, const schema& idx_tbl_schema) const;
+            const query_options& options) const;
+
+    /// Finds the value of partition key of the index table
+    bytes_opt value_for_index_partition_key(const query_options&) const;
 
     sstring to_string() const;
 
@@ -416,7 +518,7 @@ public:
     bool is_empty() const;
 };
 
-statement_restrictions analyze_statement_restrictions(
+shared_ptr<const statement_restrictions> analyze_statement_restrictions(
         data_dictionary::database db,
         schema_ptr schema,
         statements::statement_type type,
@@ -427,22 +529,13 @@ statement_restrictions analyze_statement_restrictions(
         bool allow_filtering,
         check_indexes do_check_indexes);
 
-
-// Extracts all binary operators which have the given column on their left hand side.
-// Extracts only single-column restrictions.
-// Does not include multi-column restrictions.
-// Does not include token() restrictions.
-// Does not include boolean constant restrictions.
-// For example "WHERE c = 1 AND (a, c) = (2, 1) AND token(p) < 2 AND FALSE" will return {"c = 1"}.
-std::vector<expr::expression> extract_single_column_restrictions_for_column(const expr::expression&, const column_definition&);
+shared_ptr<const statement_restrictions> make_trivial_statement_restrictions(
+        schema_ptr schema,
+        bool allow_filtering);
 
 
 // Checks whether this expression is empty - doesn't restrict anything
 bool is_empty_restriction(const expr::expression&);
-
-// Finds the value of the given column in the expression
-// In case of multpiple possible values calls on_internal_error
-bytes_opt value_for(const column_definition&, const expr::expression&, const query_options&);
 
 }
 
