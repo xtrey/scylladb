@@ -794,6 +794,10 @@ private:
 public:
     int32_t get_exception_count();
 
+    auto hold_async_gate() {
+        return _async_gate.hold();
+    }
+
     template <typename Func>
     auto run_with_api_lock(sstring operation, Func&& func) {
         return container().invoke_on(0, [operation = std::move(operation),
@@ -804,8 +808,9 @@ public:
 
     template <typename Func>
     auto run_with_no_api_lock(Func&& func) {
-        return container().invoke_on(0, [func = std::forward<Func>(func)] (storage_service& ss) mutable {
-            return func(ss);
+        return container().invoke_on(0, [func = std::forward<Func>(func)] (storage_service& ss) mutable
+                -> futurize_t<std::invoke_result_t<Func, storage_service&>> {
+            co_return co_await futurize_invoke(func, ss);
         });
     }
 
