@@ -757,6 +757,10 @@ private:
     // groups during tablet split with overlapping token range, and we need to include them all in a single
     // sstable set to allow safe tombstone gc.
     lw_shared_ptr<const sstables::sstable_set> sstable_set_for_tombstone_gc(const compaction_group&) const;
+    // Like sstable_set_for_tombstone_gc(), but restricted to repaired sstables only across all compaction
+    // groups of the same tablet (storage group).  Used by the tombstone_gc=repair optimization to avoid
+    // scanning unrepaired sstables when looking for GC-blocking shadows.
+    lw_shared_ptr<const sstables::sstable_set> make_repaired_sstable_set_for_tombstone_gc(const compaction_group&) const;
 
     bool cache_enabled() const {
         return _config.enable_cache && _schema->caching_options().enabled();

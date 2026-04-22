@@ -5,12 +5,13 @@
 #
 
 from test.pylib.manager_client import ManagerClient
-from test.pylib.repair import load_tablet_sstables_repaired_at, create_table_insert_data_for_repair
+from test.pylib.repair import load_tablet_sstables_repaired_at, load_tablet_repair_time, create_table_insert_data_for_repair
 from test.pylib.tablets import get_all_tablet_replicas
 from test.cluster.tasks.task_manager_client import TaskManagerClient
 from test.cluster.util import reconnect_driver, find_server_by_host_id, get_topology_coordinator, new_test_keyspace, new_test_table, trigger_stepdown
+from test.pylib.util import wait_for_cql_and_get_hosts
 
-from cassandra.query import ConsistencyLevel
+from cassandra.query import ConsistencyLevel, SimpleStatement
 
 import pytest
 import asyncio
@@ -1050,3 +1051,539 @@ async def test_incremental_repair_race_window_promotes_unrepaired_data(manager: 
         f"on servers[1] after restart lost the being_repaired markers during the race window. " \
         f"They are UNREPAIRED on servers[0] and servers[2] (classification divergence). " \
         f"Wrongly promoted (first 10): {sorted(wrongly_promoted)[:10]}"
+
+# ----------------------------------------------------------------------------
+# Tombstone GC safety tests
+#
+# These tests verify that incremental repair with tombstone_gc=repair never
+# causes data resurrection via premature tombstone GC.  The key invariant is:
+#
+#   mark_sstable_as_repaired() completes on ALL replicas BEFORE the coordinator
+#   commits repair_time to Raft.  Therefore, by the time gc_before advances and
+#   a tombstone T becomes GC-eligible, any data D that T shadows has already
+#   been promoted from the repairing set to the repaired set.  Tombstone GC
+#   running on the repaired set will always see D there and will prevent T from
+#   being purged prematurely.
+#
+# Three scenarios are tested:
+#
+# 1. Basic ordering guarantee: D arrives via hint flush at the start of repair,
+#    is captured in the repairing snapshot, and is promoted to repaired before
+#    repair_time advances.  GC then runs on the repaired set; T must not be
+#    purged while D is still present.
+#
+# 2. Hints flush failure: hints flush times out on one replica so D is not
+#    delivered during that repair.  repair_time must NOT advance (the guard in
+#    repair that skips the repair_history update when hints_batchlog_flushed is
+#    false).  Therefore T does not become GC-eligible from this repair, and no
+#    resurrection can occur even though D is not yet on that replica.
+#
+# 3. Propagation delay: D is written with an old USING TIMESTAMP (simulating a
+#    write that arrives within the propagation delay window).  T is written
+#    later with a higher timestamp.  Repair runs, D is captured in repairing
+#    (delivered via hint flush), T is in repaired.  After repair completes D is
+#    in repaired too.  GC on the repaired set must not purge T because D has a
+#    lower timestamp but is visible.
+# ----------------------------------------------------------------------------
+
+async def _setup_tombstone_gc_cluster(manager, *, tablets=2, extra_cmdline=None):
+    """Create a 3-node cluster with a tombstone_gc=repair table and return
+    (servers, cql, hosts, ks, table_id, logs).
+
+    Uses propagation_delay_in_seconds=0 so that tombstones become GC-eligible
+    immediately after repair_time is committed (T.deletion_time < repair_time = gc_before),
+    allowing the tests to actually exercise the GC eligibility path without sleeping.
+    """
+    cmdline = ['--logger-log-level', 'repair=debug']
+    if extra_cmdline:
+        cmdline += extra_cmdline
+    servers, cql, hosts, ks, table_id = await create_table_insert_data_for_repair(
+        manager, nr_keys=0, cmdline=cmdline, tablets=tablets,
+        disable_flush_cache_time=True)
+    # Lower propagation_delay to 0 so gc_before = repair_time, making tombstones
+    # GC-eligible immediately after a successful repair rather than 1h later.
+    await cql.run_async(
+        f"ALTER TABLE {ks}.test WITH tombstone_gc = {{'mode': 'repair', 'propagation_delay_in_seconds': '0'}}"
+    )
+    logs = [await manager.server_open_log(s.server_id) for s in servers]
+    return servers, cql, hosts, ks, table_id, logs
+
+
+async def _trigger_repaired_compaction(manager, server, ks):
+    """Force a compaction that operates on the repaired sstable set."""
+    await manager.api.keyspace_compaction(server.ip_addr, ks, "test")
+
+
+async def _assert_key_visible(cql, ks, key, hosts, *, msg=""):
+    """Assert that key is readable on every replica (by querying each host directly)."""
+    for h in hosts:
+        rows = await cql.run_async(
+            f"SELECT pk FROM {ks}.test WHERE pk = {key}",
+            host=h)
+        assert rows, f"Key {key} not found on host {h} after tombstone GC compaction. {msg}"
+
+
+async def _assert_key_deleted(cql, ks, key, hosts, *, msg=""):
+    """Assert that key is not visible (tombstone wins) on every replica."""
+    for h in hosts:
+        rows = await cql.run_async(
+            f"SELECT pk FROM {ks}.test WHERE pk = {key}",
+            host=h)
+        assert not rows, f"Key {key} unexpectedly visible on host {h} — data resurrection! {msg}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_tombstone_gc_no_resurrection_basic_ordering(manager: ManagerClient):
+    """Verify that the ordering guarantee prevents premature tombstone GC.
+
+    With propagation_delay=0, gc_before = repair_time.  T.deletion_time (wall-clock
+    time of DELETE, just before repair starts) < repair_time = gc_before, so T IS
+    GC-eligible after repair.  D (CQL timestamp=1) is in the repaired set because it
+    was captured in the repairing snapshot and promoted before repair_time was committed.
+    Compaction on the repaired set must NOT purge T because D (min_live_timestamp=1)
+    makes T non-purgeable (T.timestamp=2 > max_purgeable=1).
+
+    Scenario:
+      - D written at ts=1 to all replicas, flushed.
+      - T (row deletion, ts=2) written to all replicas, flushed.
+      - Repair runs: both D and T move repairing → repaired.  repair_time advances.
+      - gc_before = repair_time > T.deletion_time  →  T is GC-eligible.
+      - Repaired compaction must NOT purge T because D (in repaired) prevents it.
+      - Key must remain deleted.
+    """
+    servers, cql, hosts, ks, table_id, logs = await _setup_tombstone_gc_cluster(manager)
+
+    # D at ts=1, T at ts=2 (T wins over D, correctly deletes the row).
+    key = 42
+    await cql.run_async(f"INSERT INTO {ks}.test (pk, c) VALUES ({key}, 1) USING TIMESTAMP 1")
+    for s in servers:
+        await manager.api.flush_keyspace(s.ip_addr, ks)
+
+    await cql.run_async(f"DELETE FROM {ks}.test USING TIMESTAMP 2 WHERE pk = {key}")
+    for s in servers:
+        await manager.api.flush_keyspace(s.ip_addr, ks)
+
+    # Both D and T captured in repairing, then promoted to repaired.  repair_time advances.
+    await manager.api.tablet_repair(servers[0].ip_addr, ks, "test", "all", incremental_mode='incremental')
+
+    # With propagation_delay=0: gc_before = repair_time > T.deletion_time → T is GC-eligible.
+    # Compaction on the repaired set: D is also in repaired (promoted before repair_time
+    # was committed), so max_purgeable = D.timestamp = 1 < T.timestamp = 2 → T not purgeable.
+    for s in servers:
+        await _trigger_repaired_compaction(manager, s, ks)
+
+    # T must not have been GC'd; key must remain deleted (not resurrected).
+    await _assert_key_deleted(cql, ks, key, hosts,
+                              msg="T was prematurely GC'd on repaired compaction (D in repaired should prevent it)")
+
+    logger.info("test_tombstone_gc_no_resurrection_basic_ordering: PASSED")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_tombstone_gc_no_resurrection_hints_flush_failure(manager: ManagerClient):
+    """Verify that repair_time stays at epoch when hints flush fails, so tombstones
+    are never GC-eligible after such a repair and data resurrection cannot occur.
+
+    With propagation_delay=0, gc_before = repair_time.  When hints flush fails,
+    repair_time is set to epoch (gc_clock::time_point{}) by the repair framework
+    (flush_time stays at epoch because hints_batchlog_flushed=False).  Therefore
+    gc_before = epoch, T.deletion_time ≈ now >> epoch, T is never GC-eligible, and
+    compaction cannot purge T regardless of what is in the repaired set.
+
+    Scenario:
+      - D and T written to all replicas and flushed.
+      - Repair runs with injection that makes hints flush fail on servers[2].
+      - repair_time must stay at epoch (guard: hints_batchlog_flushed=False).
+      - Compaction on the repaired set: T not GC-eligible → key stays deleted.
+    """
+    servers, cql, hosts, ks, table_id, logs = await _setup_tombstone_gc_cluster(manager)
+
+    key = 99
+
+    # Write D at ts=1 and T at ts=2 to all nodes so everyone has the tombstone.
+    await cql.run_async(f"INSERT INTO {ks}.test (pk, c) VALUES ({key}, 1) USING TIMESTAMP 1")
+    await cql.run_async(f"DELETE FROM {ks}.test USING TIMESTAMP 2 WHERE pk = {key}")
+    for s in servers:
+        await manager.api.flush_keyspace(s.ip_addr, ks)
+
+    # Read the initial repair_time so we can verify it doesn't meaningfully advance.
+    initial_repair_times = await load_tablet_repair_time(cql, hosts, table_id)
+
+    # Inject: make batchlog manager appear uninitialized on servers[2] so hints flush fails.
+    await manager.api.enable_injection(servers[2].ip_addr, "repair_flush_hints_batchlog_handler_bm_uninitialized", one_shot=False)
+
+    try:
+        # Repair warns about hints flush failure but continues (repair.cc outer catch).
+        # flush_time stays at epoch so repair_time will be set to epoch in system.tablets.
+        # Use a short timeout: the call may never return because the topology coordinator
+        # keeps re-scheduling repairs when repair_time stays at epoch.
+        await manager.api.tablet_repair(servers[0].ip_addr, ks, "test", "all", incremental_mode='incremental', timeout=30)
+    except Exception:
+        pass  # repair may report failure or time out; we care about side-effects only
+    finally:
+        await manager.api.disable_injection(servers[2].ip_addr, "repair_flush_hints_batchlog_handler_bm_uninitialized")
+
+    # repair_time must NOT have advanced to a meaningful time (it stays at epoch when
+    # hints flush fails, so gc_before = epoch and T is never GC-eligible).
+    new_repair_times = await load_tablet_repair_time(cql, hosts, table_id)
+    for token, old_time in initial_repair_times.items():
+        new_time = new_repair_times.get(token)
+        assert new_time == old_time or new_time is None, \
+            f"repair_time advanced for token {token} despite hints flush failure: " \
+            f"{old_time} → {new_time}"
+
+    # Trigger compaction on the repaired set; T is not GC-eligible (gc_before = epoch).
+    for s in servers:
+        await _trigger_repaired_compaction(manager, s, ks)
+
+    # Key must remain deleted (T not GC'd).
+    await _assert_key_deleted(cql, ks, key, hosts,
+                              msg="T was prematurely GC'd despite hints flush failure (repair_time should be epoch)")
+
+    logger.info("test_tombstone_gc_no_resurrection_hints_flush_failure: PASSED")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_tombstone_gc_no_resurrection_propagation_delay(manager: ManagerClient):
+    """Verify the ordering guarantee when D arrives via hint flush just before repair.
+
+    D has an old CQL timestamp (ts_d = now - 2h) simulating a write that was delayed
+    by the propagation window.  T has a higher CQL timestamp (ts_t = now - 90min) so T
+    correctly shadows D.  With propagation_delay=0, T becomes GC-eligible as soon as
+    repair_time is committed (T.deletion_time < repair_time = gc_before).
+
+    The invariant being tested: mark_sstable_as_repaired() runs on all replicas BEFORE
+    the coordinator commits repair_time to Raft.  So when gc_before advances (repair_time
+    committed), D is already in the repaired set on all replicas.  Repaired compaction
+    must NOT purge T because D (min_live_timestamp = ts_d < ts_t) is present there.
+
+    Scenario:
+      - servers[2] stopped; D and T written (go to hints on coordinator for servers[2]).
+      - D and T flushed on servers[0] and servers[1].
+      - servers[2] restarted.
+      - Repair: hints flush delivers D and T to servers[2] before the repairing snapshot.
+        mark_sstable_as_repaired() promotes D and T to repaired on servers[2].
+        repair_time then committed.  gc_before = repair_time > T.deletion_time.
+      - Repaired compaction: D (ts_d) in repaired prevents T (ts_t > ts_d) from being GC'd.
+      - Key must remain deleted.
+    """
+    servers, cql, hosts, ks, table_id, logs = await _setup_tombstone_gc_cluster(
+        manager, extra_cmdline=['--hinted-handoff-enabled', '1'])
+
+    # Stop servers[2] so writes to it are queued as hints on the coordinator.
+    await manager.server_stop_gracefully(servers[2].server_id)
+
+    key = 77
+    # CQL USING TIMESTAMP is in microseconds since epoch.
+    now_us = int(time.time() * 1e6)
+    ts_d = now_us - int(2 * 3600 * 1e6)    # 2 hours ago (CQL µs timestamp)
+    ts_t = now_us - int(90 * 60 * 1e6)      # 90 minutes ago (CQL µs timestamp); ts_t > ts_d
+
+    # D and T go to servers[0] and servers[1] directly; servers[2] gets hints queued.
+    await cql.run_async(f"INSERT INTO {ks}.test (pk, c) VALUES ({key}, 1) USING TIMESTAMP {ts_d}")
+    await cql.run_async(f"DELETE FROM {ks}.test USING TIMESTAMP {ts_t} WHERE pk = {key}")
+
+    for s in [servers[0], servers[1]]:
+        await manager.api.flush_keyspace(s.ip_addr, ks)
+
+    # Restart servers[2]; D and T are not on its disk yet.
+    await manager.server_start(servers[2].server_id)
+    await manager.servers_see_each_other(servers)
+    await reconnect_driver(manager)
+    cql = manager.get_cql()
+    hosts = await wait_for_cql_and_get_hosts(cql, servers, time.time() + 60)
+
+    # Repair: hints flush sends D and T to servers[2] before the repairing snapshot.
+    # After row sync, mark_sstable_as_repaired() promotes D and T to repaired on servers[2].
+    # Only then does the coordinator commit repair_time to Raft.
+    await manager.api.tablet_repair(servers[0].ip_addr, ks, "test", "all", incremental_mode='incremental')
+
+    # With propagation_delay=0: gc_before = repair_time > T.deletion_time → T is GC-eligible.
+    # But D (ts_d < ts_t) is already in repaired on servers[2], so max_purgeable = ts_d
+    # < ts_t = T.timestamp → T is NOT purgeable.
+    for s in servers:
+        await _trigger_repaired_compaction(manager, s, ks)
+
+    # Key must remain deleted (T not GC'd, D not resurrected).
+    await _assert_key_deleted(cql, ks, key, hosts,
+                              msg="Data resurrection: T was GC'd despite D being present in repaired set")
+
+    logger.info("test_tombstone_gc_no_resurrection_propagation_delay: PASSED")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_tombstone_gc_mv_optimization_safe_via_hints(manager: ManagerClient):
+    """Verify the repaired-only tombstone GC optimization is safe for non-co-located MVs
+    when view hints deliver the shadowing row before the MV repair snapshot.
+
+    The optimization (sstable_set_for_tombstone_gc returns only repaired sstables) is
+    extended to materialized view tables.  For this to be safe, any D_view that could
+    shadow a GC-eligible T_mv in the repaired set must itself be in the repaired set by
+    the time repaired compaction runs.
+
+    The repair invariant that makes this safe: flush_hints() is called before
+    take_storage_snapshot() during tablet repair.  flush_hints() creates a sync point
+    covering BOTH _hints_manager (base mutations) AND _hints_for_views_manager (view
+    mutations).  It waits until ALL pending hints — including D_view entries stored in
+    hints_for_views_manager while the target node was down — have been replayed to the
+    target node before the repairing snapshot is taken.  D_view therefore lands in the
+    MV's repairing sstable and is promoted to repaired.  When a repaired compaction then
+    checks for shadows it finds D_view in the repaired set, keeping T_mv non-purgeable.
+
+    Scenario:
+      1. 3-node cluster, base table + MV with tombstone_gc=repair, propagation_delay=0,
+         SYNCHRONOUS_UPDATES=TRUE, 1 tablet (ensures single tablet for predictable placement).
+      2. Stop servers[2]; D_base(ts_d) and T_base(ts_t) written to servers[0] and servers[1].
+         View update dispatch: D_view(ts_d) and T_mv(ts_t) hints queued in
+         hints_for_views_manager for servers[2].
+      3. Flush servers[0] and servers[1] so the data is in sstables.
+      4. Start servers[2] (view hints still pending).
+      5. Run MV tablet repair: flush_hints() replays D_view + T_mv to servers[2] before
+         take_storage_snapshot(); both are captured in the repairing sstable and promoted
+         to repaired.  repair_time committed; gc_before = repair_time > T_mv.deletion_time.
+      6. Trigger repaired compaction on servers[2]'s MV.  With the optimization applied:
+         only repaired sstables are scanned for shadows; D_view (ts_d) is found there →
+         max_purgeable < ts_t → T_mv is NOT purged.
+      7. Assert: the MV row is NOT visible on servers[2] — T_mv preserved, no resurrection.
+    """
+    servers, cql, hosts, ks, table_id, logs = await _setup_tombstone_gc_cluster(
+        manager, tablets=1, extra_cmdline=['--hinted-handoff-enabled', '1'])
+
+    mv_name = "mv_test"
+    await cql.run_async(
+        f"CREATE MATERIALIZED VIEW {ks}.{mv_name} AS "
+        f"SELECT * FROM {ks}.test WHERE pk IS NOT NULL AND c IS NOT NULL "
+        f"PRIMARY KEY (c, pk) "
+        f"WITH SYNCHRONOUS_UPDATES = TRUE "
+        f"AND tombstone_gc = {{'mode': 'repair', 'propagation_delay_in_seconds': '0'}}"
+    )
+
+    # Stop servers[2] so it misses the base writes; view hints will be queued for it.
+    await manager.server_stop_gracefully(servers[2].server_id)
+
+    key = 99
+    c_val = 7
+    now_us = int(time.time() * 1e6)
+    ts_d = now_us - int(2 * 3600 * 1e6)   # 2 hours ago
+    ts_t = now_us - int(1 * 3600 * 1e6)   # 1 hour ago (ts_t > ts_d so T_mv shadows D_view)
+
+    # D_base and T_base go to servers[0] and servers[1] only.  servers[2] is down:
+    # S0/S1 dispatch D_view and T_mv to MV replicas; for servers[2] these are stored as
+    # view hints in hints_for_views_manager.
+    await cql.run_async(
+        f"INSERT INTO {ks}.test (pk, c) VALUES ({key}, {c_val}) USING TIMESTAMP {ts_d}"
+    )
+    await cql.run_async(
+        f"DELETE FROM {ks}.test USING TIMESTAMP {ts_t} WHERE pk = {key}"
+    )
+
+    for s in [servers[0], servers[1]]:
+        await manager.api.flush_keyspace(s.ip_addr, ks)
+
+    # Restart servers[2]; view hints (D_view + T_mv) are still pending.
+    await manager.server_start(servers[2].server_id)
+    await manager.servers_see_each_other(servers)
+    await reconnect_driver(manager)
+    cql = manager.get_cql()
+    hosts = await wait_for_cql_and_get_hosts(cql, servers, time.time() + 60)
+
+    # MV tablet repair:
+    #   flush_hints() → hints_for_views_manager replays D_view + T_mv to servers[2] before snapshot
+    #   take_storage_snapshot() flushes MV memtable → D_view + T_mv in repairing sstable
+    #   mark_sstable_as_repaired() → D_view + T_mv promoted to repaired
+    #   repair_time committed → gc_before = repair_time > T_mv.deletion_time → T_mv GC-eligible
+    await manager.api.tablet_repair(servers[0].ip_addr, ks, mv_name, "all", incremental_mode='incremental')
+
+    # Repaired compaction on servers[2] MV with the optimization applied to MV:
+    # repaired set scanned → D_view(ts_d) found → max_purgeable = ts_d < ts_t → T_mv non-purgeable.
+    await manager.api.keyspace_compaction(servers[2].ip_addr, ks, mv_name)
+
+    # Query servers[2] directly (CL=ONE).  If T_mv was incorrectly GC'd, D_view would
+    # resurface and the row would be visible — that would be data resurrection.
+    stmt = SimpleStatement(
+        f"SELECT pk FROM {ks}.{mv_name} WHERE c = {c_val} AND pk = {key}",
+        consistency_level=ConsistencyLevel.ONE,
+    )
+    rows = await cql.run_async(stmt, host=hosts[2])
+    assert not rows, (
+        f"Data resurrection on servers[2] MV: (c={c_val}, pk={key}) visible after repaired "
+        f"compaction — T_mv was incorrectly GC'd, meaning D_view was NOT in the repaired set "
+        f"despite the hints-before-snapshot invariant. Optimization is broken for MV."
+    )
+
+    logger.info("test_tombstone_gc_mv_optimization_safe_via_hints: PASSED")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
+async def test_tombstone_gc_mv_safe_staging_processor_delay(manager: ManagerClient):
+    """Verify no resurrection when the view-update-generator staging processor is delayed
+    past the point where T_mv has been GC'd from the repaired set.
+
+    This test exercises the "staging delay" edge case in the tombstone GC optimization safety
+    analysis for materialized views.  The optimization (sstable_set_for_tombstone_gc returns
+    only repaired sstables) could in principle allow T_mv to be purged from the repaired set
+    BEFORE the staging processor has dispatched D_view to MV-on-servers[0].  The test verifies
+    that staging correctly generates a no-op in this situation — no D_view is dispatched — so
+    no resurrection occurs.
+
+    The safety mechanism that prevents resurrection here is the read-before-write performed by
+    stream_view_replica_updates (via as_mutation_source_excluding_staging()):
+      When the staging processor fires, it reads the CURRENT base-table state including T_base
+      (which was written to servers[0] AFTER base repair returned).  The view_update_builder
+      sees T_base as the existing partition tombstone, marks D_base as dead (ts_d < ts_t), and
+      generates NO view update.  D_view is therefore never dispatched to MV-on-servers[0].
+    Because D_view never reaches MV-on-servers[0], no resurrection can occur even if T_mv was
+    already GC'd from the repaired set when staging fires.
+
+    Scenario:
+      1. 3-node cluster, base table + MV, tombstone_gc=repair, propagation_delay=0,
+         SYNCHRONOUS_UPDATES=FALSE, hinted-handoff DISABLED (so no view hints are stored
+         for the offline node).
+      2. Stop servers[0].  D_base(ts_d) written to servers[1] only.
+         servers[1] dispatches D_view to MV replicas on servers[1] and servers[2].
+         MV-on-servers[0] receives nothing.
+      3. Flush servers[1] and servers[2].  Restart servers[0].
+      4. Enable view_update_generator_pause_before_processing injection on servers[0].
+      5. Run BASE table repair.  Row-sync detects servers[0] missing D_base and writes
+         it via the staging path (repair_writer → staging SSTable → view_update_generator).
+         The view_update_generator on servers[0] blocks BEFORE dispatching any view update.
+         Base repair returns without waiting for the staging processor.
+      6. T_base(ts_t > ts_d) written to all three nodes NOW (after base repair).
+         servers[0] dispatches T_mv directly to MV-on-servers[0]; all MV replicas get T_mv.
+      7. Flush all servers.
+      8. Run MV table repair.
+         flush_hints(): no view hints (hinted-handoff disabled) → no-op.
+         take_storage_snapshot(): MV-on-servers[0] has T_mv only; MV-on-servers[1/2] have
+         D_view + T_mv; the maybe_compact_for_streaming reader drops D_view (shadowed by T_mv)
+         → hashes equal → no row-sync needed.
+         repair_time committed; gc_before = repair_time > T_mv.deletion_time → T_mv GC-eligible.
+      9. Trigger repaired compaction on servers[0] MV.
+         Optimization: only repaired sstables scanned → no D_view → T_mv is GC-eligible → T_mv PURGED.
+     10. Assert: key NOT visible on servers[0] MV (T_mv purged, staging still blocked).
+     11. Release staging injection.  process_staging_sstables calls
+         stream_view_replica_updates with as_mutation_source_excluding_staging() to read the
+         base table.  T_base(ts_t) is present → D_base row marker (ts_d) expired by T_base →
+         view update is a no-op → D_view NOT dispatched.
+     12. Wait for "Processed ks.test" log line confirming staging completed.
+     13. Flush + compact MV on servers[0].  No D_view was written → nothing resurrects.
+     14. Assert: key still NOT visible on servers[0] MV.
+
+    The test demonstrates that the tombstone GC optimization is safe even when the staging
+    processor fires after T_mv has already been purged.
+    """
+    servers, cql, hosts, ks, table_id, logs = await _setup_tombstone_gc_cluster(
+        manager, tablets=1,
+        extra_cmdline=['--hinted-handoff-enabled', '0'])
+
+    mv_name = "mv_test"
+    await cql.run_async(
+        f"CREATE MATERIALIZED VIEW {ks}.{mv_name} AS "
+        f"SELECT * FROM {ks}.test WHERE pk IS NOT NULL AND c IS NOT NULL "
+        f"PRIMARY KEY (c, pk) "
+        f"WITH SYNCHRONOUS_UPDATES = FALSE "
+        f"AND tombstone_gc = {{'mode': 'repair', 'propagation_delay_in_seconds': '0'}}"
+    )
+
+    # Stop servers[0]; it will miss D_base and D_view (no hints, hinted-handoff disabled).
+    await manager.server_stop_gracefully(servers[0].server_id)
+
+    key = 77
+    c_val = 5
+    now_us = int(time.time() * 1e6)
+    ts_d = now_us - int(2 * 3600 * 1e6)   # 2 hours ago
+    ts_t = now_us - int(1 * 3600 * 1e6)   # 1 hour ago (ts_t > ts_d so T_mv shadows D_view)
+
+    # D_base written to servers[1] only (servers[0] is down, servers[2] will also
+    # receive a replica copy because tablet RF=3).  servers[1] dispatches D_view to
+    # MV replicas.  MV-on-servers[0] gets nothing.
+    await cql.run_async(
+        f"INSERT INTO {ks}.test (pk, c) VALUES ({key}, {c_val}) USING TIMESTAMP {ts_d}",
+        host=hosts[1])
+
+    for s in [servers[1], servers[2]]:
+        await manager.api.flush_keyspace(s.ip_addr, ks)
+
+    # Restart servers[0]; still no D_base on base or D_view on MV for servers[0].
+    await manager.server_start(servers[0].server_id)
+    await manager.servers_see_each_other(servers)
+    await reconnect_driver(manager)
+    cql = manager.get_cql()
+    hosts = await wait_for_cql_and_get_hosts(cql, servers, time.time() + 60)
+
+    # Block the staging processor on servers[0] BEFORE running base repair, so that
+    # the staged D_base (written by row-sync during base repair) never gets dispatched
+    # to MV-on-servers[0] until we explicitly release the injection.
+    await manager.api.enable_injection(
+        servers[0].ip_addr, "view_update_generator_pause_before_processing", one_shot=True)
+
+    # Base repair: row-sync detects servers[0] missing D_base → writes D_base to servers[0]
+    # via the staging path → staging sstable registered → view_update_generator BLOCKED.
+    # Base repair returns without waiting for staging to complete.
+    # NOTE: T_base has NOT been written yet, so D_base is not shadowed during repair
+    # hash computation; the hashes are unequal and row-sync fires as expected.
+    await manager.api.tablet_repair(servers[0].ip_addr, ks, "test", "all",
+                                    incremental_mode='incremental')
+
+    # T_base(ts_t) written to all nodes NOW — after base repair so staging is already blocked.
+    # servers[0] dispatches T_mv to MV-on-servers[0]; all MV replicas now have T_mv.
+    # D_view remains absent from MV-on-servers[0] (staging still blocked).
+    await cql.run_async(
+        f"DELETE FROM {ks}.test USING TIMESTAMP {ts_t} WHERE pk = {key}")
+
+    for s in servers:
+        await manager.api.flush_keyspace(s.ip_addr, ks)
+
+    # MV repair:
+    #   flush_hints() → no view hints (hinted-handoff disabled) → no-op.
+    #   take_storage_snapshot(): servers[0] MV has T_mv only; servers[1,2] MV have
+    #   D_view(ts_d) + T_mv(ts_t); the streaming compacting reader drops D_view (shadowed
+    #   by T_mv) → hashes equal → no row-sync → repair_time committed.
+    #   T_mv.deletion_time ≈ write time (step above); repair_time > deletion_time → GC-eligible.
+    await manager.api.tablet_repair(servers[0].ip_addr, ks, mv_name, "all",
+                                    incremental_mode='incremental')
+
+    # Repaired compaction on servers[0] MV with staging still blocked:
+    #   sstable_set_for_tombstone_gc = only repaired sstables = {T_mv sstable}.
+    #   No D_view in repaired → T_mv is GC-eligible → T_mv PURGED.
+    await manager.api.keyspace_compaction(servers[0].ip_addr, ks, mv_name)
+
+    # T_mv has been purged; staging still blocked.  No resurrection yet.
+    stmt = SimpleStatement(
+        f"SELECT pk FROM {ks}.{mv_name} WHERE c = {c_val} AND pk = {key}",
+        consistency_level=ConsistencyLevel.ONE)
+    rows = await cql.run_async(stmt, host=hosts[0])
+    assert not rows, (
+        f"Unexpected resurrection on servers[0] MV after first compaction "
+        f"(c={c_val}, pk={key}) visible — T_mv was not GC'd or D_view was incorrectly present.")
+
+    # Release the staging processor.
+    # stream_view_replica_updates is called with as_mutation_source_excluding_staging() to
+    # read the current base table state.  T_base(ts_t) is present on servers[0] base table
+    # (written in step 6 above).  The view_update_builder sets _existing_partition_tombstone
+    # = T_base, applies it onto the D_base row (ts_d < ts_t → row marker expired), and
+    # generates a no-op view update.  D_view is NOT dispatched to MV-on-servers[0].
+    await manager.api.message_injection(
+        servers[0].ip_addr, "view_update_generator_pause_before_processing")
+
+    # Wait for staging processing to complete: view_update_generator logs
+    # "Processed ks.base_cf: N sstables" after generate_updates_from_staging_sstables returns.
+    # The staging sstable is registered for the BASE TABLE (test), not the MV.
+    await logs[0].wait_for(f"Processed {ks}.test")
+
+    # Flush and compact again.  No D_view was dispatched by staging → nothing new in MV.
+    for s in servers:
+        await manager.api.flush_keyspace(s.ip_addr, ks)
+    await manager.api.keyspace_compaction(servers[0].ip_addr, ks, mv_name)
+
+    rows = await cql.run_async(stmt, host=hosts[0])
+    assert not rows, (
+        f"Resurrection after staging on servers[0] MV: (c={c_val}, pk={key}) visible. "
+        f"The staging processor dispatched D_view despite T_base being present in the "
+        f"base table — the read-before-write safety mechanism failed.")
+
+    logger.info("test_tombstone_gc_mv_safe_staging_processor_delay: PASSED")
