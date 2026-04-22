@@ -2848,12 +2848,8 @@ future<> storage_service::raft_removenode(locator::host_id host_id, locator::hos
 }
 
 future<> storage_service::mark_excluded(const std::vector<locator::host_id>& hosts) {
-    if (this_shard_id() != 0) {
-        // group0 is only set on shard 0.
-        co_return co_await container().invoke_on(0, [&] (auto& ss) {
-            return ss.mark_excluded(hosts);
-        });
-    }
+    // Callers forward to shard 0 via run_with_no_api_lock (group0 is only set on shard 0).
+    SCYLLA_ASSERT(this_shard_id() == 0);
 
     while (true) {
         auto guard = co_await _group0->client().start_operation(_group0_as, raft_timeout{});
@@ -3961,11 +3957,8 @@ future<> storage_service::update_tablet_metadata(const locator::tablet_metadata_
 }
 
 future<> storage_service::prepare_for_tablets_migration(const sstring& ks_name) {
-    if (this_shard_id() != 0) {
-        co_return co_await container().invoke_on(0, [&] (auto& ss) {
-            return ss.prepare_for_tablets_migration(ks_name);
-        });
-    }
+    // Called via run_with_no_api_lock (forwards to shard 0).
+    SCYLLA_ASSERT(this_shard_id() == 0);
 
     while (true) {
         auto guard = co_await _group0->client().start_operation(_group0_as);
@@ -4105,11 +4098,8 @@ future<> storage_service::prepare_for_tablets_migration(const sstring& ks_name) 
 }
 
 future<> storage_service::set_node_intended_storage_mode(intended_storage_mode mode) {
-    if (this_shard_id() != 0) {
-        co_return co_await container().invoke_on(0, [mode] (auto& ss) {
-            return ss.set_node_intended_storage_mode(mode);
-        });
-    }
+    // Called via run_with_no_api_lock (forwards to shard 0).
+    SCYLLA_ASSERT(this_shard_id() == 0);
 
     auto& raft_server = _group0->group0_server();
     auto holder = _group0->hold_group0_gate();
@@ -4205,11 +4195,8 @@ storage_service::migration_status storage_service::get_tablets_migration_status(
 }
 
 future<storage_service::keyspace_migration_status> storage_service::get_tablets_migration_status_with_node_details(const sstring& ks_name) {
-    if (this_shard_id() != 0) {
-        co_return co_await container().invoke_on(0, [&ks_name] (auto& ss) {
-            return ss.get_tablets_migration_status_with_node_details(ks_name);
-        });
-    }
+    // Called via run_with_no_api_lock (forwards to shard 0).
+    SCYLLA_ASSERT(this_shard_id() == 0);
 
     keyspace_migration_status result;
     result.keyspace = ks_name;
@@ -4270,11 +4257,8 @@ future<storage_service::keyspace_migration_status> storage_service::get_tablets_
 }
 
 future<> storage_service::finalize_tablets_migration(const sstring& ks_name) {
-    if (this_shard_id() != 0) {
-        co_return co_await container().invoke_on(0, [&ks_name] (auto& ss) {
-            return ss.finalize_tablets_migration(ks_name);
-        });
-    }
+    // Called via run_with_no_api_lock (forwards to shard 0).
+    SCYLLA_ASSERT(this_shard_id() == 0);
 
     slogger.info("Finalizing vnodes-to-tablets migration for keyspace '{}'", ks_name);
 
