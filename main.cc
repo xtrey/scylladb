@@ -2352,15 +2352,6 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             }).get();
             stop_signal.ready(false);
 
-            if (cfg->maintenance_socket() != "ignore") {
-                // Enable role operations now that node joined the cluster
-                maintenance_auth_service.invoke_on_all([](auth::service& svc) {
-                    return auth::ensure_role_operations_are_enabled(svc);
-                }).get();
-
-                start_cql(*cql_maintenance_server_ctl, stop_maintenance_cql, "maintenance native server");
-            }
-
             // At this point, `locator::topology` should be stable, i.e. we should have complete information
             // about the layout of the cluster (= list of nodes along with the racks/DCs).
             startlog.info("Verifying that all of the keyspaces are RF-rack-valid");
@@ -2378,6 +2369,15 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             auto audit_storage_stop = defer([] {
                 audit::audit::stop_storage().get();
             });
+
+            if (cfg->maintenance_socket() != "ignore") {
+                // Enable role operations now that node joined the cluster
+                maintenance_auth_service.invoke_on_all([](auth::service& svc) {
+                    return auth::ensure_role_operations_are_enabled(svc);
+                }).get();
+
+                start_cql(*cql_maintenance_server_ctl, stop_maintenance_cql, "maintenance native server");
+            }
 
             // Semantic validation of sstable compression parameters from config.
             // Adding here (i.e., after `join_cluster`) to ensure that the
