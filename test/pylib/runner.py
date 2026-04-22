@@ -445,6 +445,11 @@ def pytest_configure(config: pytest.Config) -> None:
 
     pytest_log_dir = pathlib.Path(_pytest_config.getoption("--tmpdir")).absolute() / PYTEST_LOG_FOLDER
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    logger.warning(
+        "pytest_configure: HOST_ID=%s, tmpdir=%s, SCYLLA_TEST_HOST_ID=%s, XDIST_WORKER=%s, pid=%d",
+        HOST_ID, config.getoption("--tmpdir"), os.environ.get("SCYLLA_TEST_HOST_ID"),
+        os.environ.get("PYTEST_XDIST_WORKER"), os.getpid()
+    )
     # If this is an xdist worker, set up logging to a separate file for this worker. Otherwise, set up logging for the main process.
     if worker_id is not None:
         _pytest_config.stash[PYTEST_LOG_FILE] = f"{pytest_log_dir}/pytest_{worker_id}_{HOST_ID}.log"
