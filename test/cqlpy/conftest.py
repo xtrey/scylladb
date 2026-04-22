@@ -19,6 +19,7 @@ import tempfile
 import time
 import random
 
+from test.pylib.skip_types import skip_env
 from test.pylib.suite.python import PythonTest, add_host_option, add_cql_connection_options, add_s3_options
 from .util import unique_name, new_test_keyspace, keyspace_has_tablets, cql_session, local_process_id, is_scylla, config_value_context
 from .nodetool import scylla_log
@@ -75,7 +76,7 @@ def cql(request, host):
 def cql_test_connection(cql, request):
     scylla_log(cql, f'test/cqlpy: Starting {request.node.parent.name}::{request.node.name}', 'info')
     if cql_test_connection.scylla_crashed:
-        pytest.skip('Server down')
+        skip_env('Server down')
     yield
     try:
         # We want to run a do-nothing CQL command. 
@@ -131,7 +132,7 @@ def test_keyspace(request, test_keyspace_vnodes, test_keyspace_tablets, cql, thi
             yield test_keyspace_vnodes
         elif request.param == "tablets":
             if not test_keyspace_tablets:
-                pytest.skip("tablet-specific test skipped")
+                skip_env("tablet-specific test skipped")
             yield test_keyspace_tablets
         else:
             pytest.fail(f"test_keyspace(): invalid request parameter: {request.param}")
@@ -149,7 +150,7 @@ def scylla_only(cql):
     # We recognize Scylla by checking if there is any system table whose name
     # contains the word "scylla":
     if not is_scylla(cql):
-        pytest.skip('Scylla-only test skipped')
+        skip_env('Scylla-only test skipped')
 
 # "cassandra_bug" is similar to "scylla_only", except instead of skipping
 # the test, it is expected to fail (xfail) on Cassandra. It should be used
@@ -179,7 +180,7 @@ def driver_bug_1():
     driver_version = tuple(int(x) for x in DRIVER_VERSION.split('.'))
     if (scylla_driver and driver_version < (3, 24, 5) or
             not scylla_driver and driver_version <= (3, 25, 0)):
-        pytest.skip("Python driver too old to run this test")
+        skip_env("Python driver too old to run this test")
 
 # `random_seed` fixture should be used when the test uses random module.
 # If the fixture is used, the seed is visible in case of test's failure,
@@ -203,23 +204,23 @@ def random_seed():
 # to the address and port to which our our CQL connection is connected.
 # If such a process exists, we verify that it is Scylla, and return the
 # executable's path. If we can't find the Scylla executable we use
-# pytest.skip() to skip tests relying on this executable.
+# skip_env() to skip tests relying on this executable.
 @pytest.fixture(scope=dynamic_scope())
 def scylla_path(cql):
     pid = local_process_id(cql)
     if not pid:
-        pytest.skip("Can't find local Scylla process")
+        skip_env("Can't find local Scylla process")
     # Now that we know the process id, use /proc to find the executable.
     try:
         path = os.readlink(f'/proc/{pid}/exe')
     except:
-        pytest.skip("Can't find local Scylla executable")
+        skip_env("Can't find local Scylla executable")
     # Confirm that this executable is a real tool-providing Scylla by trying
     # to run it with the "--list-tools" option
     try:
         subprocess.check_output([path, '--list-tools'])
     except:
-        pytest.skip("Local server isn't Scylla")
+        skip_env("Local server isn't Scylla")
     return path
 
 # A fixture for finding Scylla's data directory. We get it using the CQL
@@ -234,7 +235,7 @@ def scylla_data_dir(cql):
         dir = json.loads(cql.execute("SELECT value FROM system.config WHERE name = 'data_file_directories'").one().value)[0]
         return dir
     except:
-        pytest.skip("Can't find Scylla sstable directory")
+        skip_env("Can't find Scylla sstable directory")
 
 @pytest.fixture(scope="function")
 def temp_workdir():
@@ -250,7 +251,7 @@ def has_tablets(cql, this_dc):
 @pytest.fixture(scope="function")
 def skip_without_tablets(scylla_only, has_tablets):
     if not has_tablets:
-        pytest.skip("Test needs tablets experimental feature on")
+        skip_env("Test needs tablets experimental feature on")
 
 
 # Like skip_without_tablets but does not require scylla_only, so Cassandra
@@ -258,7 +259,7 @@ def skip_without_tablets(scylla_only, has_tablets):
 @pytest.fixture(scope="function")
 def skip_on_scylla_vnodes(cql, has_tablets):
     if is_scylla(cql) and not has_tablets:
-        pytest.skip("Test needs tablets experimental feature on")
+        skip_env("Test needs tablets experimental feature on")
 
 # Recent versions of Scylla deprecated the "WITH COMPACT STORAGE" feature,
 # but it can be enabled temporarily for a test. So to keep our old compact
@@ -281,4 +282,4 @@ def compact_storage(cql):
 @pytest.fixture
 def skip_s3_tests(request):
     if request.config.getoption("--no-minio", default=None):
-        pytest.skip("Skipping S3 related tests being run from test/cqlpy/run")
+        skip_env("Skipping S3 related tests being run from test/cqlpy/run")

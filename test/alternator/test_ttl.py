@@ -13,6 +13,7 @@ from decimal import Decimal
 import pytest
 from botocore.exceptions import ClientError
 
+from test.pylib.skip_types import skip_bug, skip_env
 from .util import new_test_table, random_string, full_query, unique_table_name, is_aws, client_no_transform, multiset, scylla_config_read
 
 # The following fixture is to ensure that Alternator TTL is being tested with both vnodes and tablets.
@@ -70,12 +71,12 @@ def waits_for_expiration(dynamodb, request):
         if request.config.getoption('runveryslow'):
             return
         else:
-            pytest.skip('need --runveryslow option to run')
+            skip_env('need --runveryslow option to run')
     period = scylla_config_read(dynamodb, 'alternator_ttl_period_in_seconds')
     assert period is not None
     period = float(period)
     if period > 1 and not request.config.getoption('runveryslow'):
-        pytest.skip('need --runveryslow option to run')
+        skip_env('need --runveryslow option to run')
 
 # The veryslow_on_aws says that this test is very slow on AWS, but
 # always reasonably fast on Scylla. If fastness on Scylla requires a
@@ -84,7 +85,7 @@ def waits_for_expiration(dynamodb, request):
 @pytest.fixture(scope="module")
 def veryslow_on_aws(dynamodb, request):
     if is_aws(dynamodb) and not request.config.getoption('runveryslow'):
-        pytest.skip('need --runveryslow option to run')
+        skip_env('need --runveryslow option to run')
 
 # Test the DescribeTimeToLive operation on a table where the time-to-live
 # feature was *not* enabled.
@@ -655,6 +656,12 @@ def test_ttl_expiration_lsi_key(dynamodb, waits_for_expiration):
 # content), and a special userIdentity flag saying that this is not a regular
 # REMOVE but an expiration. Reproduces issue #11523.
 def test_ttl_expiration_streams(dynamodb, dynamodbstreams, waits_for_expiration):
+    # Alternator Streams currently doesn't work with tablets, so until
+    # #23838 is solved, skip this test on tablets.
+    for tag in TAGS:
+        if tag['Key'] == 'system:initial_tablets' and tag['Value'].isdigit():
+            skip_bug("Streams test skipped on tablets due to #23838")
+
     # In my experiments, a 30-minute (1800 seconds) is the typical
     # expiration delay in this test. If the test doesn't finish within
     # max_duration, we report a failure.

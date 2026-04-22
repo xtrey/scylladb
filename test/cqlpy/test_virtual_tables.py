@@ -10,6 +10,8 @@ import json
 
 from collections import defaultdict
 
+from test.pylib.skip_types import skip_env
+
 def verify_snapshots(cql, expected_snapshots: dict[str, set[str]]):
     results = list(cql.execute(f"SELECT keyspace_name, table_name, snapshot_name, live, total FROM system.snapshots"))
     for res in results:
@@ -169,7 +171,7 @@ def test_token_ring_vnodes(scylla_only, cql, test_keyspace_vnodes):
 
 def test_token_ring_tablets(scylla_only, cql, test_keyspace_tablets):
     if test_keyspace_tablets is None:
-        pytest.skip("skipping tablets specific tests -- tablets not enabled")
+        skip_env("skipping tablets specific tests -- tablets not enabled")
 
     with util.new_test_table(cql, test_keyspace_tablets, 'pk int PRIMARY KEY') as table:
         rows = list(cql.execute(f"SELECT * FROM system.token_ring WHERE keyspace_name = '{test_keyspace_tablets}' AND table_name = '{table}'"))

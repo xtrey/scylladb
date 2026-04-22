@@ -33,6 +33,8 @@ import urllib.parse
 from contextlib import contextmanager
 from botocore.exceptions import ClientError
 
+from test.pylib.skip_types import skip_env
+
 from .util import new_test_table, scylla_config_temporary
 from .test_cql_rbac import new_dynamodb, new_role
 
@@ -86,7 +88,7 @@ def local_process_id(ip, port):
 
 # A fixture to find the Scylla log file, returning the log file's path.
 # If the log file cannot be found, or it's not Scylla, the fixture calls
-# pytest.skip() to skip any test which uses it. The fixture has module
+# skip_env() to skip any test which uses it. The fixture has module
 # scope, so looking for the log file only happens once. Individual tests
 # should use the function-scope fixture "logfile" below, which takes care
 # of opening the log file for reading in the right place.
@@ -108,18 +110,18 @@ def logfile_path(dynamodb):
         port = 443 if p.scheme == 'https' else 80
     pid = local_process_id(ip, port)
     if not pid:
-        pytest.skip("Can't find local process")
+        skip_env("Can't find local process")
     # Now that we know the process id, use /proc to find if its standard
     # output is redirected to a file. If it is, that's the log file. If it
     # isn't a file, we don't known where the user is writing the log...
     try:
         log = os.readlink(f'/proc/{pid}/fd/1')
     except:
-        pytest.skip("Can't find local log file")
+        skip_env("Can't find local log file")
     # If the process's standard output is some pipe or device, it's
     # not the log file we were hoping for...
     if not log.startswith('/') or not os.path.isfile(log):
-        pytest.skip("Can't find local log file")
+        skip_env("Can't find local log file")
     # Scylla can be configured to put the log in syslog, not in the standard
     # output. So let's verify that the file which we found actually looks
     # like a Scylla log and isn't just empty or something... The Scylla log
@@ -127,7 +129,7 @@ def logfile_path(dynamodb):
     with open(log, 'r') as f:
         head = f.read(7)
         if head != 'Scylla ':
-            pytest.skip("Not a Scylla log file")
+            skip_env("Not a Scylla log file")
         yield log
 
 # The "logfile" fixture returns the log file open for reading at the end.

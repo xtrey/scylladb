@@ -184,7 +184,7 @@ class TestBypassCache(Tester):
             session.execute(query.format(idx, varchar_c, varchar_v))
         return session
 
-    @pytest.mark.skip(reason="https://github.com/scylladb/scylladb/issues/6045")
+    @pytest.mark.skip_bug(reason="https://github.com/scylladb/scylladb/issues/6045")
     def test_range_scan_bypass_cache(self):
         session = self.insert_data_for_scan_range()
         node = self.cluster.nodelist()[0]

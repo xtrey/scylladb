@@ -749,7 +749,7 @@ def testRemovalThroughUpdate(cql, test_keyspace):
 # checks the validity of the prepared-statement binding before passing it
 # to the server, so the following tests fail in the client library, not
 # in the server.
-@pytest.mark.skip(reason="Python driver checks this before reaching server")
+@pytest.mark.skip_not_implemented(reason="Python driver checks this before reaching server")
 def testInvalidInputForList(cql, test_keyspace):
     with create_table(cql, test_keyspace, "(pk int PRIMARY KEY, l list<text>)") as table:
         assert_invalid_message(cql, table, "Not enough bytes to read a list",
@@ -761,7 +761,7 @@ def testInvalidInputForList(cql, test_keyspace):
         assert_invalid_message(cql, table, "The data cannot be deserialized as a list",
                              "INSERT INTO %s (pk, l) VALUES (?, ?)", 1, -1);
 
-@pytest.mark.skip(reason="Python driver checks this before reaching server")
+@pytest.mark.skip_not_implemented(reason="Python driver checks this before reaching server")
 def testInvalidInputForSet(cql, test_keyspace):
     with create_table(cql, test_keyspace, "(pk int PRIMARY KEY, s set<text>)") as table:
         assert_invalid_message(cql, table, "Not enough bytes to read a set",
@@ -773,7 +773,7 @@ def testInvalidInputForSet(cql, test_keyspace):
         assert_invalid_message(cql, table, "The data cannot be deserialized as a set",
                              "INSERT INTO %s (pk, s) VALUES (?, ?)", 1, -1);
 
-@pytest.mark.skip(reason="Python driver checks this before reaching server")
+@pytest.mark.skip_not_implemented(reason="Python driver checks this before reaching server")
 def testInvalidInputForMap(cql, test_keyspace):
     with create_table(cql, test_keyspace, "(pk int PRIMARY KEY, m set<text, text>)") as table:
         assert_invalid_message(cql, table, "Not enough bytes to read a map",

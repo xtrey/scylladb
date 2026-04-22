@@ -17,6 +17,7 @@ import ssl
 import time
 
 from test.pylib.driver_utils import safe_driver_shutdown
+from test.pylib.skip_types import skip_env
 
 
 # This function normalizes the SSL cipher suite name (a string),
@@ -42,7 +43,7 @@ def test_tls_versions(cql):
     # learn from cql.cluster whether SSL is used, and if so which contact
     # points, ports, and other parameters, we should use to connect.
     if not cql.cluster.ssl_context:
-        pytest.skip("SSL-specific tests are skipped without the '--ssl' option")
+        skip_env("SSL-specific tests are skipped without the '--ssl' option")
 
     # TLS v1.2 must be supported, because this is the default version that
     # "cqlsh --ssl" uses. If this fact changes in the future, we may need
@@ -130,7 +131,7 @@ def try_connect(orig_cluster, ssl_version):
 # "optional: false" - as we do in the run-cassandra script.
 def test_non_tls_on_tls(cql):
     if not cql.cluster.ssl_context:
-        pytest.skip("SSL-specific tests are skipped without the '--ssl' option")
+        skip_env("SSL-specific tests are skipped without the '--ssl' option")
     # Copy the configuration of the existing "cql", just not the ssl_context
     cluster = cassandra.cluster.Cluster(
         contact_points=cql.cluster.contact_points,

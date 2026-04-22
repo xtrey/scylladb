@@ -19,6 +19,7 @@ from .util import new_type, unique_name, new_test_table, new_test_keyspace, new_
     new_secondary_index
 from .conftest import has_tablets
 from .test_service_levels import MAX_USER_SERVICE_LEVELS
+from test.pylib.skip_types import skip_env
 from cassandra.protocol import InvalidRequest, Unauthorized
 from collections.abc import Iterable
 from typing import Any
@@ -1028,7 +1029,7 @@ def test_table_options_quoting(cql, test_keyspace):
                          ids=["alter", "create_index"])
 def test_hide_cdc_table(scylla_only, cql, test_keyspace, cdc_enablement_query, has_tablets):
     if is_create_index(cdc_enablement_query) and not has_tablets:
-        pytest.skip("Test needs tablets experimental feature on")
+        skip_env("Test needs tablets experimental feature on")
 
     cdc_table_suffix = "_scylla_cdc_log"
     with new_test_table(cql, test_keyspace, "a int primary key, b vector<float, 3>") as t:
@@ -1081,7 +1082,7 @@ def test_hide_cdc_table(scylla_only, cql, test_keyspace, cdc_enablement_query, h
                          ids=["alter", "create_index"])
 def test_describe_cdc_log_table_format(scylla_only, cql, test_keyspace, cdc_enablement_query, has_tablets):
     if is_create_index(cdc_enablement_query) and not has_tablets:
-        pytest.skip("Test needs tablets experimental feature on")
+        skip_env("Test needs tablets experimental feature on")
     with new_test_table(cql, test_keyspace, "p int PRIMARY KEY, v vector<float, 3>") as table:
         log_table = f"{table}_scylla_cdc_log"
         _, log_table_name = log_table.split(".")
@@ -1111,7 +1112,7 @@ def test_describe_cdc_log_table_format(scylla_only, cql, test_keyspace, cdc_enab
                          ids=["alter", "create_index"])
 def test_describe_cdc_log_table_create_statement(scylla_only, cql, test_keyspace, cdc_enablement_query, has_tablets):
     if is_create_index(cdc_enablement_query) and not has_tablets:
-        pytest.skip("Test needs tablets experimental feature on")
+        skip_env("Test needs tablets experimental feature on")
 
     def format_create_statement(stmt: str) -> str:
         stmt = " ".join(stmt.split("\n"))
@@ -1175,7 +1176,7 @@ def test_describe_cdc_log_table_create_statement(scylla_only, cql, test_keyspace
                          ids=["alter", "create_index"])
 def test_describe_cdc_log_table_opts(scylla_only, cql, test_keyspace, cdc_enablement_query, has_tablets):
     if is_create_index(cdc_enablement_query) and not has_tablets:
-        pytest.skip("Test needs tablets experimental feature on")
+        skip_env("Test needs tablets experimental feature on")
 
     def test_config(altered_cdc_log_table_opt):
         with new_test_table(cql, test_keyspace, "p int PRIMARY KEY, v vector<float, 3>") as table:

@@ -12,6 +12,8 @@ from typing import NamedTuple
 
 import pytest
 
+from test.pylib.skip_types import skip_env
+
 
 class NodeStatus(Enum):
     Up = 'U'
@@ -327,7 +329,7 @@ def test_status_no_keyspace_single_dc(request, nodetool):
 @pytest.mark.parametrize("table", (None, "cf"))
 def test_status_keyspace_single_dc(request, nodetool, uses_tablets, table):
     if request.config.getoption("nodetool") == "cassandra" and (uses_tablets or table):
-        pytest.skip("skipping tablets-related test with Cassandra nodetool")
+        skip_env("skipping tablets-related test with Cassandra nodetool")
 
     nodes = [
         Node(
@@ -416,7 +418,7 @@ def test_status_no_keyspace_multi_dc(request, nodetool):
 @pytest.mark.parametrize("table", (None, "cf"))
 def test_status_keyspace_multi_dc(request, nodetool, uses_tablets, table):
     if request.config.getoption("nodetool") == "cassandra" and (uses_tablets or table):
-        pytest.skip("skipping tablets-related test with Cassandra nodetool")
+        skip_env("skipping tablets-related test with Cassandra nodetool")
 
     nodes = [
         Node(

@@ -13,6 +13,8 @@ import urllib3
 from botocore.exceptions import BotoCoreError, ClientError
 from packaging.version import Version
 
+from test.pylib.skip_types import skip_env
+
 from test.alternator.util import random_bytes, random_string, get_signed_request, manual_request, ManualRequestError
 
 
@@ -102,7 +104,7 @@ def test_too_large_request(dynamodb, test_table):
 
 def test_too_large_request_chunked(dynamodb, test_table):
     if Version(urllib3.__version__) < Version('1.26'):
-        pytest.skip("urllib3 before 1.26.0 threw broken pipe and did not read response and cause issue #8195. Fixed by pull request urllib3/urllib3#1524")
+        skip_env("urllib3 before 1.26.0 threw broken pipe and did not read response and cause issue #8195. Fixed by pull request urllib3/urllib3#1524")
     # To make a request very large, we just stuff it with a lot of spaces :-)
     spaces = ' ' * (17 * 1024 * 1024)
     req = get_signed_request(dynamodb, 'PutItem',
@@ -126,7 +128,7 @@ def test_too_large_request_chunked(dynamodb, test_table):
 @pytest.mark.parametrize("mb", [17, 50])
 def test_too_large_request_content_length(dynamodb, test_table, mb):
     if Version(urllib3.__version__) < Version('1.26'):
-        pytest.skip("urllib3 before 1.26.0 threw broken pipe and did not read response and cause issue #8195. Fixed by pull request urllib3/urllib3#1524")
+        skip_env("urllib3 before 1.26.0 threw broken pipe and did not read response and cause issue #8195. Fixed by pull request urllib3/urllib3#1524")
     spaces = ' ' * (mb * 1024 * 1024)
     req = get_signed_request(dynamodb, 'PutItem',
         '{"TableName": "' + test_table.name + '", ' + spaces + '"Item": {"p": {"S": "x"}, "c": {"S": "x"}}}')

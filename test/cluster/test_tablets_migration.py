@@ -9,6 +9,7 @@ from aiohttp.client_exceptions import ServerDisconnectedError
 
 from test.pylib.manager_client import ManagerClient
 from test.pylib.rest_client import HTTPError, read_barrier
+from test.pylib.skip_types import skip_env
 from test.pylib.tablets import get_tablet_replica, get_all_tablet_replicas, get_tablet_info
 from test.pylib.util import start_writes
 from test.cluster.util import wait_for_cql_and_get_hosts, new_test_keyspace, reconnect_driver, wait_for
@@ -120,9 +121,9 @@ async def test_tablet_transition_sanity(manager: ManagerClient, action):
 @pytest.mark.skip_mode(mode='release', reason='error injections are not supported in release mode')
 async def test_node_failure_during_tablet_migration(manager: ManagerClient, fail_replica, fail_stage):
     if fail_stage == 'cleanup' and fail_replica == 'destination':
-        pytest.skip('Failing destination during cleanup is pointless')
+        skip_env('Failing destination during cleanup is pointless')
     if fail_stage == 'cleanup_target' and fail_replica == 'source':
-        pytest.skip('Failing source during target cleanup is pointless')
+        skip_env('Failing source during target cleanup is pointless')
 
     logger.info("Bootstrapping cluster")
     cfg = {'enable_user_defined_functions': False, 'tablets_mode_for_new_keyspaces': 'enabled', 'failure_detector_timeout_in_ms': 2000}

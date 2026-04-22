@@ -18,6 +18,7 @@ from ccmlib.scylla_cluster import ScyllaCluster
 from ccmlib.scylla_node import ScyllaNode
 
 from dtest_class import Tester, create_cf, create_ks
+from test.pylib.skip_types import skip_env
 from tools.assertions import (
     assert_all,
     assert_almost_equal,
@@ -712,7 +713,7 @@ class TestCommitLog(Tester):
         node1.stop(gently=False)
 
         if self._get_commitlog_size()[0] > self.big_columns:
-            pytest.skip("Skipping rollback scenario as data was written to commitlog before stopping node")
+            skip_env("Skipping rollback scenario as data was written to commitlog before stopping node")
 
         # restart the node
         node1.start(wait_for_binary_proto=True)

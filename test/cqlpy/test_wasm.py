@@ -16,6 +16,8 @@ import requests
 import re
 import os.path
 
+from test.pylib.skip_types import skip_env
+
 # Can be used for marking functions which require
 # WASM support to be compiled into Scylla
 @pytest.fixture(scope="module")
@@ -27,7 +29,7 @@ def scylla_with_wasm_only(scylla_only, cql, test_keyspace):
         cql.execute(f"DROP FUNCTION {test_keyspace}.{f42}")
     except NoHostAvailable as err:
         if "not enabled" in str(err):
-            pytest.skip("WASM support was not enabled in Scylla, skipping")
+            skip_env("WASM support was not enabled in Scylla, skipping")
     yield
 
 @pytest.fixture(scope="module")
@@ -496,7 +498,7 @@ def metrics(request, scylla_with_wasm_only, cql):
     url = f'http://{cql.cluster.contact_points[0]}:9180/metrics'
     resp = requests.get(url)
     if resp.status_code != 200:
-        pytest.skip('Metrics port 9180 is not available')
+        skip_env('Metrics port 9180 is not available')
     yield url
 
 def get_metrics(metrics):
@@ -576,7 +578,7 @@ def test_UDA(cql, test_keyspace, table1, scylla_with_wasm_only, metrics):
 # FIXME: shorten the wait time when such configuration becomes possible
 
 # The function grows the memory by n pages and returns n.
-@pytest.mark.skip(reason="slow test, remove skip to try it anyway")
+@pytest.mark.skip_slow(reason="slow test, remove skip to try it anyway")
 def test_mem_grow(cql, test_keyspace, table1, scylla_with_wasm_only, metrics):
     table = table1
     mem_grow_name = "mem_grow_" + unique_name()

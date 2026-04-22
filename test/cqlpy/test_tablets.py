@@ -16,6 +16,8 @@ import pytest
 from .util import new_test_keyspace, new_test_table, new_materialized_view, unique_name, index_table_name
 from cassandra.protocol import ConfigurationException, InvalidRequest
 
+from test.pylib.skip_types import skip_env
+
 # A fixture similar to "test_keyspace", just creates a keyspace that enables
 # tablets with initial_tablets=128
 # The "initial_tablets" feature doesn't work if the "tablets" experimental
@@ -27,7 +29,7 @@ def test_keyspace_128_tablets(cql, this_dc):
     try:
         cql.execute("CREATE KEYSPACE " + name + " WITH REPLICATION = { 'class' : 'NetworkTopologyStrategy', '" + this_dc + "': 1 } AND TABLETS = { 'enabled': true, 'initial': 128 }")
     except ConfigurationException:
-        pytest.skip('Scylla does not support initial_tablets, or the tablets feature is not enabled')
+        skip_env('Scylla does not support initial_tablets, or the tablets feature is not enabled')
     yield name
     cql.execute("DROP KEYSPACE " + name)
 

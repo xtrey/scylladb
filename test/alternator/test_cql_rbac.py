@@ -21,6 +21,7 @@ from functools import cache
 
 import re
 
+from test.pylib.skip_types import skip_env
 from .util import unique_table_name, random_string, new_test_table
 from .test_gsi_updatetable import wait_for_gsi, wait_for_gsi_gone
 from .test_gsi import assert_index_query
@@ -1143,7 +1144,7 @@ def test_rbac_system_table_write(dynamodb, cql, test_table_s):
             ExpressionAttributeValues={':val': old_val})
     except Exception as e:
         if 'alternator_allow_system_table_write' in str(e):
-            pytest.skip('need alternator_allow_system_table_write=true')
+            skip_env('need alternator_allow_system_table_write=true')
         else:
             raise
     with new_role(cql) as (role, key):

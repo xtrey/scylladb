@@ -9,6 +9,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from test.alternator.util import random_string
+from test.pylib.skip_types import skip_env
 
 
 # Test trivial support for the ReturnValues parameter in PutItem, UpdateItem
@@ -90,7 +91,7 @@ def skip_if_returnvalues_on_condition_check_failure_not_supported():
     from packaging.version import Version
     # This release added support for ReturnValuesOnConditionCheckFailure
     if (Version(botocore.__version__) < Version('1.29.164')):
-        pytest.skip("Botocore version 1.29.164 or above required to run this test")
+        skip_env("Botocore version 1.29.164 or above required to run this test")
 
 # Testing ReturnValuesOnConditionCheckFailure feature which returns values only
 # on failed condition expression.

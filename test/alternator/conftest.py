@@ -18,6 +18,7 @@ from test.alternator.util import create_test_table, is_aws, scylla_log
 from test.conftest import dynamic_scope
 from test.cqlpy.conftest import host  # add required fixtures
 from test.pylib.driver_utils import safe_driver_shutdown
+from test.pylib.skip_types import skip_env
 from test.pylib.suite.python import add_host_option
 from urllib.parse import urlparse
 from functools import cache
@@ -198,7 +199,7 @@ def dynamodbstreams(request, get_valid_alternator_role):
 def dynamodb_test_connection(dynamodb, request, optional_rest_api):
     scylla_log(optional_rest_api, f'test/alternator: Starting {request.node.parent.name}::{request.node.name}', 'info')
     if dynamodb_test_connection.scylla_crashed:
-        pytest.skip('Server down')
+        skip_env('Server down')
     yield
     try:
         # We want to run a do-nothing DynamoDB command. The health-check
@@ -345,7 +346,7 @@ def filled_test_table(dynamodb):
 @pytest.fixture(scope=dynamic_scope())
 def scylla_only(dynamodb):
     if is_aws(dynamodb):
-        pytest.skip('Scylla-only feature not supported by AWS')
+        skip_env('Scylla-only feature not supported by AWS')
 
 # "dynamodb_bug" is similar to "scylla_only", except instead of skipping
 # the test, it is expected to fail (xfail) on AWS DynamoDB. It should be
@@ -365,7 +366,7 @@ def dynamodb_bug(dynamodb):
 @pytest.fixture(scope=dynamic_scope())
 def rest_api(dynamodb, optional_rest_api):
     if optional_rest_api is None:
-        pytest.skip('Cannot connect to Scylla REST API')
+        skip_env('Cannot connect to Scylla REST API')
     return optional_rest_api
 @pytest.fixture(scope=dynamic_scope())
 def optional_rest_api(dynamodb):
@@ -417,7 +418,7 @@ def xfail_tablets(request, has_tablets):
 @pytest.fixture(scope="function")
 def skip_tablets(has_tablets):
     if has_tablets:
-        pytest.skip("Test may crash when Alternator tables use tablets")
+        skip_env("Test may crash when Alternator tables use tablets")
 
 # Alternator tests normally use only the DynamoDB API. However, a few tests
 # need to use CQL to set up Scylla-only features such as service levels or
@@ -432,7 +433,7 @@ def cql(dynamodb):
     from cassandra.cluster import Cluster, ConsistencyLevel, ExecutionProfile, EXEC_PROFILE_DEFAULT, NoHostAvailable
     from cassandra.policies import RoundRobinPolicy
     if is_aws(dynamodb):
-        pytest.skip('Scylla-only CQL API not supported by AWS')
+        skip_env('Scylla-only CQL API not supported by AWS')
     url = dynamodb.meta.client._endpoint.host
     host, = re.search(r'.*://([^:]*):', url).groups()
     profile = ExecutionProfile(
@@ -453,6 +454,6 @@ def cql(dynamodb):
         # "BEGIN BATCH APPLY BATCH" is the closest to do-nothing I could find
         ret.execute("BEGIN BATCH APPLY BATCH")
     except NoHostAvailable:
-        pytest.skip('Could not connect to Scylla-only CQL API')
+        skip_env('Could not connect to Scylla-only CQL API')
     yield ret
     safe_driver_shutdown(cluster)

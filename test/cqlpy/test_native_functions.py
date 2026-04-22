@@ -152,7 +152,7 @@ def test_totimestamp_date(cql, table1):
 # current Python driver because of bugs it has in converting extreme
 # timestamps - https://github.com/scylladb/python-driver/issues/255 -
 # so the test is skipped.
-@pytest.mark.skip(reason="Python driver bug")
+@pytest.mark.skip_bug(reason="Python driver bug https://github.com/scylladb/python-driver/issues/255")
 def test_totimestamp_date_extreme(cql, table1):
     p = unique_key_int()
     # The day 2**31-2**29 is 2**29 days before the epoch - it's a useless date

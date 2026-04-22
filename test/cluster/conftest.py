@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from test import TOP_SRC_DIR, path_to
 from test.pylib.random_tables import RandomTables
+from test.pylib.skip_types import skip_env
 from test.pylib.util import unique_name
 from test.pylib.manager_client import ManagerClient
 from test.pylib.async_cql import run_async
@@ -381,7 +382,7 @@ async def prepare_3_racks_cluster(request, manager):
 @pytest.fixture(scope="function")
 def internet_dependency_enabled(request) -> None:
     if request.config.getoption('skip_internet_dependent_tests'):
-        pytest.skip(reason="skip_internet_dependent_tests is set")
+        skip_env(reason="skip_internet_dependent_tests is set")
 
 
 @pytest.fixture(scope="function")

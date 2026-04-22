@@ -15,6 +15,7 @@ import requests
 from test.conftest import dynamic_scope
 from test.cqlpy.conftest import host, cql, this_dc  # add required fixtures
 from test.cqlpy.util import unique_name, new_test_keyspace, keyspace_has_tablets, is_scylla
+from test.pylib.skip_types import skip_env
 from test.pylib.suite.python import add_host_option, add_cql_connection_options
 
 # By default, tests run against a Scylla server listening
@@ -63,7 +64,7 @@ def scylla_only(cql):
     # We recognize Scylla by checking if there is any system table whose name
     # contains the word "scylla":
     if not is_scylla(cql):
-        pytest.skip('Scylla-only test skipped')
+        skip_env('Scylla-only test skipped')
 
 @pytest.fixture(scope=dynamic_scope())
 def has_tablets(cql):
@@ -73,12 +74,12 @@ def has_tablets(cql):
 @pytest.fixture(scope="function")
 def skip_with_tablets(has_tablets):
     if has_tablets:
-        pytest.skip("Test may crash with tablets experimental feature on")
+        skip_env("Test may crash with tablets experimental feature on")
 
 @pytest.fixture(scope="function")
 def skip_without_tablets(scylla_only, has_tablets):
     if not has_tablets:
-        pytest.skip("Test needs tablets experimental feature on")
+        skip_env("Test needs tablets experimental feature on")
 
 @pytest.fixture(scope=dynamic_scope())
 def test_keyspace_vnodes(cql, this_dc, has_tablets):

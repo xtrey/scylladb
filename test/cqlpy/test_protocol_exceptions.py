@@ -12,6 +12,7 @@ import socket
 import struct
 from test.cqlpy import nodetool
 from test.cqlpy.util import cql_session
+from test.pylib.skip_types import skip_env
 
 def get_protocol_error_metrics(host) -> int:
     result = 0
@@ -196,7 +197,7 @@ def _protocol_error_impl(
         if op == 0x02:
             # READY path
             if trigger_unexpected_auth:
-                pytest.skip("server not configured with authentication, skipping unexpected auth test")
+                skip_env("server not configured with authentication, skipping unexpected auth test")
         elif op == 0x03:
             # AUTHENTICATE path
             if trigger_unexpected_auth:
@@ -303,7 +304,7 @@ def _test_impl(host, flag):
 @pytest.fixture
 def no_ssl(request):
     if request.config.getoption("--ssl"):
-        pytest.skip("skipping non-SSL test on SSL-enabled run")
+        skip_env("skipping non-SSL test on SSL-enabled run")
     yield
 
 # Malformed BATCH with an invalid kind triggers a protocol error.

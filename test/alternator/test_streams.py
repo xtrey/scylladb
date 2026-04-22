@@ -15,6 +15,7 @@ from boto3.dynamodb.types import TypeDeserializer
 from botocore.exceptions import ClientError
 
 from test.alternator.util import is_aws, scylla_config_temporary, unique_table_name, create_test_table, new_test_table, random_string, full_scan, freeze, list_tables, get_region, manual_request
+from test.pylib.skip_types import skip_env
 
 TAGS = []
 # The following fixture is to ensure that tests in this module will be tested with both vnodes and tablets.
@@ -29,7 +30,7 @@ TAGS = []
 ], ids=["using vnodes", "using tablets"], autouse=True)
 def tags_param(request, dynamodb):
     if is_aws(dynamodb) and request.param[0].get('Value') != 'none':
-        pytest.skip('vnodes/tablets parameterization not applicable on AWS')
+        skip_env('vnodes/tablets parameterization not applicable on AWS')
     # Set TAGS in the global namespace of this module
     global TAGS
     TAGS = request.param

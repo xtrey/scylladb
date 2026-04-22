@@ -11,6 +11,7 @@ import requests
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 
+from test.pylib.skip_types import skip_env
 from .util import full_scan, scylla_config_read, scylla_config_temporary
 
 internal_prefix = '.scylla.alternator.'
@@ -175,7 +176,7 @@ def test_write_to_config(scylla_only, dynamodb):
         print(str(e))
         print('alternator_allow_system_table_write' in str(e))
         if 'alternator_allow_system_table_write' in str(e):
-            pytest.skip('need alternator_allow_system_table_write=true')
+            skip_env('need alternator_allow_system_table_write=true')
         else:
             raise
     try:
