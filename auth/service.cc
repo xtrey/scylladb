@@ -178,8 +178,14 @@ future<> service::start(::service::migration_manager& mm, db::system_keyspace& s
 
 future<> service::stop() {
     _as.request_abort();
+    // Stop the role manager (and its LDAP pruner fiber) before clearing
+    // the permission loader; the pruner calls reload_all_permissions()
+    // which dereferences the loader.
+    co_await _role_manager->stop();
     _cache.set_permission_loader(nullptr);
-    return when_all_succeed(_role_manager->stop(), _authorizer->stop(), _authenticator->stop()).discard_result();
+    // Authorizer and authenticator have no shutdown-time dependencies
+    // on each other, so they can be stopped in parallel.
+    co_await when_all_succeed(_authorizer->stop(), _authenticator->stop()).discard_result();
 }
 
 future<> service::ensure_superuser_is_created() {
