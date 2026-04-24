@@ -117,7 +117,7 @@ struct cql_query_state {
 };
 
 struct cql_server_config {
-    updateable_timeout_config timeout_config;
+    updateable_timeout_config& timeout_config;
     size_t max_request_size;
     sstring partitioner_name;
     unsigned sharding_ignore_msb;
