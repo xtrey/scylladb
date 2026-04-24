@@ -30,6 +30,7 @@
 #include "utils/build_id.hh"
 #include "utils/only_on_shard0.hh"
 #include "supervisor.hh"
+#include "timeout_config.hh"
 #include "replica/database.hh"
 #include <seastar/core/reactor.hh>
 #include <seastar/core/app-template.hh>
@@ -1367,6 +1368,11 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             spcfg.hints_write_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
             spcfg.write_ack_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
             static db::view::node_update_backlog node_backlog(smp::count, 10ms);
+
+            static sharded<updateable_timeout_config> timeout_cfg;
+            timeout_cfg.start(std::ref(*cfg)).get();
+            auto stop_timeout_cfg = defer_verbose_shutdown("updateable timeout config", [] { timeout_cfg.stop().get(); });
+
             scheduling_group_key_config storage_proxy_stats_cfg =
                     make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
             storage_proxy_stats_cfg.constructor = [plain_constructor = storage_proxy_stats_cfg.constructor] (void* ptr) {
