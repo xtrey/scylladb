@@ -6785,7 +6785,7 @@ storage_proxy::do_query_with_paxos(schema_ptr s,
     db::timeout_clock::time_point timeout = query_options.timeout(*this);
     // When to give up due to contention
     db::timeout_clock::time_point cas_timeout = db::timeout_clock::now() +
-            std::chrono::milliseconds(_db.local().get_config().cas_contention_timeout_in_ms());
+            std::chrono::milliseconds(_timeout_config.cas_timeout_in_ms());
 
     struct read_cas_request : public cas_request {
         foreign_ptr<lw_shared_ptr<query::result>> res;
