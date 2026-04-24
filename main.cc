@@ -1366,7 +1366,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             spcfg.write_mv_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
             spcfg.hints_write_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
             spcfg.write_ack_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
-            static db::view::node_update_backlog node_backlog(smp::count, 10ms);
+            static db::view::node_update_backlog node_backlog(smp::count, 10ms, cfg->view_flow_control_delay_limit_in_ms);
             scheduling_group_key_config storage_proxy_stats_cfg =
                     make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
             storage_proxy_stats_cfg.constructor = [plain_constructor = storage_proxy_stats_cfg.constructor] (void* ptr) {
