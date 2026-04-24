@@ -40,6 +40,7 @@
 #include "dht/token_range_endpoints.hh"
 #include "service/storage_service.hh"
 #include "service/cas_shard.hh"
+#include "timeout_config.hh"
 #include "service/storage_proxy_fwd.hh"
 
 class reconcilable_result;
@@ -316,6 +317,7 @@ private:
             lw_shared_ptr<cdc::operation_result_tracker>,
             coordinator_mutate_options> _mutate_stage;
     db::view::node_update_backlog& _max_view_update_backlog;
+    updateable_timeout_config _timeout_config;
     std::unordered_map<locator::host_id, view_update_backlog_timestamped> _view_update_backlogs;
 
     //NOTICE(sarna): This opaque pointer is here just to avoid moving write handler class definitions from .cc to .hh. It's slow path.
