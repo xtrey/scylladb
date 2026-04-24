@@ -835,7 +835,7 @@ void server::set_routes(routes& r) {
 //FIXME: A way to immediately invalidate the cache should be considered,
 // e.g. when the system table which stores the keys is changed.
 // For now, this propagation may take up to 1 minute.
-server::server(executor& exec, service::storage_proxy& proxy, gms::gossiper& gossiper, auth::service& auth_service, qos::service_level_controller& sl_controller)
+server::server(executor& exec, service::storage_proxy& proxy, gms::gossiper& gossiper, auth::service& auth_service, qos::service_level_controller& sl_controller, updateable_timeout_config& timeout_config)
         : _http_server("http-alternator")
         , _https_server("https-alternator")
         , _executor(exec)
@@ -847,7 +847,7 @@ server::server(executor& exec, service::storage_proxy& proxy, gms::gossiper& gos
         , _max_users_query_size_in_trace_output(1024)
         , _enabled_servers{}
         , _pending_requests("alternator::server::pending_requests")
-        , _timeout_config(_proxy.data_dictionary().get_config())
+        , _timeout_config(timeout_config)
       , _callbacks{
         {"CreateTable", [] (executor& e, executor::client_state& client_state, tracing::trace_state_ptr trace_state, service_permit permit, rjson::value json_request, std::unique_ptr<request> req, std::unique_ptr<audit::audit_info_alternator>& audit_info) {
             return e.create_table(client_state, std::move(trace_state), std::move(permit), std::move(json_request), audit_info);
