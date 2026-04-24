@@ -317,7 +317,7 @@ private:
             lw_shared_ptr<cdc::operation_result_tracker>,
             coordinator_mutate_options> _mutate_stage;
     db::view::node_update_backlog& _max_view_update_backlog;
-    updateable_timeout_config _timeout_config;
+    updateable_timeout_config& _timeout_config;
     std::unordered_map<locator::host_id, view_update_backlog_timestamped> _view_update_backlogs;
 
     //NOTICE(sarna): This opaque pointer is here just to avoid moving write handler class definitions from .cc to .hh. It's slow path.
@@ -527,7 +527,7 @@ private:
 public:
     storage_proxy(sharded<replica::database>& db, config cfg, db::view::node_update_backlog& max_view_update_backlog,
             scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm,
-            locator::effective_replication_map_factory& erm_factory);
+            locator::effective_replication_map_factory& erm_factory, updateable_timeout_config& timeout_config);
     ~storage_proxy();
 
     const sharded<replica::database>& get_db() const {

@@ -743,7 +743,7 @@ private:
 
             scheduling_group_key_config sg_conf =
                     make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
-            _proxy.start(std::ref(_db), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get(), std::ref(_feature_service), std::ref(_token_metadata), std::ref(_erm_factory)).get();
+            _proxy.start(std::ref(_db), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get(), std::ref(_feature_service), std::ref(_token_metadata), std::ref(_erm_factory), std::ref(_timeout_config)).get();
             auto stop_proxy = defer_verbose_shutdown("storage proxy", [this] { _proxy.stop().get(); });
 
             _cql_config.start(seastar::sharded_parameter([&] { return cql3::cql_config(*cfg); })).get();

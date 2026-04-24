@@ -3321,7 +3321,8 @@ storage_proxy::~storage_proxy() {
 }
 
 storage_proxy::storage_proxy(sharded<replica::database>& db, storage_proxy::config cfg, db::view::node_update_backlog& max_view_update_backlog,
-        scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm, locator::effective_replication_map_factory& erm_factory)
+        scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm, locator::effective_replication_map_factory& erm_factory,
+        updateable_timeout_config& timeout_config)
     : _db(db)
     , _shared_token_metadata(stm)
     , _erm_factory(erm_factory)
@@ -3340,7 +3341,7 @@ storage_proxy::storage_proxy(sharded<replica::database>& db, storage_proxy::conf
     , _background_write_throttle_threahsold(cfg.available_memory / 10)
     , _mutate_stage{"storage_proxy_mutate", &storage_proxy::do_mutate}
     , _max_view_update_backlog(max_view_update_backlog)
-    , _timeout_config(_db.local().get_config())
+    , _timeout_config(timeout_config)
     , _cancellable_write_handlers_list(std::make_unique<cancellable_write_handlers_list>())
 {
     namespace sm = seastar::metrics;
