@@ -1940,7 +1940,7 @@ public:
     // Calculates how much to delay completing the request. The delay adds to the request's inherent latency.
     template<typename Func>
     void delay(tracing::trace_state_ptr trace, Func&& on_resume) {
-        auto delay = db::view::calculate_view_update_throttling_delay(_view_backlog, _expire_timer.get_timeout(), _proxy->data_dictionary().get_config().view_flow_control_delay_limit_in_ms());
+        auto delay = _proxy->_max_view_update_backlog.calculate_throttling_delay(_view_backlog, _expire_timer.get_timeout());
         stats().last_mv_flow_control_delay = delay;
         stats().mv_flow_control_delay += delay.count();
         if (delay.count() == 0) {

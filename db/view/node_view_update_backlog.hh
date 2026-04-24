@@ -63,6 +63,9 @@ public:
     update_backlog fetch_shard(unsigned shard);
     seastar::future<std::optional<update_backlog>> fetch_if_changed();
 
+    std::chrono::microseconds calculate_throttling_delay(update_backlog backlog,
+            db::timeout_clock::time_point timeout) const;
+
     // Exposed for testing only.
     update_backlog load() const {
         return _max.load(std::memory_order_relaxed);
