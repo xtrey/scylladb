@@ -56,9 +56,9 @@ sstable_directory::filesystem_components_lister::filesystem_components_lister(st
 {
 }
 
-sstable_directory::sstables_registry_components_lister::sstables_registry_components_lister(sstables::sstables_registry& sstables_registry, table_id owner)
+sstable_directory::sstables_registry_components_lister::sstables_registry_components_lister(sstables::sstables_registry& sstables_registry, table_id tid)
         : _sstables_registry(sstables_registry)
-        , _owner(std::move(owner))
+        , _table_id(std::move(tid))
 {
 }
 
@@ -426,20 +426,20 @@ future<> sstable_directory::filesystem_components_lister::process(sstable_direct
 }
 
 future<> sstable_directory::sstables_registry_components_lister::process(sstable_directory& directory, process_flags flags) {
-    dirlog.debug("Start processing registry entry {} (state {})", _owner, directory._state);
-    return _sstables_registry.sstables_registry_list(_owner, [this, flags, &directory] (sstring status, sstable_state state, entry_descriptor desc) {
+    dirlog.debug("Start processing registry entry {} (state {})", _table_id, directory._state);
+    return _sstables_registry.sstables_registry_list(_table_id, [this, flags, &directory] (sstring status, sstable_state state, entry_descriptor desc) {
         if (state != directory._state) {
             return make_ready_future<>();
         }
         if (status != "sealed") {
-            dirlog.warn("Skip processing {} {} entry from {} (must have been picked up by garbage collector)", status, desc.generation, _owner);
+            dirlog.warn("Skip processing {} {} entry from {} (must have been picked up by garbage collector)", status, desc.generation, _table_id);
             return make_ready_future<>();
         }
         if (!sstable_generation_generator::maybe_owned_by_this_shard(desc.generation)) {
             return make_ready_future<>();
         }
 
-        dirlog.debug("Processing {} entry from {}", desc.generation, _owner);
+        dirlog.debug("Processing {} entry from {}", desc.generation, _table_id);
         return directory.process_descriptor(std::move(desc), flags,
                                             [&directory] { return *directory._storage_opts; });
     });
@@ -483,7 +483,7 @@ future<> sstable_directory::restore_components_lister::commit() {
 
 future<> sstable_directory::sstables_registry_components_lister::garbage_collect(storage& st) {
     std::set<generation_type> gens_to_remove;
-    co_await _sstables_registry.sstables_registry_list(_owner, coroutine::lambda([&st, &gens_to_remove] (sstring status, sstable_state state, entry_descriptor desc) -> future<> {
+    co_await _sstables_registry.sstables_registry_list(_table_id, coroutine::lambda([&st, &gens_to_remove] (sstring status, sstable_state state, entry_descriptor desc) -> future<> {
         if (status == "sealed") {
             co_return;
         }
@@ -493,7 +493,7 @@ future<> sstable_directory::sstables_registry_components_lister::garbage_collect
         co_await st.remove_by_registry_entry(std::move(desc));
     }));
     co_await coroutine::parallel_for_each(gens_to_remove, [this] (auto gen) -> future<> {
-        co_await _sstables_registry.delete_entry(_owner, gen);
+        co_await _sstables_registry.delete_entry(_table_id, gen);
     });
 }
 
