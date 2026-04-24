@@ -95,9 +95,10 @@ public:
     }
 };
 
-view_update_generator::view_update_generator(replica::database& db, sharded<service::storage_proxy>& proxy, abort_source& as)
+view_update_generator::view_update_generator(replica::database& db, sharded<service::storage_proxy>& proxy, node_update_backlog& node_backlog, abort_source& as)
         : _db(db)
         , _proxy(proxy)
+        , _node_update_backlog(node_backlog)
         , _progress_tracker(std::make_unique<progress_tracker>())
         , _early_abort_subscription(as.subscribe([this] () noexcept { do_abort(); }))
 {

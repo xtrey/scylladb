@@ -1841,7 +1841,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             });
 
             checkpoint(stop_signal, "starting view update generator");
-            view_update_generator.start(std::ref(db), std::ref(proxy), std::ref(stop_signal.as_sharded_abort_source())).get();
+            view_update_generator.start(std::ref(db), std::ref(proxy), std::ref(node_backlog), std::ref(stop_signal.as_sharded_abort_source())).get();
             auto stop_view_update_generator = defer_verbose_shutdown("view update generator", [] {
                 view_update_generator.stop().get();
             });

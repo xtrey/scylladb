@@ -52,6 +52,7 @@ using allow_hints = bool_class<allow_hints_tag>;
 
 namespace db::view {
 
+class node_update_backlog;
 class stats;
 struct wait_for_all_updates_tag {};
 using wait_for_all_updates = bool_class<wait_for_all_updates_tag>;
@@ -63,6 +64,7 @@ public:
 private:
     replica::database& _db;
     sharded<service::storage_proxy>& _proxy;
+    node_update_backlog& _node_update_backlog;
     seastar::abort_source _as;
     future<> _started = make_ready_future<>();
     seastar::condition_variable _pending_sstables;
@@ -75,7 +77,7 @@ private:
     optimized_optional<abort_source::subscription> _early_abort_subscription;
     void do_abort() noexcept;
 public:
-    view_update_generator(replica::database& db, sharded<service::storage_proxy>& proxy, abort_source& as);
+    view_update_generator(replica::database& db, sharded<service::storage_proxy>& proxy, node_update_backlog& node_backlog, abort_source& as);
     ~view_update_generator();
 
     future<> start();
