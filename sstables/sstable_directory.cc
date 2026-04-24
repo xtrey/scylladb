@@ -56,9 +56,10 @@ sstable_directory::filesystem_components_lister::filesystem_components_lister(st
 {
 }
 
-sstable_directory::sstables_registry_components_lister::sstables_registry_components_lister(sstables::sstables_registry& sstables_registry, table_id tid)
+sstable_directory::sstables_registry_components_lister::sstables_registry_components_lister(sstables::sstables_registry& sstables_registry, table_id tid, locator::host_id node_owner)
         : _sstables_registry(sstables_registry)
         , _table_id(std::move(tid))
+        , _node_owner(node_owner)
 {
 }
 
@@ -89,7 +90,7 @@ sstable_directory::make_components_lister() {
                     if (owner.id.is_null()) {
                         on_internal_error(sstlog, fmt::format("{} storage options is missing 'owner'", os.type));
                     }
-                    return std::make_unique<sstable_directory::sstables_registry_components_lister>(_manager.sstables_registry(), owner);
+                    return std::make_unique<sstable_directory::sstables_registry_components_lister>(_manager.sstables_registry(), owner, _manager.get_local_host_id());
                 }
             }, os.location);
         }
@@ -426,8 +427,8 @@ future<> sstable_directory::filesystem_components_lister::process(sstable_direct
 }
 
 future<> sstable_directory::sstables_registry_components_lister::process(sstable_directory& directory, process_flags flags) {
-    dirlog.debug("Start processing registry entry {} (state {})", _table_id, directory._state);
-    return _sstables_registry.sstables_registry_list(_table_id, [this, flags, &directory] (sstring status, sstable_state state, entry_descriptor desc) {
+    dirlog.debug("Start processing registry entry {}.{} (state {})", _table_id, _node_owner, directory._state);
+    return _sstables_registry.sstables_registry_list(_table_id, _node_owner, [this, flags, &directory] (sstring status, sstable_state state, entry_descriptor desc) {
         if (state != directory._state) {
             return make_ready_future<>();
         }
@@ -483,7 +484,7 @@ future<> sstable_directory::restore_components_lister::commit() {
 
 future<> sstable_directory::sstables_registry_components_lister::garbage_collect(storage& st) {
     std::set<generation_type> gens_to_remove;
-    co_await _sstables_registry.sstables_registry_list(_table_id, coroutine::lambda([&st, &gens_to_remove] (sstring status, sstable_state state, entry_descriptor desc) -> future<> {
+    co_await _sstables_registry.sstables_registry_list(_table_id, _node_owner, coroutine::lambda([&st, &gens_to_remove] (sstring status, sstable_state state, entry_descriptor desc) -> future<> {
         if (status == "sealed") {
             co_return;
         }
@@ -493,7 +494,7 @@ future<> sstable_directory::sstables_registry_components_lister::garbage_collect
         co_await st.remove_by_registry_entry(std::move(desc));
     }));
     co_await coroutine::parallel_for_each(gens_to_remove, [this] (auto gen) -> future<> {
-        co_await _sstables_registry.delete_entry(_table_id, gen);
+        co_await _sstables_registry.delete_entry(_table_id, _node_owner, gen);
     });
 }
 

@@ -132,11 +132,11 @@ async def test_garbage_collect(manager: ManagerClient, object_storage):
         # Mark the sstables as "removing" to simulate the problem
         res = cql.execute("SELECT * FROM system.sstables;")
         for row in res:
-            sstable_entries.append((row.table_id, row.generation))
-        print(f'Found entries: {[ str(ent[1]) for ent in sstable_entries ]}')
-        for table_id, gen in sstable_entries:
+            sstable_entries.append((row.table_id, row.node_owner, row.generation))
+        print(f'Found entries: {[ str(ent[2]) for ent in sstable_entries ]}')
+        for table_id, node_owner, gen in sstable_entries:
             cql.execute("UPDATE system.sstables SET status = 'removing'"
-                         f" WHERE table_id = {table_id} AND generation = {gen};")
+                         f" WHERE table_id = {table_id} AND node_owner = {node_owner} AND generation = {gen};")
 
         print('Restart scylla')
         await manager.server_restart(server.server_id)
@@ -151,7 +151,7 @@ async def test_garbage_collect(manager: ManagerClient, object_storage):
         print(f'Found objects: {[ objects ]}')
         for o in objects:
             for ent in sstable_entries:
-                assert not o.key.startswith(str(ent[1])), f'Sstable object not cleaned, found {o.key}'
+                assert not o.key.startswith(str(ent[2])), f'Sstable object not cleaned, found {o.key}'
 
 
 @pytest.mark.asyncio
@@ -181,7 +181,7 @@ async def test_populate_from_quarantine(manager: ManagerClient, object_storage):
         assert len(list(res)) > 0, 'No entries in registry'
         for row in res:
             cql.execute("UPDATE system.sstables SET state = 'quarantine'"
-                         f" WHERE table_id = {row.table_id} AND generation = {row.generation};")
+                         f" WHERE table_id = {row.table_id} AND node_owner = {row.node_owner} AND generation = {row.generation};")
 
         print('Restart scylla')
         await manager.server_restart(server.server_id)

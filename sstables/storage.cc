@@ -729,7 +729,7 @@ object_name object_storage_base::make_object_name(const sstable& sst, sstring co
 
 void object_storage_base::open(sstable& sst) {
     entry_descriptor desc(sst._generation, sst._version, sst._format, component_type::TOC);
-    sst.manager().sstables_registry().create_entry(owner(), status_creating, sst._state, std::move(desc)).get();
+    sst.manager().sstables_registry().create_entry(owner(), sst.manager().get_local_host_id(), status_creating, sst._state, std::move(desc)).get();
 
     memory_data_sink_buffers bufs;
     auto out = data_sink(std::make_unique<memory_data_sink>(bufs));
@@ -817,7 +817,7 @@ future<data_sink> object_storage_base::make_component_sink(sstable& sst, compone
 }
 
 future<> object_storage_base::seal(const sstable& sst) {
-    co_await sst.manager().sstables_registry().update_entry_status(owner(), sst.generation(), status_sealed);
+    co_await sst.manager().sstables_registry().update_entry_status(owner(), sst.manager().get_local_host_id(), sst.generation(), status_sealed);
 }
 
 future<> object_storage_base::change_state(const sstable& sst, sstable_state state, generation_type generation, delayed_commit_changes* delay) {
@@ -827,19 +827,20 @@ future<> object_storage_base::change_state(const sstable& sst, sstable_state sta
         // is moved from upload directory and this is another issue for S3 (#13018)
         co_await coroutine::return_exception(std::runtime_error("Cannot change state and generation of an S3 object"));
     }
-    co_await sst.manager().sstables_registry().update_entry_state(owner(), sst.generation(), state);
+    co_await sst.manager().sstables_registry().update_entry_state(owner(), sst.manager().get_local_host_id(), sst.generation(), state);
 }
 
 future<> object_storage_base::wipe(const sstable& sst, sync_dir) noexcept {
     auto& sstables_registry = sst.manager().sstables_registry();
+    auto node_owner = sst.manager().get_local_host_id();
 
-    co_await sstables_registry.update_entry_status(owner(), sst.generation(), status_removing);
+    co_await sstables_registry.update_entry_status(owner(), node_owner, sst.generation(), status_removing);
 
     co_await coroutine::parallel_for_each(sst._recognized_components, [this, &sst] (auto type) -> future<> {
         co_await delete_object(make_object_name(sst, type));
     });
 
-    co_await sstables_registry.delete_entry(owner(), sst.generation());
+    co_await sstables_registry.delete_entry(owner(), node_owner, sst.generation());
 }
 
 future<atomic_delete_context> object_storage_base::atomic_delete_prepare(const std::vector<shared_sstable>&) const {
@@ -892,7 +893,8 @@ future<> object_storage_base::clone(const sstable& sst, generation_type gen, boo
 
     // Register the cloned sstable as "creating" in the registry
     entry_descriptor desc(gen, sst.get_version(), sst.get_format(), component_type::TOC);
-    co_await sst.manager().sstables_registry().create_entry(owner(), status_creating, sst.state(), desc);
+    auto node_owner = sst.manager().get_local_host_id();
+    co_await sst.manager().sstables_registry().create_entry(owner(), node_owner, status_creating, sst.state(), desc);
 
     // Copy all component objects from the source to the destination generation.
     co_await coroutine::parallel_for_each(sst.all_components(), [this, &sst, &gen] (const std::pair<component_type, sstring>& p) -> future<> {
@@ -901,7 +903,7 @@ future<> object_storage_base::clone(const sstable& sst, generation_type gen, boo
 
     if (!leave_unsealed) {
         // Mark the cloned sstable as sealed in the registry
-        co_await sst.manager().sstables_registry().update_entry_status(owner(), gen, status_sealed);
+        co_await sst.manager().sstables_registry().update_entry_status(owner(), node_owner, gen, status_sealed);
     }
 
     sstlog.debug("clone sst: {} generation={}: done", sst.get_filename(), gen);

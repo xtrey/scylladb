@@ -312,14 +312,15 @@ class mock_sstables_registry : public sstables::sstables_registry {
         sstables::sstable_state state;
         sstables::entry_descriptor desc;
     };
-    std::map<std::pair<table_id, generation_type>, entry> _entries;
+    using key_type = std::tuple<table_id, locator::host_id, generation_type>;
+    std::map<key_type, entry> _entries;
 public:
-    virtual future<> create_entry(table_id tid, sstring status, sstable_state state, sstables::entry_descriptor desc) override {
-        _entries.emplace(std::make_pair(tid, desc.generation), entry { status, state, desc });
+    virtual future<> create_entry(table_id tid, locator::host_id node_owner, sstring status, sstable_state state, sstables::entry_descriptor desc) override {
+        _entries.emplace(key_type{tid, node_owner, desc.generation}, entry { status, state, desc });
         co_return;
     };
-    virtual future<> update_entry_status(table_id tid, sstables::generation_type gen, sstring status) override {
-        auto it = _entries.find(std::make_pair(tid, gen));
+    virtual future<> update_entry_status(table_id tid, locator::host_id node_owner, sstables::generation_type gen, sstring status) override {
+        auto it = _entries.find(key_type{tid, node_owner, gen});
         if (it != _entries.end()) {
             it->second.status = status;
         } else {
@@ -327,8 +328,8 @@ public:
         }
         co_return;
     }
-    virtual future<> update_entry_state(table_id tid, sstables::generation_type gen, sstables::sstable_state state) override {
-        auto it = _entries.find(std::make_pair(tid, gen));
+    virtual future<> update_entry_state(table_id tid, locator::host_id node_owner, sstables::generation_type gen, sstables::sstable_state state) override {
+        auto it = _entries.find(key_type{tid, node_owner, gen});
         if (it != _entries.end()) {
             it->second.state = state;
         } else {
@@ -336,8 +337,8 @@ public:
         }
         co_return;
     }
-    virtual future<> delete_entry(table_id tid, sstables::generation_type gen) override {
-        auto it = _entries.find(std::make_pair(tid, gen));
+    virtual future<> delete_entry(table_id tid, locator::host_id node_owner, sstables::generation_type gen) override {
+        auto it = _entries.find(key_type{tid, node_owner, gen});
         if (it != _entries.end()) {
             _entries.erase(it);
         } else {
@@ -345,9 +346,9 @@ public:
         }
         co_return;
     }
-    virtual future<> sstables_registry_list(table_id tid, entry_consumer consumer) override {
-        for (auto& [loc_and_gen, e] : _entries) {
-            if (loc_and_gen.first == tid) {
+    virtual future<> sstables_registry_list(table_id tid, locator::host_id node_owner, entry_consumer consumer) override {
+        for (auto& [key, e] : _entries) {
+            if (std::get<0>(key) == tid && std::get<1>(key) == node_owner) {
                 co_await consumer(e.status, e.state, e.desc);
             }
         }
