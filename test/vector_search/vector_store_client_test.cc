@@ -1206,24 +1206,6 @@ SEASTAR_TEST_CASE(vector_store_client_abort_due_to_query_timeout) {
             }));
 }
 
-/// Verify that the HTTP error description from the vector store is propagated
-/// through the CQL interface as part of the invalid_request_exception message.
-SEASTAR_TEST_CASE(vector_store_client_cql_error_contains_http_error_description) {
-    co_await do_with_vector_store_mock([](cql_test_env& env, vs_mock_server& server) -> future<> {
-        co_await env.execute_cql("CREATE CUSTOM INDEX idx ON ks.test (embedding) USING 'vector_index'");
-
-        // Configure mock to return 404 with a specific error message
-        server.next_ann_response({status_type::not_found, "index does not exist"});
-
-        BOOST_CHECK_EXCEPTION(co_await env.execute_cql("SELECT * FROM ks.test ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5;"),
-                exceptions::invalid_request_exception, [](const exceptions::invalid_request_exception& ex) {
-                    auto msg = std::string(ex.what());
-                    // Verify the error message contains both the HTTP status and the error description
-                    return msg.find("404") != std::string::npos && msg.find("index does not exist") != std::string::npos;
-                });
-    });
-}
-
 // Create a vector index with an additional filtering column.
 // Because the local secondary index logic was used to determine the index target column,
 // the implementation wrongly selects last column as the target(vectors) column, leading to an exception

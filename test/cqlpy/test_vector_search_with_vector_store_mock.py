@@ -12,11 +12,13 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 import threading
 
 import pytest
+from cassandra.protocol import InvalidRequest
 
 from test.pylib.skip_types import skip_env
 from .util import config_value_context, local_process_id, new_test_table, unique_name, is_scylla
@@ -148,3 +150,19 @@ def test_vector_search_ann_with_partition_key_in_restriction(cql, test_keyspace,
                 "allow_filtering": False,
             },
         }
+
+
+# Verify that HTTP error responses from the vector store are propagated through CQL InvalidRequest.
+def test_vector_search_cql_error_contains_http_error_description(cql, test_keyspace, vector_store_mock, skip_without_tablets):
+
+    schema = "pk1 tinyint, pk2 tinyint, ck1 tinyint, ck2 tinyint, embedding vector<float, 3>, PRIMARY KEY ((pk1, pk2), ck1, ck2)"
+
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(
+            f"CREATE CUSTOM INDEX ON {table}(embedding) USING 'vector_index'")
+
+        vector_store_mock.set_next_ann_response(HTTPStatus.NOT_FOUND, "index does not exist")
+
+        with pytest.raises(InvalidRequest, match="404.*index does not exist"):
+            cql.execute(
+                f"SELECT * FROM {table} ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5")
