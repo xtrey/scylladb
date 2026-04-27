@@ -184,3 +184,15 @@ def test_vector_search_vector_index_with_additional_filtering_column(cql, test_k
 
         cql.execute(
             f"SELECT * FROM {table} ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5")
+
+
+def test_vector_search_local_vector_index_create_and_query_do_not_fail(cql, test_keyspace, vector_store_mock, skip_without_tablets):
+
+    schema = "pk1 tinyint, pk2 tinyint, ck1 tinyint, ck2 tinyint, embedding vector<float, 3>, PRIMARY KEY ((pk1, pk2), ck1, ck2)"
+
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(
+            f"CREATE CUSTOM INDEX ON {table}((pk1, pk2), embedding) USING 'vector_index'")
+
+        cql.execute(
+            f"SELECT * FROM {table} WHERE pk1 = 1 AND pk2 = 2 ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5")
