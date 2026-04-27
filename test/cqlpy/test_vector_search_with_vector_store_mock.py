@@ -166,3 +166,21 @@ def test_vector_search_cql_error_contains_http_error_description(cql, test_keysp
         with pytest.raises(InvalidRequest, match="404.*index does not exist"):
             cql.execute(
                 f"SELECT * FROM {table} ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5")
+
+
+# Create a vector index with an additional filtering column.
+# Because the local secondary index logic was used to determine the index target column,
+# the implementation wrongly selects last column as the target(vectors) column, leading to
+# an exception on the SELECT query:
+#     ANN ordering by vector requires the column to be indexed using 'vector_index'.
+# Reproduces SCYLLADB-635.
+def test_vector_search_vector_index_with_additional_filtering_column(cql, test_keyspace, vector_store_mock, skip_without_tablets):
+
+    schema = "pk1 tinyint, pk2 tinyint, ck1 tinyint, ck2 tinyint, embedding vector<float, 3>, PRIMARY KEY ((pk1, pk2), ck1, ck2)"
+
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(
+            f"CREATE CUSTOM INDEX ON {table}(embedding, ck1) USING 'vector_index'")
+
+        cql.execute(
+            f"SELECT * FROM {table} ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5")
