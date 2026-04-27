@@ -19,6 +19,7 @@ import threading
 
 import pytest
 from cassandra.protocol import InvalidRequest
+from cassandra.query import SimpleStatement
 
 from test.pylib.skip_types import skip_env
 from .util import config_value_context, local_process_id, new_test_table, unique_name, is_scylla
@@ -196,3 +197,51 @@ def test_vector_search_local_vector_index_create_and_query_do_not_fail(cql, test
 
         cql.execute(
             f"SELECT * FROM {table} WHERE pk1 = 1 AND pk2 = 2 ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5")
+
+
+# Verify that a paging warning is emitted when page size is smaller than LIMIT.
+def test_vector_search_paging_warning_when_page_size_smaller_than_limit(cql, test_keyspace, vector_store_mock, skip_without_tablets):
+
+    schema = "pk1 tinyint, pk2 tinyint, ck1 tinyint, ck2 tinyint, embedding vector<float, 3>, PRIMARY KEY ((pk1, pk2), ck1, ck2)"
+
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(
+            f"CREATE CUSTOM INDEX ON {table}(embedding) USING 'vector_index'")
+
+        result = cql.execute(SimpleStatement(
+            f"SELECT * FROM {table} ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 100", fetch_size=5))
+
+        warnings = result.response_future.warnings
+        assert warnings
+        assert len(warnings) == 1
+        assert "Paging is not supported for Vector Search queries. The entire result set has been returned." == warnings[0]
+
+
+# Verify no paging warning is emitted when paging is disabled (fetch_size=0).
+def test_vector_search_no_paging_warning_when_paging_disabled(cql, test_keyspace, vector_store_mock, skip_without_tablets):
+
+    schema = "pk1 tinyint, pk2 tinyint, ck1 tinyint, ck2 tinyint, embedding vector<float, 3>, PRIMARY KEY ((pk1, pk2), ck1, ck2)"
+
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(
+            f"CREATE CUSTOM INDEX ON {table}(embedding) USING 'vector_index'")
+
+        result = cql.execute(SimpleStatement(
+            f"SELECT * FROM {table} ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 100", fetch_size=0))
+
+        assert not result.response_future.warnings
+
+
+# Verify no paging warning is emitted when LIMIT is less than page size.
+def test_vector_search_no_paging_warning_when_limit_less_than_page_size(cql, test_keyspace, vector_store_mock, skip_without_tablets):
+
+    schema = "pk1 tinyint, pk2 tinyint, ck1 tinyint, ck2 tinyint, embedding vector<float, 3>, PRIMARY KEY ((pk1, pk2), ck1, ck2)"
+
+    with new_test_table(cql, test_keyspace, schema) as table:
+        cql.execute(
+            f"CREATE CUSTOM INDEX ON {table}(embedding) USING 'vector_index'")
+
+        result = cql.execute(SimpleStatement(
+            f"SELECT * FROM {table} ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5", fetch_size=100))
+
+        assert not result.response_future.warnings
