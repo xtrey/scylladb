@@ -5,6 +5,7 @@ target_sources(index
   PRIVATE
     secondary_index.cc
     secondary_index_manager.cc
+    index_option_utils.cc
     vector_index.cc)
 target_include_directories(index
   PUBLIC
