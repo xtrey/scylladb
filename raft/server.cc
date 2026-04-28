@@ -239,6 +239,9 @@ private:
 
     // Drop waiter that we lost track of, can happen due to a snapshot transfer,
     // or a leader removed from cluster while some entries added on it are uncommitted.
+    // When `snp` is provided (snapshot transfer case), waiters whose term matches
+    // the snapshot term are resolved successfully, since the snapshot-term match proves
+    // they were committed and included in the snapshot (by the Log Matching Property).
     void drop_waiters(const snapshot_descriptor* snp = nullptr);
 
     // Wake up all waiter that wait for entries with idx smaller of equal to the one provided
@@ -556,12 +559,10 @@ future<> server_impl::wait_for_entry(entry_id eid, wait_type type, seastar::abor
                 auto snap_term = _fsm->log_term_for(snap_idx);
                 SCYLLA_ASSERT(snap_term);
                 SCYLLA_ASSERT(snap_idx >= eid.idx);
-                if (type == wait_type::committed && snap_term == eid.term) {
+                if (snap_term == eid.term) {
                     logger.trace("[{}] wait_for_entry {}.{}: entry got truncated away, but has the snapshot's term"
                                  " (snapshot index: {})", id(), eid.term, eid.idx, snap_idx);
                     co_return;
-
-                    // We don't do this for `wait_type::applied` - see below why.
                 }
 
                 logger.trace("[{}] wait_for_entry {}.{}: entry got truncated away", id(), eid.term, eid.idx);
@@ -570,20 +571,6 @@ future<> server_impl::wait_for_entry(entry_id eid, wait_type type, seastar::abor
 
             if (*term != eid.term) {
                 throw dropped_entry();
-            }
-
-            if (type == wait_type::applied && _fsm->log_last_snapshot_idx() >= eid.idx) {
-                // We know the entry was committed but the wait type is `applied`
-                // and we don't know if the entry was applied with `state_machine::apply`
-                // (we may've loaded a snapshot before we managed to apply the entry).
-                // As specified by `add_entry`, throw `commit_status_unknown` in this case.
-                //
-                // FIXME: replace this with a different exception type - `commit_status_unknown`
-                // gives too much uncertainty while we know that the entry was committed
-                // and had to be applied on at least one server. Some callers of `add_entry`
-                // need to know only that the current state includes that entry, whether it was done
-                // through `apply` on this server or through receiving a snapshot.
-                throw commit_status_unknown();
             }
 
             co_return;
@@ -1004,8 +991,15 @@ void server_impl::drop_waiters(const snapshot_descriptor* snp) {
             }
             auto [entry_idx, status] = std::move(*it);
             waiters.erase(it);
-            status.done.set_exception(commit_status_unknown());
-            _stats.waiters_dropped++;
+            if (snp && status.term == snp->term) {
+                // entry_idx <= snapshot index and the entry's term matches the snapshot term.
+                // By the Log Matching Property the entry was committed and included in the snapshot.
+                status.done.set_value();
+                _stats.waiters_awoken++;
+            } else {
+                status.done.set_exception(commit_status_unknown());
+                _stats.waiters_dropped++;
+            }
         }
     };
     drop(_awaited_commits);
