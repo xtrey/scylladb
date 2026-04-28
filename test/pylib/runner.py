@@ -326,6 +326,11 @@ def pytest_configure(config: pytest.Config) -> None:
         config.run_ids = tuple(range(1, repeat + 1))
 
 
+class DisabledFile(pytest.File):
+    def collect(self) -> list[pytest.Item]:
+        pytest.skip("All tests in this file are disabled in requested modes according to the suite config.")
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_collect_file(file_path: pathlib.Path,
                         parent: pytest.Collector) -> Generator[None, list[pytest.Collector], list[pytest.Collector]]:
@@ -340,19 +345,17 @@ def pytest_collect_file(file_path: pathlib.Path,
                 mode for mode in build_modes
                 if not suite_config.is_test_disabled(build_mode=mode, path=file_path)
             )
-        repeats = list(product(build_modes, parent.config.run_ids))
-
-        if not repeats:
-            return []
-
-        ihook = parent.ihook
-        collectors = list(chain(collectors, chain.from_iterable(
-            ihook.pytest_collect_file(file_path=file_path, parent=parent) for _ in range(1, len(repeats))
-        )))
-        for (build_mode, run_id), collector in zip(repeats, collectors, strict=True):
-            collector.stash[BUILD_MODE] = build_mode
-            collector.stash[RUN_ID] = run_id
-            collector.stash[TEST_SUITE] = suite_config
+        if repeats := list(product(build_modes, parent.config.run_ids)):
+            ihook = parent.ihook
+            collectors = list(chain(collectors, chain.from_iterable(
+                ihook.pytest_collect_file(file_path=file_path, parent=parent) for _ in range(1, len(repeats))
+            )))
+            for (build_mode, run_id), collector in zip(repeats, collectors, strict=True):
+                collector.stash[BUILD_MODE] = build_mode
+                collector.stash[RUN_ID] = run_id
+                collector.stash[TEST_SUITE] = suite_config
+        else:
+            collectors = [DisabledFile.from_parent(parent=parent, path=file_path)]
 
         parent.stash[REPEATING_FILES].remove(file_path)
 
