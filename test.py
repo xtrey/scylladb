@@ -185,6 +185,8 @@ def parse_cmd_line() -> argparse.Namespace:
                         help="Specific byte limit for failure injection (random by default)")
     parser.add_argument('--skip-internet-dependent-tests', action="store_true",
                         help="Skip tests which depend on artifacts from the internet.")
+    parser.add_argument('--keep-duplicates', action='store_true', default=False,
+                        help="Do not deduplicate test arguments.")
     parser.add_argument("--pytest-arg", action='store', type=str,
                         default=None, dest="pytest_arg",
                         help="Additional command line arguments to pass to pytest, for example ./test.py --pytest-arg=\"-v -x\"")
@@ -318,7 +320,8 @@ def run_pytest(options: argparse.Namespace) -> int:
 
     report_dir =  temp_dir / 'report'
     junit_output_file = report_dir / f'pytest_cpp_{HOST_ID}.xml'
-    files_to_run = _deduplicate_test_args(options.name) or [str(TOP_SRC_DIR / 'test/')]
+    files_to_run = options.name if options.keep_duplicates else _deduplicate_test_args(options.name)
+    files_to_run = files_to_run or [str(TOP_SRC_DIR / 'test/')]
     args = [
         '--color=yes',
         f'--repeat={options.repeat}',
@@ -338,6 +341,8 @@ def run_pytest(options: argparse.Namespace) -> int:
         ])
     if options.verbose:
         args.append('-v')
+    if options.keep_duplicates:
+        args.append('--keep-duplicates')
     if options.quiet:
         args.append('--quiet')
         args.extend(['-p','no:sugar'])
