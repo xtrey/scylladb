@@ -223,6 +223,7 @@ future<> audit::stop_audit() {
         return make_ready_future<>();
     }
     return audit::audit::audit_instance().invoke_on_all([] (auto& local_audit) {
+        SCYLLA_ASSERT(!local_audit._storage_running);
         return local_audit.shutdown();
     }).then([] {
         return audit::audit::audit_instance().stop();
