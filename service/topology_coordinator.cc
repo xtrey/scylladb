@@ -4401,6 +4401,7 @@ future<bool> topology_coordinator::maybe_retry_failed_rf_change_tablet_rebuilds(
 }
 
 future<> topology_coordinator::refresh_tablet_load_stats() {
+    co_await utils::get_local_injector().inject("refresh_tablet_load_stats_pause", utils::wait_for_message(5min));
     auto tm = get_token_metadata_ptr();
 
     locator::load_stats stats;
@@ -4819,6 +4820,7 @@ future<> run_topology_coordinator(
         }
         on_fatal_internal_error(rtlogger, format("unhandled exception in topology_coordinator::run: {}", ex));
     }
+    co_await utils::get_local_injector().inject("topology_coordinator_pause_before_stop", utils::wait_for_message(5min));
     co_await coordinator.stop();
 }
 
