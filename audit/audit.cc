@@ -194,14 +194,27 @@ future<> audit::start_audit(const db::config& cfg, sharded<locator::shared_token
                                   std::move(audited_keyspaces),
                                   std::move(audited_tables),
                                   std::move(audited_categories),
-                                  std::cref(cfg))
-    .then([&cfg] {
-        if (!audit_instance().local_is_initialized()) {
-            return make_ready_future<>();
-        }
-        return audit_instance().invoke_on_all([&cfg] (audit& local_audit) {
-            return local_audit.start(cfg);
+                                  std::cref(cfg));
+}
+
+future<> audit::start_storage(const db::config& cfg) {
+    if (!audit_instance().local_is_initialized()) {
+        return make_ready_future<>();
+    }
+    return audit_instance().invoke_on_all([&cfg] (audit& local_audit) {
+        return local_audit._storage_helper_ptr->start(cfg).then([&local_audit] {
+            local_audit._storage_running = true;
         });
+    });
+}
+
+future<> audit::stop_storage() {
+    if (!audit_instance().local_is_initialized()) {
+        return make_ready_future<>();
+    }
+    return audit_instance().invoke_on_all([] (audit& local_audit) {
+        local_audit._storage_running = false;
+        return local_audit._storage_helper_ptr->stop();
     });
 }
 
@@ -210,6 +223,7 @@ future<> audit::stop_audit() {
         return make_ready_future<>();
     }
     return audit::audit::audit_instance().invoke_on_all([] (auto& local_audit) {
+        SCYLLA_ASSERT(!local_audit._storage_running);
         return local_audit.shutdown();
     }).then([] {
         return audit::audit::audit_instance().stop();
@@ -223,14 +237,6 @@ audit_info_ptr audit::create_audit_info(statement_category cat, const sstring& k
     return std::make_unique<audit_info>(cat, keyspace, table, batch);
 }
 
-future<> audit::start(const db::config& cfg) {
-    return _storage_helper_ptr->start(cfg);
-}
-
-future<> audit::stop() {
-    return _storage_helper_ptr->stop();
-}
-
 future<> audit::shutdown() {
     return make_ready_future<>();
 }
@@ -241,6 +247,12 @@ future<> audit::log(const audit_info& audit_info, const service::client_state& c
     const sstring& username = client_state.user() ? client_state.user()->name.value_or(anonymous_username) : no_username;
     socket_address client_ip = client_state.get_client_address().addr();
     socket_address node_ip = _token_metadata.get()->get_topology().my_address().addr();
+    if (!_storage_running) {
+        on_internal_error_noexcept(logger, fmt::format("Audit log dropped (storage not ready): node_ip {} category {} cl {} error {} keyspace {} query '{}' client_ip {} table {} username {}",
+            node_ip, audit_info.category_string(), cl, error, audit_info.keyspace(),
+            audit_info.query(), client_ip, audit_info.table(), username));
+        return make_ready_future<>();
+    }
     if (logger.is_enabled(logging::log_level::debug)) {
         logger.debug("Log written: node_ip {} category {} cl {} error {} keyspace {} query '{}' client_ip {} table {} username {}",
             node_ip, audit_info.category_string(), cl, error, audit_info.keyspace(),
@@ -286,6 +298,11 @@ future<> inspect(const audit_info_alternator& ai, const service::client_state& c
 
 future<> audit::log_login(const sstring& username, socket_address client_ip, bool error) noexcept {
     socket_address node_ip = _token_metadata.get()->get_topology().my_address().addr();
+    if (!_storage_running) {
+        on_internal_error_noexcept(logger, fmt::format("Audit login log dropped (storage not ready): node_ip {} client_ip {} username {} error {}",
+            node_ip, client_ip, username, error ? "true" : "false"));
+        return make_ready_future<>();
+    }
     if (logger.is_enabled(logging::log_level::debug)) {
         logger.debug("Login log written: node_ip {}, client_ip {}, username {}, error {}",
             node_ip, client_ip, username, error ? "true" : "false");

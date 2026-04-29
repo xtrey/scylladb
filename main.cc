@@ -1810,6 +1810,18 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             utils::get_local_injector().inject("stop_after_starting_migration_manager",
                 [] { std::raise(SIGSTOP); });
 
+            // Audit must be constructed before the maintenance socket so
+            // that on shutdown (reverse destruction order) the audit service
+            // outlives the maintenance socket and in-flight queries can
+            // still reach audit::inspect() safely.
+            checkpoint(stop_signal, "starting audit service");
+            audit::audit::start_audit(*cfg, token_metadata, qp, mm).handle_exception([&] (auto&& e) {
+                startlog.error("audit start failed: {}", e);
+            }).get();
+            auto audit_stop = defer([] {
+                audit::audit::stop_audit().get();
+            });
+
             // XXX: stop_raft has to happen before query_processor and migration_manager
             // is stopped, since some groups keep using the query
             // processor until are stopped inside stop_raft.
@@ -2340,15 +2352,6 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             }).get();
             stop_signal.ready(false);
 
-            if (cfg->maintenance_socket() != "ignore") {
-                // Enable role operations now that node joined the cluster
-                maintenance_auth_service.invoke_on_all([](auth::service& svc) {
-                    return auth::ensure_role_operations_are_enabled(svc);
-                }).get();
-
-                start_cql(*cql_maintenance_server_ctl, stop_maintenance_cql, "maintenance native server");
-            }
-
             // At this point, `locator::topology` should be stable, i.e. we should have complete information
             // about the layout of the cluster (= list of nodes along with the racks/DCs).
             startlog.info("Verifying that all of the keyspaces are RF-rack-valid");
@@ -2357,15 +2360,22 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             startlog.info("Verifying that all of the tablet keyspaces use rack list replication factors");
             db.local().check_rack_list_everywhere(cfg->enforce_rack_list());
 
-            // Start audit service after join_cluster so that the table-based audit backend
-            // can properly create its keyspace and table.
-            checkpoint(stop_signal, "starting audit service");
-            audit::audit::start_audit(*cfg, token_metadata, qp, mm).handle_exception([&] (auto&& e) {
-                startlog.error("audit start failed: {}", e);
-            }).get();
-            auto audit_stop = defer([] {
-                audit::audit::stop_audit().get();
+            // The table-based audit backend needs Raft (via join_cluster)
+            // to create its keyspace and table.
+            checkpoint(stop_signal, "starting audit storage");
+            audit::audit::start_storage(*cfg).get();
+            auto audit_storage_stop = defer([] {
+                audit::audit::stop_storage().get();
             });
+
+            if (cfg->maintenance_socket() != "ignore") {
+                // Enable role operations now that node joined the cluster
+                maintenance_auth_service.invoke_on_all([](auth::service& svc) {
+                    return auth::ensure_role_operations_are_enabled(svc);
+                }).get();
+
+                start_cql(*cql_maintenance_server_ctl, stop_maintenance_cql, "maintenance native server");
+            }
 
             // Semantic validation of sstable compression parameters from config.
             // Adding here (i.e., after `join_cluster`) to ensure that the

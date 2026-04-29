@@ -29,12 +29,16 @@ import pytest
 from cassandra import AlreadyExists, AuthenticationFailed, ConsistencyLevel, InvalidRequest, Unauthorized, Unavailable, WriteFailure
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import NoHostAvailable, Session, EXEC_PROFILE_DEFAULT
+from cassandra.connection import UnixSocketEndPoint
+from cassandra.policies import WhiteListRoundRobinPolicy
 from cassandra.query import BatchStatement, BatchType, SimpleStatement, named_tuple_factory
 
+from test.cluster.conftest import cluster_con
 from test.cluster.dtest.dtest_class import create_ks, wait_for
 from test.cluster.dtest.tools.assertions import assert_invalid
 from test.cluster.dtest.tools.data import rows_to_list, run_in_parallel
 
+from test.pylib.driver_utils import safe_driver_shutdown
 from test.pylib.manager_client import ManagerClient
 from test.pylib.rest_client import read_barrier
 from test.pylib.skip_types import skip_env
@@ -273,6 +277,7 @@ class AuditEntry:
     statement: str
     table: str
     user: str
+    source: str = "127.0.0.1"
 
 
 class AuditBackend:
@@ -449,6 +454,13 @@ class AuditBackendSyslog(AuditBackend):
             entries.append(self.line_to_row(line, idx))
         return { self.audit_mode(): entries }
 
+    @staticmethod
+    def _parse_address(addr_port):
+        """Extract IP from 'ip:port' (IPv4) or '[ip]:port' (IPv6)."""
+        if addr_port.startswith("["):
+            return addr_port[1:addr_port.index("]")]
+        return addr_port.split(":")[0]
+
     def line_to_row(self, line, idx):
         metadata, data = line.split(": ", 1)
         data = "".join(data.splitlines()) # Remove newlines
@@ -460,9 +472,9 @@ class AuditBackendSyslog(AuditBackend):
         # and make sure it doesn't change during the test (e.g. when the test is running at 23:59:59)
         date = datetime.datetime(2000, 1, 1, 0, 0)
 
-        node = match.group("node").split(":")[0]
+        node = self._parse_address(match.group("node"))
         statement = match.group("query").replace("\\", "")
-        source = match.group("client_ip").split(":")[0]
+        source = self._parse_address(match.group("client_ip"))
         event_time = uuid.UUID(int=idx)
         t = self.named_tuple_factory(date, node, event_time, match.group("category"), match.group("cl"), match.group("error") == "true", match.group("keyspace"), statement, source, match.group("table"), match.group("username"))
         return t
@@ -582,6 +594,7 @@ class CQLAuditTester(AuditTester):
         user="anonymous",
         cl="ONE",
         error=False,
+        source="127.0.0.1",
     ):
         self.assert_audit_row_fields(row)
         assert row.node in self.server_addresses
@@ -590,7 +603,7 @@ class CQLAuditTester(AuditTester):
         assert row.error == error
         assert row.keyspace_name == ks
         assert row.operation == statement
-        assert row.source == "127.0.0.1"
+        assert row.source == source
         assert row.table_name == table
         assert row.username == user
 
@@ -814,7 +827,7 @@ class CQLAuditTester(AuditTester):
             sorted_new_rows = sorted(new_rows, key=lambda row: (row.node, row.category, row.consistency, row.error, row.keyspace_name, row.operation, row.source, row.table_name, row.username))
             assert len(sorted_new_rows) == len(expected_entries)
             for row, entry in zip(sorted_new_rows, sorted(expected_entries)):
-                self.assert_audit_row_eq(row, entry.category, entry.statement, entry.table, entry.ks, entry.user, entry.cl, entry.error)
+                self.assert_audit_row_eq(row, entry.category, entry.statement, entry.table, entry.ks, entry.user, entry.cl, entry.error, entry.source)
 
     async def verify_keyspace(self, audit_settings=None, helper=None):
         """
@@ -1854,6 +1867,44 @@ class CQLAuditTester(AuditTester):
             finally:
                 session.execute("DROP KEYSPACE IF EXISTS kss")
 
+    # Unix domain sockets have no IP peer address.  Seastar's
+    # socket_address::addr() falls through to the default case for
+    # AF_UNIX and returns a zero-initialised in6_addr, i.e. "::".
+    MAINTENANCE_SOCKET_SOURCE = "::"
+
+    async def _test_audit_maintenance_socket_user_creation(self, manager, helper_class):
+        with helper_class() as helper:
+            session = await self.prepare(
+                user="cassandra", password="cassandra",
+                helper=helper,
+                audit_settings={**helper.audit_default_settings, "audit_categories": "DCL", "audit_keyspaces": ""},
+                create_keyspace=False,
+            )
+
+            servers = await manager.running_servers()
+            server = servers[0]
+            socket_path = await manager.server_get_maintenance_socket_path(server.server_id)
+
+            logger.info("Connecting to maintenance socket")
+            endpoint = UnixSocketEndPoint(socket_path)
+            maint_cluster = cluster_con([endpoint],
+                                        load_balancing_policy=WhiteListRoundRobinPolicy([endpoint]))
+            maint_session = maint_cluster.connect()
+
+            role_name = "audit_test_admin"
+            create_stmt = f"CREATE ROLE {role_name} WITH PASSWORD = 'secret' AND SUPERUSER = true AND LOGIN = true"
+            expected_operation = f"CREATE ROLE {role_name} WITH PASSWORD = '***' AND SUPERUSER = true AND LOGIN = true"
+
+            logger.info("Creating superuser via maintenance socket and verifying audit entry")
+            expected_entries = [AuditEntry(category="DCL", statement=expected_operation,
+                                          user="anonymous", table="", ks="", cl="LOCAL_QUORUM", error=False,
+                                          source=self.MAINTENANCE_SOCKET_SOURCE)]
+            with self.assert_entries_were_added(session, expected_entries):
+                maint_session.execute(create_stmt)
+
+            logger.info("Cleaning up created role")
+            maint_session.execute(f"DROP ROLE IF EXISTS {role_name}")
+            safe_driver_shutdown(maint_cluster)
 
 # AuditBackendTable, no auth, rf=1
 
@@ -1944,6 +1995,14 @@ async def test_insert_failure_standalone(manager: ManagerClient):
 async def test_service_level_statements_standalone(manager: ManagerClient):
     """audit=table, auth, cmdline=--smp 1 — standalone due to special cmdline."""
     await CQLAuditTester(manager)._test_service_level_statements()
+
+
+async def test_audit_maintenance_socket_user_creation(manager: ManagerClient):
+    """Verify that creating a superuser via the maintenance socket is audited."""
+    t = CQLAuditTester(manager)
+    await t._test_audit_maintenance_socket_user_creation(manager, AuditBackendTable)
+    Syslog = functools.partial(AuditBackendSyslog, socket_path=syslog_socket_path)
+    await t._test_audit_maintenance_socket_user_creation(manager, Syslog)
 
 
 # AuditBackendSyslog, no auth, rf=1

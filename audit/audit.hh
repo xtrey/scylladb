@@ -141,6 +141,7 @@ private:
     category_set _audited_categories;
 
     std::unique_ptr<storage_helper> _storage_helper_ptr;
+    bool _storage_running = false;
 
     const db::config& _cfg;
     utils::observer<sstring> _cfg_keyspaces_observer;
@@ -163,6 +164,8 @@ public:
         return audit_instance().local();
     }
     static future<> start_audit(const db::config& cfg, sharded<locator::shared_token_metadata>& stm, sharded<cql3::query_processor>& qp, sharded<service::migration_manager>& mm);
+    static future<> start_storage(const db::config& cfg);
+    static future<> stop_storage();
     static future<> stop_audit();
     static audit_info_ptr create_audit_info(statement_category cat, const sstring& keyspace, const sstring& table, bool batch = false);
     audit(locator::shared_token_metadata& stm,
@@ -174,8 +177,6 @@ public:
           category_set&& audited_categories,
           const db::config& cfg);
     ~audit();
-    future<> start(const db::config& cfg);
-    future<> stop();
     future<> shutdown();
     bool should_log(const audit_info& audit_info) const;
     bool will_log(statement_category cat, std::string_view keyspace = {}, std::string_view table = {}) const;

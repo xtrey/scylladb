@@ -371,8 +371,12 @@ int scylla_simple_query_main(int argc, char** argv) {
             audit::audit::start_audit(env.local_db().get_config(), env.get_shared_token_metadata(), env.qp(), env.migration_manager()).handle_exception([&] (auto&& e) {
                 fmt::print("audit start failed: {}", e);
             }).get();
+            audit::audit::start_storage(env.local_db().get_config()).get();
             auto audit_stop = defer([] {
                 audit::audit::stop_audit().get();
+            });
+            auto audit_storage_stop = defer([] {
+                audit::audit::stop_storage().get();
             });
             auto results = do_cql_test(env, cfg);
             aggregated_perf_results agg(results);
