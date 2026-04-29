@@ -98,4 +98,14 @@ SEASTAR_TEST_CASE(test_concurrent_invalidation) {
 
 #endif // SCYLLA_ENABLE_ERROR_INJECTION
 
+#ifndef SCYLLA_ENABLE_ERROR_INJECTION
+// The only test in this suite requires error injection support. Without this
+// dummy case the suite would be empty, which causes boost to report
+// "test tree is empty" and pytest to exit with code 5 ("no tests collected"),
+// failing CI in modes (e.g. release) where error injection is disabled.
+BOOST_AUTO_TEST_CASE(test_skipped_no_error_injection) {
+    BOOST_TEST_MESSAGE("table_helper_test requires SCYLLA_ENABLE_ERROR_INJECTION; skipping");
+}
+#endif
+
 BOOST_AUTO_TEST_SUITE_END()
