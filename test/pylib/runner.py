@@ -163,11 +163,6 @@ def scylla_binary(testpy_test) -> Path:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    items[:] = [
-        item for item in items
-        if (parent_file := item.getparent(cls=pytest.File)) is not None
-           and BUILD_MODE in parent_file.stash
-    ]
     for item in items:
         modify_pytest_item(item=item)
 
@@ -348,8 +343,7 @@ def pytest_collect_file(file_path: pathlib.Path,
         repeats = list(product(build_modes, parent.config.run_ids))
 
         if not repeats:
-            parent.stash[REPEATING_FILES].remove(file_path)
-            return collectors
+            return []
 
         ihook = parent.ihook
         collectors = list(chain(collectors, chain.from_iterable(
