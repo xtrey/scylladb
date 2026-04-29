@@ -90,7 +90,7 @@ public:
     // raft::commit_status_unknown
     //     Thrown if the leader has changed and the log entry has either
     //     been replaced by the new leader or the server has lost track of it.
-    //     It may also be thrown in case of a transport error while forwarding add_entry to the leader.L
+    //     It may also be thrown in case of a transport error while forwarding add_entry to the leader.
     // raft::dropped_entry
     //     Thrown if the entry was replaced because of a leader change.
     // raft::request_aborted
