@@ -1362,6 +1362,33 @@ static int get_dimensions(const rjson::value& vector_attribute, std::string_view
     return dimensions_v->GetInt();
 }
 
+// As noted in issue #5052, in Alternator the CreateTable and UpdateTable are
+// currently synchronous - they return only after the operation is complete.
+// After announce() of the new schema finished, the schema change is committed
+// and a majority of nodes know it - but it's possible that some live nodes
+// have not yet applied the new schema. If we return to the user now, and the
+// user sends a node request that relies on the new schema, it might fail.
+// So before returning, we must verify that *all* nodes have applied the new
+// schema. This is what wait_for_schema_agreement_after_ddl() does.
+//
+// Note that wait_for_schema_agreement_after_ddl() has a timeout (currently
+// hard-coded to 30 seconds). If the timeout is reached an InternalServerError
+// is returned. The user, who doesn't know if the CreateTable succeeded or not,
+// can retry the request and will get a ResourceInUseException and know the
+// table already exists. So a CreateTable that returns a ResourceInUseException
+// should also call wait_for_schema_agreement_after_ddl().
+//
+// When issue #5052 is resolved, this function can be removed - we will need
+// to check if we reached schema agreement, but not to *wait* for it.
+static future<> wait_for_schema_agreement_after_ddl(service::migration_manager& mm, const replica::database& db) {
+    static constexpr auto schema_agreement_seconds = 30;
+    try {
+        co_await mm.wait_for_schema_agreement(db, db::timeout_clock::now() + std::chrono::seconds(schema_agreement_seconds), nullptr);
+    } catch (const service::migration_manager::schema_agreement_timeout&) {
+        throw api_error::internal(fmt::format("The operation was successful, but unable to confirm cluster-wide schema agreement after {} seconds. Please retry the operation, and wait for the retry to report an error since the operation was already done.", schema_agreement_seconds));
+    }
+}
+
 future<executor::request_return_type> executor::create_table_on_shard0(service::client_state&& client_state, tracing::trace_state_ptr trace_state, rjson::value request, bool enforce_authorization, bool warn_authorization,
             const db::tablets_mode_t::mode tablets_mode, std::unique_ptr<audit::audit_info_alternator>& audit_info) {
     throwing_assert(this_shard_id() == 0);
@@ -1695,12 +1722,25 @@ future<executor::request_return_type> executor::create_table_on_shard0(service::
                 }
             }
         }
+        bool table_already_exists = false;
         try {
             schema_mutations = service::prepare_new_keyspace_announcement(_proxy.local_db(), ksm, ts);
         } catch (exceptions::already_exists_exception&) {
             if (_proxy.data_dictionary().has_schema(keyspace_name, table_name)) {
-                co_return api_error::resource_in_use(fmt::format("Table {} already exists", table_name));
+                table_already_exists = true;
             }
+        }
+        if (table_already_exists) {
+            // The user may have retried a CreateTable operation after it timed
+            // out in wait_for_schema_agreement_after_ddl(). So before we may
+            // return ResourceInUseException (which can lead the user to start
+            // using the table which it now knows exists), we need to wait for
+            // schema agreement, just like the original CreateTable did. Again
+            // we fail with InternalServerError if schema agreement still cannot
+            // be reached. We can release group0_guard before waiting.
+            release_guard(std::move(group0_guard));
+            co_await wait_for_schema_agreement_after_ddl(_mm, _proxy.local_db());
+            co_return api_error::resource_in_use(fmt::format("Table {} already exists", table_name));
         }
         if (_proxy.data_dictionary().try_find_table(schema->id())) {
             // This should never happen, the ID is supposed to be unique
@@ -1750,7 +1790,7 @@ future<executor::request_return_type> executor::create_table_on_shard0(service::
         }
     }
 
-    co_await _mm.wait_for_schema_agreement(_proxy.local_db(), db::timeout_clock::now() + 10s, nullptr);
+    co_await wait_for_schema_agreement_after_ddl(_mm, _proxy.local_db());
     rjson::value status = rjson::empty_object();
     executor::supplement_table_info(request, *schema, _proxy);
     rjson::add(status, "TableDescription", std::move(request));
@@ -2189,7 +2229,7 @@ future<executor::request_return_type> executor::update_table(client_state& clien
                 throw;
             }
         }
-        co_await mm.wait_for_schema_agreement(p.local().local_db(), db::timeout_clock::now() + 10s, nullptr);
+        co_await wait_for_schema_agreement_after_ddl(mm, p.local().local_db());
 
         rjson::value status = rjson::empty_object();
         supplement_table_info(request, *schema, p.local());
