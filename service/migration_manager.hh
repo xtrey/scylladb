@@ -14,6 +14,7 @@
 #include "gms/endpoint_state.hh"
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/gate.hh>
+#include <seastar/core/timed_out_error.hh>
 #include "gms/inet_address.hh"
 #include "gms/feature.hh"
 #include "gms/i_endpoint_state_change_subscriber.hh"
@@ -133,6 +134,19 @@ public:
      * Known peers in the cluster have the same schema version as us.
      */
     bool have_schema_agreement();
+    // Thrown by wait_for_schema_agreement() when the deadline is reached.
+    struct schema_agreement_timeout : public seastar::timed_out_error {
+        const char* what() const noexcept override {
+            return "Unable to reach schema agreement";
+        }
+    };
+    /**
+     * Waits until all known live peers have the same schema version as this
+     * node. Returns normally once agreement is reached, or throws
+     * schema_agreement_timeout if the deadline is reached before agreement.
+     * If as != nullptr, can also throw abort_requested_exception if the abort
+     * source fires.
+     */
     future<> wait_for_schema_agreement(const replica::database& db, db::timeout_clock::time_point deadline, seastar::abort_source* as);
 
     // Maximum number of retries one should attempt when trying to perform

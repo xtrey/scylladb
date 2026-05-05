@@ -239,7 +239,7 @@ future<> migration_manager::wait_for_schema_agreement(const replica::database& d
             as->check();
         }
         if (db::timeout_clock::now() > deadline) {
-            throw std::runtime_error("Unable to reach schema agreement");
+            throw schema_agreement_timeout();
         }
         co_await (as ? sleep_abortable(std::chrono::milliseconds(500), *as) : sleep(std::chrono::milliseconds(500)));
     }
