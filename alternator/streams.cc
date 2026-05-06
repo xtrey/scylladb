@@ -1531,11 +1531,8 @@ future<executor::request_return_type> executor::get_records(client_state& client
         // "set to null". Our test test_streams_closed_read
         // confirms that by "null" they meant not set at all.
     } else {
-        // We could have return the same iterator again, but we did
-        // a search from it until high_ts and found nothing, so we
-        // can also start the next search from high_ts.
-        // TODO: but why? It's simpler just to leave the iterator be.
-        shard_iterator next_iter(iter.table, iter.shard, utils::UUID_gen::min_time_UUID(high_ts.time_since_epoch()), true);
+        // Shard is still open with no records in the scanned window.
+        // Return the original iterator so the client can poll again.
         rjson::add(ret, "NextShardIterator", iter);
     }
     _stats.api_operations.get_records_latency.mark(std::chrono::steady_clock::now() - start_time);
