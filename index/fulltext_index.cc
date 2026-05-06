@@ -12,10 +12,8 @@
 #include "schema/schema.hh"
 #include "index/fulltext_index.hh"
 #include "index/index_option_utils.hh"
-#include "index/secondary_index.hh"
 #include "index/secondary_index_manager.hh"
 #include "utils/UUID_gen.hh"
-#include "utils/managed_string.hh"
 #include <seastar/core/sstring.hh>
 #include <boost/algorithm/string.hpp>
 
@@ -40,46 +38,9 @@ bool fulltext_index::view_should_exist() const {
 }
 
 std::optional<cql3::description> fulltext_index::describe(const index_metadata& im, const schema& base_schema) const {
-    static const std::unordered_set<sstring> system_options = {
-        cql3::statements::index_target::target_option_name,
-        db::index::secondary_index::custom_class_option_name,
-        db::index::secondary_index::index_version_option_name,
-    };
-
     auto target = im.options().at(cql3::statements::index_target::target_option_name);
     auto target_column = cql3::statements::index_target::column_name_from_target_string(target);
-
-    fragmented_ostringstream os;
-    os << "CREATE CUSTOM INDEX " << cql3::util::maybe_quote(im.name()) << " ON " << cql3::util::maybe_quote(base_schema.ks_name()) << "."
-       << cql3::util::maybe_quote(base_schema.cf_name()) << "(" << cql3::util::maybe_quote(target_column) << ")"
-       << " USING 'fulltext_index'";
-
-    // Collect user-provided options (excluding system keys like target, class_name, index_version).
-    std::map<sstring, sstring> user_options;
-    for (const auto& [key, value] : im.options()) {
-        if (!system_options.contains(key)) {
-            user_options.emplace(key, value);
-        }
-    }
-    if (!user_options.empty()) {
-        os << " WITH OPTIONS = {";
-        bool first = true;
-        for (const auto& [key, value] : user_options) {
-            if (!first) {
-                os << ", ";
-            }
-            os << "'" << key << "': '" << value << "'";
-            first = false;
-        }
-        os << "}";
-    }
-
-    return cql3::description{
-        .keyspace = base_schema.ks_name(),
-        .type = "index",
-        .name = im.name(),
-        .create_statement = std::move(os).to_managed_string(),
-    };
+    return describe_with_target(im, base_schema, cql3::util::maybe_quote(target_column));
 }
 
 void fulltext_index::check_target(const schema& schema, const std::vector<::shared_ptr<cql3::statements::index_target>>& targets) const {
