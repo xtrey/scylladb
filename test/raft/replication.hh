@@ -359,6 +359,9 @@ public:
     future<> stop_all();
     future<> wait_all();
     void disconnect(size_t id, std::optional<raft::server_id> except = std::nullopt);
+    // Block node `to` from receiving messages from node `from`.
+    // Messages in the reverse direction (from `to` to `from`) are unaffected.
+    void block_receive(size_t to, size_t from);
     void connect_all();
     void elapse_elections();
     future<> elect_new_leader(size_t new_leader);
@@ -519,6 +522,10 @@ struct raft_cluster<Clock>::connected {
     void cut(raft::server_id id1, raft::server_id id2) {
         disconnected.insert({id1, id2});
         disconnected.insert({id2, id1});
+    }
+    // Block `to` from receiving messages from `from` (one-way).
+    void block_receive(raft::server_id to, raft::server_id from) {
+        disconnected.insert({to, from});
     }
     // Isolate a server
     void disconnect(raft::server_id id, std::optional<raft::server_id> except = std::nullopt) {
@@ -925,6 +932,11 @@ future<> raft_cluster<Clock>::wait_all() {
 template <typename Clock>
 void raft_cluster<Clock>::disconnect(size_t id, std::optional<raft::server_id> except) {
     _connected->disconnect(to_raft_id(id), except);
+}
+
+template <typename Clock>
+void raft_cluster<Clock>::block_receive(size_t to, size_t from) {
+    _connected->block_receive(to_raft_id(to), to_raft_id(from));
 }
 
 template <typename Clock>

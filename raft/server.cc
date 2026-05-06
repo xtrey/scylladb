@@ -747,6 +747,8 @@ future<> server_impl::add_entry(command command, wait_type type, seastar::abort_
             throw not_a_leader{leader};
         }
         auto eid = co_await add_entry_on_leader(std::move(command), as);
+        co_await utils::get_local_injector().inject("block_raft_add_entry_before_wait_for_entry",
+                utils::wait_for_message(std::chrono::minutes(5)));
         co_return co_await wait_for_entry(eid, type, as);
     }
 
