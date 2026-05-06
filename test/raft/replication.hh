@@ -552,8 +552,8 @@ struct raft_cluster<Clock>::connected {
         disconnected.clear();
     }
     bool operator()(raft::server_id id1, raft::server_id id2) {
-        // It's connected if both ways are not disconnected
-        return !disconnected.contains({id1, id2}) && !disconnected.contains({id1, id2});
+        // Can id2 send to id1? (i.e. is the id2->id1 connection not blocked?)
+        return !disconnected.contains({id1, id2});
     }
 };
 
