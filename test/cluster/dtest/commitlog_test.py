@@ -94,7 +94,7 @@ class TestCommitLog(Tester):
         files = glob.glob(f"{path}/*CommitLog-*.log")
         if not files:
             return 0, "" if include_stdout else 0
-        cmd_args = ["du", "-m"]
+        cmd_args = ["du", "-b"]
         cmd_args.extend(files)
         p = subprocess.Popen(cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = p.communicate()
@@ -118,7 +118,7 @@ class TestCommitLog(Tester):
                 size += int(a[0])
             else:
                 logger.warning(f"Unrecognized du output line: {l}")
-        return size, stdout.decode() if include_stdout else size
+        return size / (1024*1024), stdout.decode() if include_stdout else size
 
     def _segment_size_test(self, segment_size_in_mb, compressed=False):
         """Execute a basic commitlog test and validate the commitlog files"""
@@ -474,12 +474,12 @@ class TestCommitLog(Tester):
         reach_threshold_cases = []
         # Scylla allows to create one more commitlog file out of the space limit
         # and commitlog segments may be go over commitlog_segment_size_in_mb in 1MB as well.
-        actual_space_limit = (total_space_limit // commitlog_segment_size_in_mb + 1) * (commitlog_segment_size_in_mb + 1)
+        actual_space_limit = total_space_limit + commitlog_segment_size_in_mb + 1
 
         def check_commitlog_size(allow_errors: bool):
             dir_size, stdout = self._get_commitlog_size(include_stdout=True, allow_errors=allow_errors)
             if dir_size > actual_space_limit and not allow_errors:
-                logger.debug(f"Commitlog file sizes in MB:\n{stdout}")
+                logger.info(f"Commitlog file sizes in MB:\n{stdout}")
                 assert dir_size <= actual_space_limit, f"Out of total space limit\n"
             return dir_size
 

@@ -776,7 +776,7 @@ class db::commitlog::segment : public enable_shared_from_this<segment>, public c
     friend std::ostream& operator<<(std::ostream&, const segment&);
     friend class segment_manager;
 
-    size_t sector_overhead(size_t size) const {
+    constexpr size_t sector_overhead(size_t size) const {
         return (size / (_alignment - detail::sector_overhead_size)) * detail::sector_overhead_size;
     }
 
@@ -1028,18 +1028,21 @@ public:
         co_return me;
     }
 
-    /**
-     * Allocate a new buffer
-     */
-    void new_buffer(size_t s) {
-        SCYLLA_ASSERT(_buffer.empty());
-
+    std::tuple<size_t, size_t> buffer_usage_size(size_t s) const {
         auto overhead = segment_overhead_size;
         if (_file_pos == 0) {
             overhead += descriptor_header_size;
         }
 
-        s += overhead;
+        return {s + overhead, overhead};
+    }
+
+    /**
+     * Allocate a new buffer
+     */
+    void new_buffer(size_t size_in) {
+        SCYLLA_ASSERT(_buffer.empty());
+        auto [s, overhead] = buffer_usage_size(size_in);
         // add bookkeep data reqs. 
         auto a = align_up(s + sector_overhead(s), _alignment);
         auto k = std::max(a, default_size);
@@ -1427,6 +1430,9 @@ public:
 
     position_type next_position(size_t size) const {
         auto used = _buffer_ostream_size - _buffer_ostream.size();
+        if (used == 0) { // new chunk/segment
+            std::tie(size, std::ignore) = buffer_usage_size(size);
+        }
         used += size;
         return _file_pos + used + sector_overhead(used);
     }
@@ -1570,7 +1576,6 @@ future<> db::commitlog::segment_manager::oversized_allocation(entry_writer& writ
     clogger.debug("Attempting oversized alloc of {} entry writer", writer.num_entries);
 
     auto size = writer.size();
-    auto max_file_size = cfg.commitlog_segment_size_in_mb * 1024 * 1024;
 
     // check if this cannot be written at all...
     if (!cfg.allow_going_over_size_limit) {
@@ -1579,11 +1584,11 @@ future<> db::commitlog::segment_manager::oversized_allocation(entry_writer& writ
         // more worst case
         auto size_with_meta_overhead = size_with_sector_overhead
             + (1 + size_with_sector_overhead/max_mutation_size) * (segment::entry_overhead_size + segment::fragmented_entry_overhead_size + segment::segment_overhead_size)
-            * (1 + size_with_sector_overhead/max_file_size) * segment::descriptor_header_size
+            * (1 + size_with_sector_overhead/max_size) * segment::descriptor_header_size
             ;
         // this is not really true. We could have some space in current segment,
         // but again, lets be conservative.
-        auto max_file_size_avail = max_disk_size - max_file_size;
+        auto max_file_size_avail = max_disk_size - max_size;
 
         if (size_with_meta_overhead > max_file_size_avail) {
             throw std::invalid_argument(fmt::format("Mutation of {} bytes is too large for potentially available disk space of {}", size, max_file_size_avail));
@@ -1770,11 +1775,13 @@ future<> db::commitlog::segment_manager::oversized_allocation(entry_writer& writ
                     co_await s->close();
                     s = co_await get_segment();
                 }
-                // bytes not counting overhead                
-                auto buf_rem = std::min(max_size - s->position(), s->_buffer_ostream.size());
+                // bytes not counting overhead
+                auto pos = s->position();
+                auto max = std::max<size_t>(pos, max_size);
+                auto buf_rem = std::min(max_size - max, s->_buffer_ostream.size());
 
                 size_t avail;
-                if (buf_rem > align) {
+                if (buf_rem >= align) {
                     auto rem2 = buf_rem - (1 + buf_rem/sector_size) * detail::sector_overhead_size;
                     avail = std::min(rem2, max_mutation_size)
                         - segment::entry_overhead_size
@@ -1784,7 +1791,7 @@ future<> db::commitlog::segment_manager::oversized_allocation(entry_writer& writ
                 } else {
                     co_await s->cycle();
                     auto pos = s->position();
-                    auto max = std::max<size_t>(pos, max_file_size);
+                    auto max = std::max<size_t>(pos, max_size);
                     auto file_rem = max - pos;
 
                     if (file_rem < align) {
