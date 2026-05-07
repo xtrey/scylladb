@@ -239,7 +239,7 @@ private:
 
     // Drop waiter that we lost track of, can happen due to a snapshot transfer,
     // or a leader removed from cluster while some entries added on it are uncommitted.
-    void drop_waiters(std::optional<index_t> idx = {});
+    void drop_waiters(const snapshot_descriptor* snp = nullptr);
 
     // Wake up all waiter that wait for entries with idx smaller of equal to the one provided
     // to be applied.
@@ -995,11 +995,11 @@ void server_impl::notify_waiters(std::map<index_t, op_status>& waiters,
     }
 }
 
-void server_impl::drop_waiters(std::optional<index_t> idx) {
+void server_impl::drop_waiters(const snapshot_descriptor* snp) {
     auto drop = [&] (std::map<index_t, op_status>& waiters) {
         while (waiters.size() != 0) {
             auto it = waiters.begin();
-            if (idx && it->first > *idx) {
+            if (snp && it->first > snp->idx) {
                 break;
             }
             auto [entry_idx, status] = std::move(*it);
@@ -1431,7 +1431,7 @@ future<> server_impl::applier_fiber() {
                 // Apply snapshot it to the state machine
                 logger.trace("[{}] apply_fiber applying snapshot {}", _id, snp.id);
                 co_await _state_machine->load_snapshot(snp.id);
-                drop_waiters(snp.idx);
+                drop_waiters(&snp);
                 _applied_idx = snp.idx;
                 _applied_index_changed.broadcast();
                 _stats.sm_load_snapshot++;
