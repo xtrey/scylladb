@@ -203,3 +203,183 @@ SEASTAR_THREAD_TEST_CASE(test_wait_for_leader_on_aborted_server) {
 SEASTAR_THREAD_TEST_CASE(test_wait_for_state_change_on_aborted_server) {
     test_func_on_aborted_server_aux(&raft::server::wait_for_state_change);
 }
+
+// Auxiliary function for testing add_entry behavior when a snapshot that
+// includes the entry being added is taken before wait_for_entry runs.
+//
+// Uses a 1-node cluster with aggressive snapshotting and an error injection
+// point that pauses add_entry after the entry is added to the log but before
+// wait_for_entry checks its status. During the pause, the entry is committed,
+// applied, and a snapshot is taken.
+//
+// If `advance_snapshot_past_entry` is true, a second entry is added so the
+// snapshot moves past the first entry's index, fully truncating it from the
+// log (term_for returns nullopt). Otherwise the snapshot is taken at the
+// entry's index (term_for returns the snapshot's term).
+//
+// In both cases, wait_for_entry should succeed for both wait types, since
+// the snapshot's term matching the entry's term proves the entry was committed
+// and included in the snapshot.
+static void test_add_entry_load_snapshot_before_wait_aux(raft::wait_type type, bool advance_snapshot_past_entry) {
+#ifndef SCYLLA_ENABLE_ERROR_INJECTION
+    std::cerr << "Skipping test as it depends on error injection. Please run in mode where it's enabled (debug,dev).\n";
+    return;
+#endif
+    const size_t command_size = sizeof(size_t);
+    test_case test_config {
+        .nodes = 1,
+        .config = std::vector<raft::server::configuration>({
+            raft::server::configuration {
+                // Snapshot after every entry; truncate aggressively.
+                .snapshot_threshold = 1,
+                .snapshot_threshold_log_size = 1,
+                .snapshot_trailing = 0,
+                .snapshot_trailing_size = 0,
+                .max_log_size = 10 * (command_size + sizeof(raft::log_entry)),
+                .enable_forwarding = false,
+                .max_command_size = command_size
+            }
+         })
+    };
+    // apply_entries must be greater than the number of entries added
+    // during the test, otherwise the state machine's done promise fires
+    // prematurely.
+    auto cluster = raft_cluster<std::chrono::steady_clock>{
+        std::move(test_config),
+        ::apply_changes,
+        100,  // apply_entries
+        0,
+        0, false, tick_delay, rpc_config{}
+    };
+    cluster.start_all().get();
+    auto stop = defer([&cluster] { cluster.stop_all().get(); });
+
+    cluster.add_entries(5, 0).get();
+
+    // one_shot: only the first add_entry is paused; the second one
+    // (if used) bypasses the injection.
+    utils::get_local_injector().enable("block_raft_add_entry_before_wait_for_entry", true);
+
+    auto& server = cluster.get_server(0);
+    auto fut = server.add_entry(create_command(42), type, nullptr);
+
+    // Wait for add_entry(42) to reach the injection point.
+    while (utils::get_local_injector().is_enabled("block_raft_add_entry_before_wait_for_entry")) {
+        seastar::thread::yield();
+    }
+
+    // Wait for the entry to be applied.
+    server.read_barrier(nullptr).get();
+
+    if (advance_snapshot_past_entry) {
+        // Add another entry so the snapshot moves past the first entry,
+        // fully truncating it from the log (term_for returns nullopt).
+        // The injection is one-shot and already consumed, so this goes through.
+        server.add_entry(create_command(43), raft::wait_type::applied, nullptr).get();
+    }
+
+    // Take a snapshot, truncating the entry from the log.
+    server.trigger_snapshot(nullptr).get();
+
+    // Unblock wait_for_entry.
+    utils::get_local_injector().receive_message("block_raft_add_entry_before_wait_for_entry");
+
+    // Both wait types should succeed: the snapshot's term matches the entry's
+    // term, proving the entry was committed and included in the snapshot.
+    BOOST_CHECK_NO_THROW(fut.get());
+}
+
+// Snapshot at the entry's index: term_for(eid.idx) returns the snapshot's term.
+// Tests wait_for_entry site where the removed `applied` check used to throw
+// commit_status_unknown.
+SEASTAR_THREAD_TEST_CASE(test_add_entry_applied_load_snapshot_at_entry) {
+    test_add_entry_load_snapshot_before_wait_aux(raft::wait_type::applied, false);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_add_entry_committed_load_snapshot_at_entry) {
+    test_add_entry_load_snapshot_before_wait_aux(raft::wait_type::committed, false);
+}
+
+// Snapshot past the entry's index: term_for(eid.idx) returns nullopt.
+// Tests the `!term` branch in wait_for_entry where `snap_term == eid.term`
+// now succeeds for both wait types.
+SEASTAR_THREAD_TEST_CASE(test_add_entry_applied_load_snapshot_past_entry) {
+    test_add_entry_load_snapshot_before_wait_aux(raft::wait_type::applied, true);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_add_entry_committed_load_snapshot_past_entry) {
+    test_add_entry_load_snapshot_before_wait_aux(raft::wait_type::committed, true);
+}
+
+// Auxiliary function for testing add_entry behavior when a follower receives
+// the entry via a snapshot (load_snapshot) instead of applying it locally.
+//
+// Setup: 3-node cluster. Node 1 (follower) is blocked from receiving
+// messages from the leader (node 0), but can still send to it. Node 1
+// forwards add_entry to the leader, which commits the entry (with node 2),
+// applies it, and takes a snapshot. When node 1 is reconnected, the leader
+// sends a snapshot (since the log entries are truncated). Node 1 loads the
+// snapshot via load_snapshot(), which calls drop_waiters(). The pending
+// waiter for the forwarded entry is resolved successfully because the
+// snapshot's term matches the entry's term.
+static void test_add_entry_wait_resolved_via_drop_waiters_aux(raft::wait_type type) {
+    const size_t command_size = sizeof(size_t);
+    raft::server::configuration srv_config {
+        .snapshot_threshold = 1,
+        .snapshot_threshold_log_size = 1,
+        .snapshot_trailing = 0,
+        .snapshot_trailing_size = 0,
+        .max_log_size = 10 * (command_size + sizeof(raft::log_entry)),
+        .max_command_size = command_size
+    };
+    test_case test_config {
+        .nodes = 3,
+        .config = std::vector<raft::server::configuration>({srv_config, srv_config, srv_config})
+    };
+    // apply_entries must be greater than the number of entries added
+    // during the test, otherwise the state machine's done promise fires
+    // prematurely.
+    auto cluster = raft_cluster<std::chrono::steady_clock>{
+        std::move(test_config),
+        ::apply_changes,
+        100,  // apply_entries
+        0,
+        0, false, tick_delay, rpc_config{}
+    };
+    cluster.start_all().get();
+    auto stop = defer([&cluster] { cluster.stop_all().get(); });
+
+    // Add a few entries so all nodes are caught up.
+    cluster.add_entries(5, 0).get();
+
+    // Block node 1 from receiving messages from node 0 (leader).
+    // Node 1 can still send to node 0 (forwarding works).
+    cluster.block_receive(1, 0);
+
+    // Node 1 forwards add_entry to node 0. Node 0 commits (with node 2),
+    // applies, and takes a snapshot. Node 1 registers a waiter but never
+    // receives the entry via append entries.
+    auto& follower = cluster.get_server(1);
+    auto fut = follower.add_entry(create_command(42), type, nullptr);
+
+    // Wait for the leader to commit, apply, and snapshot the entry.
+    auto& leader = cluster.get_server(0);
+    leader.read_barrier(nullptr).get();
+    leader.trigger_snapshot(nullptr).get();
+
+    // Reconnect node 1. The leader will send a snapshot since the log
+    // entries are truncated (snapshot_trailing = 0).
+    cluster.connect_all();
+
+    // drop_waiters resolves the waiter successfully since the snapshot's
+    // term matches the entry's term, proving it was committed.
+    BOOST_CHECK_NO_THROW(fut.get());
+}
+
+SEASTAR_THREAD_TEST_CASE(test_add_entry_applied_wait_resolved_via_drop_waiters) {
+    test_add_entry_wait_resolved_via_drop_waiters_aux(raft::wait_type::applied);
+}
+
+SEASTAR_THREAD_TEST_CASE(test_add_entry_committed_wait_resolved_via_drop_waiters) {
+    test_add_entry_wait_resolved_via_drop_waiters_aux(raft::wait_type::committed);
+}

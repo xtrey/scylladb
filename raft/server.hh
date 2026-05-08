@@ -79,18 +79,18 @@ public:
     // The caller may pass a pointer to an abort_source to make the operation abortable.
     // If it passes nullptr, the operation is unabortable.
     //
-    // Successful `add_entry` with `wait_type::committed` does not guarantee that `state_machine::apply` will be called
-    // locally for this entry. Between the commit and the application we may receive a snapshot containing this entry,
-    // so the state machine's state 'jumps' forward in time, skipping the entry application.
-    // However, for `wait_type::applied`, we guarantee that the entry will be applied locally with `state_machine::apply`.
-    // If a snapshot causes the state machine to jump over the entry, `add_entry` will return `commit_status_unknown`
-    // (even if the snapshot included that entry).
+    // Successful `add_entry` does not guarantee that `state_machine::apply` will be called
+    // locally for this entry. Between the commit and the application we may load a snapshot
+    // containing this entry, so the state machine's state 'jumps' forward in time, skipping
+    // the local entry application. For `wait_type::applied` this should be fine, because
+    // state machine implementations shouldn't care whether an entry was applied via
+    // `state_machine::apply` or via a snapshot load.
     //
     // Exceptions:
     // raft::commit_status_unknown
     //     Thrown if the leader has changed and the log entry has either
     //     been replaced by the new leader or the server has lost track of it.
-    //     It may also be thrown in case of a transport error while forwarding add_entry to the leader.L
+    //     It may also be thrown in case of a transport error while forwarding add_entry to the leader.
     // raft::dropped_entry
     //     Thrown if the entry was replaced because of a leader change.
     // raft::request_aborted

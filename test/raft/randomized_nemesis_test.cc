@@ -221,9 +221,25 @@ raft::command make_command(const cmd_id_t& cmd_id, const Input& input) {
     return cmd;
 }
 
+// Indicates that add_entry succeeded but apply() was not called locally
+// for this entry — a snapshot load subsumed it. The entry's effects
+// are included in the state machine's state (via the snapshot).
+struct apply_skipped {};
+
+std::ostream& operator<<(std::ostream& os, const apply_skipped&) {
+    return os << "apply_skipped";
+}
+
+template <>
+struct fmt::formatter<apply_skipped> : fmt::formatter<string_view> {
+    auto format(const apply_skipped&, fmt::format_context& ctx) const {
+        return fmt::format_to(ctx.out(), "apply_skipped");
+    }
+};
+
 // TODO: handle other errors?
 template <PureStateMachine M>
-using call_result_t = std::variant<typename M::output_t, timed_out_error, raft::not_a_leader, raft::dropped_entry, raft::commit_status_unknown, raft::stopped_error, raft::not_a_member>;
+using call_result_t = std::variant<typename M::output_t, timed_out_error, raft::not_a_leader, raft::dropped_entry, raft::commit_status_unknown, raft::stopped_error, raft::not_a_member, apply_skipped>;
 
 // Wait for a future `f` to finish, but keep the result inside a `future`.
 // Works for `future<void>` as well as for `future<T>`.
@@ -319,7 +335,15 @@ future<call_result_t<M>> call(
                     std::rethrow_exception(add_entry_f.get_exception());
                 }
 
-                return std::move(output_f);
+                if (output_f.available()) {
+                    return std::move(output_f);
+                }
+
+                // add_entry succeeded but apply() hasn't been called locally — a snapshot load subsumed this entry.
+                // The output channel will never be written to. Discard it and signal via output_channel_dropped, which
+                // is converted to apply_skipped in the outer exception handler.
+                (void)output_f.discard_result().handle_exception_type([] (const output_channel_dropped&) {});
+                throw output_channel_dropped{};
             });
         }, std::move(input), std::move(f)));
     }).then([] (output_t output) {
@@ -327,6 +351,8 @@ future<call_result_t<M>> call(
     }).handle_exception([] (std::exception_ptr eptr) {
         try {
             std::rethrow_exception(eptr);
+        } catch (const output_channel_dropped&) {
+            return make_ready_future<call_result_t<M>>(apply_skipped{});
         } catch (raft::not_a_leader& e) {
             return make_ready_future<call_result_t<M>>(e);
         } catch (raft::not_a_member& e) {
@@ -3472,6 +3498,7 @@ SEASTAR_TEST_CASE(basic_generator_test) {
             size_t invocations{0};
             size_t successes{0};
             size_t failures{0};
+            size_t skipped_applies{0};
         };
 
         class consistency_checker {
@@ -3514,6 +3541,9 @@ SEASTAR_TEST_CASE(basic_generator_test) {
                         // TODO SCYLLA_ASSERT: only allowed if reconfigurations happen?
                         // SCYLLA_ASSERT(false); TODO debug this
                         ++_stats.failures;
+                    },
+                    [this] (apply_skipped&) {
+                        ++_stats.skipped_applies;
                     },
                     [this] (auto&) {
                         ++_stats.failures;
@@ -3561,8 +3591,8 @@ SEASTAR_TEST_CASE(basic_generator_test) {
             SCYLLA_ASSERT(false);
         }
 
-        tlogger.info("Finished generator run, time: {}, invocations: {}, successes: {}, failures: {}, total: {}",
-                timer.now(), stats.invocations, stats.successes, stats.failures, stats.successes + stats.failures);
+        tlogger.info("Finished generator run, time: {}, invocations: {}, successes: {}, failures: {}, skipped applies: {}, total: {}",
+                timer.now(), stats.invocations, stats.successes, stats.failures, stats.skipped_applies, stats.successes + stats.failures + stats.skipped_applies);
 
         // Liveness check: we must be able to obtain a final response after all the nemeses have stopped.
         // Due to possible multiple leaders at this point and the cluster stabilizing (for example there
