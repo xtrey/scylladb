@@ -11,8 +11,9 @@ import time
 from . import rest_api
 from cassandra.protocol import SyntaxException, InvalidRequest, Unauthorized, ConfigurationException
 from cassandra.query import BatchStatement, BatchType
-from .util import new_test_table, new_function, new_user, new_session, new_test_keyspace, unique_name, new_type, new_materialized_view, is_scylla
+from .util import new_test_table, new_function, new_aggregate, new_user, new_session, new_test_keyspace, unique_name, new_type, new_materialized_view, is_scylla
 from contextlib import contextmanager
+from test.pylib.skip_types import skip_env
 
 # Figure out which keyspace contains the roles table (its location changed
 # across different releases of Scylla and Cassandra)
@@ -450,6 +451,71 @@ def test_grant_revoke_uda_permissions(scylla_only, cql):
                             check_enforced(cql, username, permission='AUTHORIZE', resource=resource, function=grant_idempotent)
 
                         cql.execute(f"DROP AGGREGATE IF EXISTS {keyspace}.{custom_avg}(bigint)")
+
+# Test that EXECUTE permission on each individual UDA sub-function (SFUNC,
+# FINALFUNC, REDUCEFUNC) is checked at SELECT time. If the user lacks
+# EXECUTE on any one of them the query must be rejected.
+# Reproduces SCYLLADB-1756.
+@pytest.mark.parametrize("missing_func", ["sfunc", "finalfunc", "reducefunc"])
+def test_uda_subfunc_permission_enforced(cql, missing_func):
+    # REDUCEFUNC is a Scylla extension; skip on Cassandra.
+    if missing_func == "reducefunc" and not is_scylla(cql):
+        skip_env("REDUCEFUNC is a Scylla extension")
+
+    schema = 'id bigint primary key, v bigint'
+    with new_test_keyspace(cql, "WITH REPLICATION = { 'class': 'NetworkTopologyStrategy', 'replication_factor': 1 }") as keyspace:
+        with new_test_table(cql, keyspace, schema) as table:
+            # Choose the UDF language depending on the backend.
+            acc_body_lua = "(a bigint, b bigint) RETURNS NULL ON NULL INPUT RETURNS bigint LANGUAGE lua AS 'return a+b'"
+            red_body_lua = "(a bigint, b bigint) RETURNS NULL ON NULL INPUT RETURNS bigint LANGUAGE lua AS 'return a+b'"
+            fin_body_lua = "(a bigint) CALLED ON NULL INPUT RETURNS bigint LANGUAGE lua AS 'return a'"
+            acc_body = acc_body_lua
+            red_body = red_body_lua
+            fin_body = fin_body_lua
+            try:
+                with new_function(cql, keyspace, acc_body):
+                    pass
+            except:
+                # Cassandra — fall back to Java.
+                acc_body = "(a bigint, b bigint) RETURNS NULL ON NULL INPUT RETURNS bigint LANGUAGE java AS 'return a+b;'"
+                red_body = "(a bigint, b bigint) RETURNS NULL ON NULL INPUT RETURNS bigint LANGUAGE java AS 'return a+b;'"
+                fin_body = "(a bigint) CALLED ON NULL INPUT RETURNS bigint LANGUAGE java AS 'return a;'"
+
+            with new_function(cql, keyspace, acc_body) as acc, \
+                 new_function(cql, keyspace, fin_body) as fin:
+                if missing_func == "reducefunc":
+                    with new_function(cql, keyspace, red_body) as red:
+                        aggr_body = f"(bigint) SFUNC {acc} STYPE bigint REDUCEFUNC {red} FINALFUNC {fin} INITCOND 0"
+                        with new_aggregate(cql, keyspace, aggr_body) as my_sum:
+                            _check_uda_subfunc_permission(cql, keyspace, table, my_sum, acc, fin, red, missing_func)
+                else:
+                    aggr_body = f"(bigint) SFUNC {acc} STYPE bigint FINALFUNC {fin} INITCOND 0"
+                    with new_aggregate(cql, keyspace, aggr_body) as my_sum:
+                        _check_uda_subfunc_permission(cql, keyspace, table, my_sum, acc, fin, None, missing_func)
+
+def _check_uda_subfunc_permission(cql, keyspace, table, my_sum, acc, fin, red, missing_func):
+    """Grant EXECUTE on every sub-function except *missing_func* and assert the SELECT is rejected."""
+    func_map = {
+        "sfunc":      (acc, f'function {keyspace}.{acc}(bigint, bigint)'),
+        "finalfunc":  (fin, f'function {keyspace}.{fin}(bigint)'),
+    }
+    if red is not None:
+        func_map["reducefunc"] = (red, f'function {keyspace}.{red}(bigint, bigint)')
+
+    with new_user(cql) as username:
+        with new_session(cql, username) as user_session:
+            grant(cql, 'SELECT', table, username)
+            grant(cql, 'EXECUTE', f'function {keyspace}.{my_sum}(bigint)', username)
+            # Grant EXECUTE on every sub-function except the one under test.
+            for name, (_func, resource) in func_map.items():
+                if name != missing_func:
+                    grant(cql, 'EXECUTE', resource, username)
+            # Without EXECUTE on the missing sub-function the SELECT must fail.
+            _func, resource = func_map[missing_func]
+            check_enforced(cql, username,
+                    permission='EXECUTE',
+                    resource=resource,
+                    function=lambda: user_session.execute(f"SELECT {keyspace}.{my_sum}(v) FROM {table}"))
 
 # Test that permissions for user-defined functions created on top of user-defined types work
 def test_udf_permissions_with_udt(cql):
