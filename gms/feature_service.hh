@@ -83,7 +83,6 @@ public:
     gms::feature alternator_ttl { *this, "ALTERNATOR_TTL"sv };
     gms::feature cql_row_ttl { *this, "CQL_ROW_TTL"sv };
     gms::feature range_scan_data_variant { *this, "RANGE_SCAN_DATA_VARIANT"sv };
-    gms::feature cdc_generations_v2 { *this, "CDC_GENERATIONS_V2"sv };
     gms::feature user_defined_aggregates { *this, "UDA"sv };
     // Historically max_result_size contained only two fields: soft_limit and
     // hard_limit. It was somehow obscure because for normal paged queries both

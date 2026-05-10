@@ -1113,8 +1113,9 @@ private:
                 _ss.local().wait_for_group0_stop().get();
             });
 
-            group0_service.setup_group0_if_exist(_sys_ks.local(), _ss.local(), _qp.local(), _mm.local()).get();
-
+            if (!group0_service.maintenance_mode() && _sys_ks.local().bootstrap_complete()) {
+                group0_service.setup_group0_if_exist(_sys_ks.local(), _ss.local(), _qp.local(), _mm.local()).get();
+            }
             _groups_manager.invoke_on_all([](service::strong_consistency::groups_manager& m) {
                 return m.start();
             }).get();

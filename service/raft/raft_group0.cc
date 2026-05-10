@@ -683,16 +683,6 @@ bool raft_group0::maintenance_mode() {
 }
 
 future<> raft_group0::setup_group0_if_exist(db::system_keyspace& sys_ks, service::storage_service& ss, cql3::query_processor& qp, service::migration_manager& mm) {
-    if (maintenance_mode()) {
-        co_return;
-    }
-
-    if (!sys_ks.bootstrap_complete()) {
-        // If bootstrap did not complete yet, there is no group 0 to setup at this point
-        // -- it will be done after we start gossiping, in `setup_group0`.
-        co_return;
-    }
-
     auto group0_id = raft::group_id{co_await sys_ks.get_raft_group0_id()};
     if (group0_id) {
         // Group 0 ID is present => we've already joined group 0 earlier.
@@ -713,15 +703,6 @@ future<> raft_group0::setup_group0(
         db::system_keyspace& sys_ks, const std::unordered_set<gms::inet_address>& initial_contact_nodes, shared_ptr<group0_handshaker> handshaker,
         service::storage_service& ss, cql3::query_processor& qp, service::migration_manager& mm,
         const join_node_request_params& params) {
-    if (maintenance_mode()) {
-        // The node is in maintenance mode.
-        co_return;
-    }
-
-    if (joined_group0()) {
-        // Group 0 is already set up, there is nothing to do.
-        co_return;
-    }
     // Reaching this point is possible only in two cases:
     // - the node is bootstrapping,
     // - the node is restarting in the Raft-based recovery procedure and has not joined the new group 0 yet.
