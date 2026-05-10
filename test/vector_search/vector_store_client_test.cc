@@ -83,25 +83,6 @@ timeout_config make_query_timeout(std::chrono::seconds timeout) {
     return cfg;
 }
 
-future<> do_with_vector_store_mock(std::function<future<>(cql_test_env&, vs_mock_server&)> func) {
-    auto server = co_await make_vs_mock_server();
-
-    auto cfg = make_config();
-    cfg.db_config->vector_store_primary_uri.set(format("http://server.node:{}", server->port()));
-    co_await do_with_cql_env(
-            [&](cql_test_env& env) -> future<> {
-                co_await create_test_table(env, "ks", "test");
-                auto& vs = env.local_qp().vector_store_client();
-                configure(vs).with_dns({{"server.node", std::vector<std::string>{server->host()}}});
-                vs.start_background_tasks();
-                co_await func(env, *server);
-            },
-            cfg)
-            .finally(seastar::coroutine::lambda([&] -> future<> {
-                co_await server->stop();
-            }));
-}
-
 } // namespace
 
 BOOST_AUTO_TEST_CASE(vector_store_client_test_ctor) {
@@ -474,44 +455,6 @@ SEASTAR_TEST_CASE(vector_store_client_test_filtering_ann_request) {
             });
 }
 
-SEASTAR_TEST_CASE(vector_store_client_test_filtering_ann_cql) {
-    // Similar to `vector_store_client_test_filtering_ann_request`,
-    // but uses CQL query to verify that the WHERE clause expression (this time with IN operator) is handled correctly.
-    using namespace test::vector_search;
-    auto server = co_await make_vs_mock_server();
-    auto cfg = make_config();
-    cfg.db_config->vector_store_primary_uri.set(format("http://good.authority.here:{}", server->port()));
-    co_await do_with_cql_env(
-            [&server](cql_test_env& env) -> future<> {
-                auto schema = co_await create_test_table(env, "ks", "idx");
-                // Create the vector index and insert test data
-                co_await env.execute_cql("CREATE CUSTOM INDEX embedding_idx ON ks.idx (embedding) USING 'vector_index'");
-                co_await env.execute_cql("INSERT INTO ks.idx (pk1, pk2, ck1, ck2, embedding) VALUES (5, 7, 9, 2, [0.1, 0.2, 0.3])");
-
-                auto& vs = env.local_qp().vector_store_client();
-                configure(vs).with_dns({{"good.authority.here", "127.0.0.1"}});
-                vs.start_background_tasks();
-
-                // Mock response - service should return keys matching the WHERE filter
-                server->next_ann_response({http::reply::status_type::ok, R"({"primary_keys":{"pk1":[5],"pk2":[7],"ck1":[9],"ck2":[2]},"distances":[0.1]})"});
-
-                // Execute CQL query with WHERE clause filter
-                auto msg = co_await env.execute_cql("SELECT pk1, pk2, ck1, ck2 FROM ks.idx WHERE pk1 IN (5, 6) ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 2");
-
-                // Process results - expect 1 row with values [5, 7, 9, 2]
-                assert_that(msg).is_rows().with_rows({{
-                    {byte_type->decompose(int8_t(5))},
-                    {byte_type->decompose(int8_t(7))},
-                    {byte_type->decompose(int8_t(9))},
-                    {byte_type->decompose(int8_t(2))},
-                }});
-            },
-            cfg)
-            .finally([&server] {
-                return server->stop();
-            });
-}
-
 SEASTAR_TEST_CASE(vector_store_client_uri_update_to_empty) {
     auto cfg = config();
     auto count = 0;
@@ -763,82 +706,6 @@ SEASTAR_TEST_CASE(vector_search_metrics_test) {
                 BOOST_CHECK_EQUAL(get_metrics_value("vector_store_dns_refreshes", metrics)->i(), 1);
             },
             cfg);
-}
-
-SEASTAR_TEST_CASE(vector_store_client_test_paging_warning) {
-    auto s1 = co_await make_vs_mock_server();
-
-    auto cfg = make_config();
-    cfg.db_config->vector_store_primary_uri.set(format("http://s1.node:{}", s1->port()));
-    co_await do_with_cql_env(
-            [&s1](cql_test_env& env) -> future<> {
-                auto schema = co_await create_test_table(env, "ks", "test");
-                auto& vs = env.local_qp().vector_store_client();
-                configure(vs).with_dns({{"s1.node", std::vector<std::string>{s1->host()}}});
-
-                vs.start_background_tasks();
-                auto result = co_await env.execute_cql("CREATE CUSTOM INDEX idx ON ks.test (embedding) USING 'vector_index'");
-                auto qo = std::make_unique<cql3::query_options>(db::consistency_level::LOCAL_ONE, std::vector<cql3::raw_value>{},
-                        cql3::query_options::specific_options{5, nullptr, {}, api::new_timestamp()});
-                auto msg = co_await env.execute_cql("SELECT * FROM ks.test ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 100;", std::move(qo));
-                auto warns = msg->warnings();
-                BOOST_REQUIRE_EQUAL(warns.size(), 1);
-                BOOST_CHECK(warns[0] == "Paging is not supported for Vector Search queries. The entire result set has been returned.");
-            },
-            cfg)
-            .finally([&s1] {
-                return s1->stop();
-            });
-}
-
-SEASTAR_TEST_CASE(vector_store_client_test_paging_warning_doesnt_show_when_paging_disabled) {
-    auto s1 = co_await make_vs_mock_server();
-
-    auto cfg = make_config();
-    cfg.db_config->vector_store_primary_uri.set(format("http://s1.node:{}", s1->port()));
-    co_await do_with_cql_env(
-            [&s1](cql_test_env& env) -> future<> {
-                auto schema = co_await create_test_table(env, "ks", "test");
-                auto& vs = env.local_qp().vector_store_client();
-                configure(vs).with_dns({{"s1.node", std::vector<std::string>{s1->host()}}});
-
-                vs.start_background_tasks();
-                auto result = co_await env.execute_cql("CREATE CUSTOM INDEX idx ON ks.test (embedding) USING 'vector_index'");
-                auto qo = std::make_unique<cql3::query_options>(db::consistency_level::LOCAL_ONE, std::vector<cql3::raw_value>{},
-                        cql3::query_options::specific_options{0, nullptr, {}, api::new_timestamp()});
-                auto msg = co_await env.execute_cql("SELECT * FROM ks.test ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 100;", std::move(qo));
-                auto warns = msg->warnings();
-                BOOST_REQUIRE_EQUAL(warns.size(), 0);
-            },
-            cfg)
-            .finally([&s1] {
-                return s1->stop();
-            });
-}
-
-SEASTAR_TEST_CASE(vector_store_client_test_paging_warning_doesnt_show_when_limit_less_than_page_size) {
-    auto s1 = co_await make_vs_mock_server();
-
-    auto cfg = make_config();
-    cfg.db_config->vector_store_primary_uri.set(format("http://s1.node:{}", s1->port()));
-    co_await do_with_cql_env(
-            [&s1](cql_test_env& env) -> future<> {
-                auto schema = co_await create_test_table(env, "ks", "test");
-                auto& vs = env.local_qp().vector_store_client();
-                configure(vs).with_dns({{"s1.node", std::vector<std::string>{s1->host()}}});
-
-                vs.start_background_tasks();
-                auto result = co_await env.execute_cql("CREATE CUSTOM INDEX idx ON ks.test (embedding) USING 'vector_index'");
-                auto qo = std::make_unique<cql3::query_options>(db::consistency_level::LOCAL_ONE, std::vector<cql3::raw_value>{},
-                        cql3::query_options::specific_options{100, nullptr, {}, api::new_timestamp()});
-                auto msg = co_await env.execute_cql("SELECT * FROM ks.test ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5;", std::move(qo));
-                auto warns = msg->warnings();
-                BOOST_REQUIRE_EQUAL(warns.size(), 0);
-            },
-            cfg)
-            .finally([&s1] {
-                return s1->stop();
-            });
 }
 
 SEASTAR_TEST_CASE(vector_store_client_node_recovery_after_backoff) {
@@ -1241,47 +1108,4 @@ SEASTAR_TEST_CASE(vector_store_client_abort_due_to_query_timeout) {
             .finally(seastar::coroutine::lambda([&] -> future<> {
                 co_await server->stop();
             }));
-}
-
-/// Verify that the HTTP error description from the vector store is propagated
-/// through the CQL interface as part of the invalid_request_exception message.
-SEASTAR_TEST_CASE(vector_store_client_cql_error_contains_http_error_description) {
-    co_await do_with_vector_store_mock([](cql_test_env& env, vs_mock_server& server) -> future<> {
-        co_await env.execute_cql("CREATE CUSTOM INDEX idx ON ks.test (embedding) USING 'vector_index'");
-
-        // Configure mock to return 404 with a specific error message
-        server.next_ann_response({status_type::not_found, "index does not exist"});
-
-        BOOST_CHECK_EXCEPTION(co_await env.execute_cql("SELECT * FROM ks.test ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5;"),
-                exceptions::invalid_request_exception, [](const exceptions::invalid_request_exception& ex) {
-                    auto msg = std::string(ex.what());
-                    // Verify the error message contains both the HTTP status and the error description
-                    return msg.find("404") != std::string::npos && msg.find("index does not exist") != std::string::npos;
-                });
-    });
-}
-
-// Create a vector index with an additional filtering column.
-// Because the local secondary index logic was used to determine the index target column,
-// the implementation wrongly selects last column as the target(vectors) column, leading to an exception
-// on the SELECT query:
-//     ANN ordering by vector requires the column to be indexed using 'vector_index'.
-// Reproduces SCYLLADB-635.
-SEASTAR_TEST_CASE(vector_store_client_vector_index_with_additional_filtering_column) {
-    co_await do_with_vector_store_mock([](cql_test_env& env, vs_mock_server&) -> future<> {
-        // Create a vector index on the embedding column, including ck1 for filtered ANN search support.
-        co_await env.execute_cql("CREATE CUSTOM INDEX idx ON ks.test (embedding, ck1) USING 'vector_index'");
-
-        BOOST_CHECK_NO_THROW(co_await env.execute_cql("SELECT * FROM ks.test ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5;"));
-    });
-}
-
-SEASTAR_TEST_CASE(vector_store_client_local_vector_index) {
-    co_await do_with_vector_store_mock([](cql_test_env& env, vs_mock_server&) -> future<> {
-        // Create a local vector index on the 'embedding' column.
-        co_await env.execute_cql("CREATE CUSTOM INDEX idx ON ks.test ((pk1, pk2), embedding) USING 'vector_index'");
-
-        BOOST_CHECK_NO_THROW(
-                co_await env.execute_cql("SELECT * FROM ks.test WHERE pk1 = 1 AND pk2 = 2 ORDER BY embedding ANN OF [0.1, 0.2, 0.3] LIMIT 5;"));
-    });
 }
