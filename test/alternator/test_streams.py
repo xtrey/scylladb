@@ -48,8 +48,8 @@ def disable_stream(dynamodbstreams, table):
     # Wait for the stream to really be disabled. A table may have multiple
     # historic streams - we need all of them to become DISABLED. One of
     # them (the current one) may remain DISABLING for some time.
-    exp = time.process_time() + 60
-    while time.process_time() < exp:
+    exp = time.time() + 60
+    while time.time() < exp:
         streams = dynamodbstreams.list_streams(TableName=table.name)
         disabled = True
         for stream in streams['Streams']:
@@ -60,7 +60,7 @@ def disable_stream(dynamodbstreams, table):
         if disabled:
             print('disabled stream on {}'.format(table.name))
             return
-        time.sleep(0.5)
+        time.sleep(0.1)
     pytest.fail("timed out")
             
 # Cannot use fixtures. Because real dynamodb cannot _remove_ a stream
@@ -105,8 +105,8 @@ def create_stream_test_table(dynamodb, StreamViewType=None, Tags=None):
                 raise
 
 def wait_for_active_stream(dynamodbstreams, table, timeout=60):
-    exp = time.process_time() + timeout
-    while time.process_time() < exp:
+    exp = time.time() + timeout
+    while time.time() < exp:
         streams = dynamodbstreams.list_streams(TableName=table.name)
         for stream in streams['Streams']:
             arn = stream['StreamArn']
@@ -2205,7 +2205,6 @@ def test_stream_specification(test_table_stream_with_result, dynamodbstreams):
 # be missing? Or a "null" JSON type? Or an empty string? This test verifies
 # that the right answer is that NextShardIterator should be *missing*
 # (reproduces issue #7237).
-@pytest.mark.xfail(reason="disabled stream is deleted - issue #7239")
 def test_streams_closed_read(dynamodb, dynamodbstreams):
     # This test can't use the shared table test_table_ss_keys_only,
     # because it wants to disable streaming, so let's create a new table:
@@ -2258,7 +2257,6 @@ def test_streams_closed_read(dynamodb, dynamodbstreams):
 # listed for the table, this ARN should continue to work, listing the
 # stream's shards should give an indication that they are all closed - but
 # all these shards should still be readable.
-@pytest.mark.xfail(reason="disabled stream is deleted - issue #7239")
 def test_streams_disabled_stream(dynamodb, dynamodbstreams):
     # This test can't use the shared table test_table_ss_keys_only,
     # because it wants to disable streaming, so let's create a new table:
@@ -2580,3 +2578,70 @@ def test_stream_shard_filtering_missing_shard_id(test_table_ss_keys_only, dynamo
 # TODO: Can we test shard splitting? (shard splitting
 #   requires the user to - periodically or following shards ending - to call
 #   DescribeStream again. We don't do this in any of our tests.
+
+# Count the total number of records currently visible on a stream by reading
+# all shards from the beginning (TRIM_HORIZON).
+def _count_stream_records(dynamodbstreams, arn):
+    shards = []
+    last_shard_id = None
+    while True:
+        kwargs = {'StreamArn': arn}
+        if last_shard_id:
+            kwargs['ExclusiveStartShardId'] = last_shard_id
+        desc = dynamodbstreams.describe_stream(**kwargs)['StreamDescription']
+        shards.extend(desc['Shards'])
+        last_shard_id = desc.get('LastEvaluatedShardId')
+        if not last_shard_id:
+            break
+    nrecords = 0
+    for shard in shards:
+        it = dynamodbstreams.get_shard_iterator(StreamArn=arn,
+            ShardId=shard['ShardId'], ShardIteratorType='TRIM_HORIZON')['ShardIterator']
+        while it:
+            response = dynamodbstreams.get_records(ShardIterator=it)
+            nrecords += len(response.get('Records', []))
+            it = response.get('NextShardIterator')
+            if not response.get('Records'):
+                break
+    return nrecords
+
+def _wait_for_stream_records(dynamodbstreams, arn, timeout=15):
+    """Poll until at least one stream record is visible."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _count_stream_records(dynamodbstreams, arn) > 0:
+            return
+        time.sleep(0.1)
+    pytest.fail(f"Timed out waiting for stream records on {arn}")
+
+# Test that after disabling and re-enabling a stream on a table, the old
+# stream data remains readable through the old ARN. In DynamoDB, it
+# remains readable for 24 hours. In Scylla, it is currently purged upon
+# re-enabling.
+@pytest.mark.xfail(reason="Scylla purges old stream data on re-enable "
+        "instead of keeping it readable for 24h - SCYLLADB-1873")
+def test_streams_reenable(dynamodb, dynamodbstreams):
+    with create_stream_test_table(dynamodb, StreamViewType='KEYS_ONLY') as table:
+        (arn1, label1) = wait_for_active_stream(dynamodbstreams, table)
+
+        # Write some data while the first stream is active
+        p = random_string()
+        table.update_item(Key={'p': p, 'c': random_string()},
+            UpdateExpression='SET x = :val1', ExpressionAttributeValues={':val1': 5})
+
+        _wait_for_stream_records(dynamodbstreams, arn1)
+
+        disable_stream(dynamodbstreams, table)
+
+        # Re-enable the stream
+        table.update(StreamSpecification={'StreamEnabled': True, 'StreamViewType': 'KEYS_ONLY'})
+        (arn2, label2) = wait_for_active_stream(dynamodbstreams, table)
+
+        # The new ARN must differ from the old one
+        assert arn1 != arn2
+
+        # The new stream should have no old data.
+        assert _count_stream_records(dynamodbstreams, arn2) == 0
+
+        # The old stream data should still be readable via the old ARN.
+        assert _count_stream_records(dynamodbstreams, arn1) > 0
