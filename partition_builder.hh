@@ -46,8 +46,12 @@ public:
     }
 
     virtual void accept_static_cell(column_id id, collection_mutation_view collection) override {
+        accept_static_cell(id, collection_mutation(*_schema.static_column_at(id).type, std::move(collection)));
+    }
+
+    void accept_static_cell(column_id id, collection_mutation&& collection) {
         row& r = _partition.static_row().maybe_create();
-        r.append_cell(id, collection_mutation(*_schema.static_column_at(id).type, std::move(collection)));
+        r.append_cell(id, std::move(collection));
     }
 
     virtual void accept_row_tombstone(const range_tombstone& rt) override {
@@ -72,8 +76,12 @@ public:
     }
 
     virtual void accept_row_cell(column_id id, collection_mutation_view collection) override {
+        accept_row_cell(id, collection_mutation(*_schema.regular_column_at(id).type, std::move(collection)));
+    }
+
+    void accept_row_cell(column_id id, collection_mutation collection) {
         row& r = _current_row->cells();
-        r.append_cell(id, collection_mutation(*_schema.regular_column_at(id).type, std::move(collection)));
+        r.append_cell(id, std::move(collection));
     }
 };
 
