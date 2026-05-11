@@ -100,6 +100,7 @@ public:
 class custom_index {
 public:
     virtual ~custom_index() = default;
+    virtual std::string_view index_type_name() const = 0;
     /// Returns a custom description of the index, or std::nullopt if the default index description logic should be used instead.
     virtual std::optional<cql3::description> describe(const index_metadata& im, const schema& base_schema) const = 0;
     virtual bool view_should_exist() const = 0;
@@ -107,6 +108,12 @@ public:
             const std::vector<::shared_ptr<cql3::statements::index_target>> &targets, const gms::feature_service& fs,
         const data_dictionary::database& db) const = 0;
     virtual utils::UUID index_version(const schema& schema) = 0;
+
+protected:
+    std::optional<cql3::description> describe_with_target(
+            const index_metadata& im,
+            const schema& base_schema,
+            const sstring& target_cql) const;
 };
 
 struct stats {

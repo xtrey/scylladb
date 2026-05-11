@@ -14,65 +14,18 @@
 #include "exceptions/exceptions.hh"
 #include "schema/schema.hh"
 #include "index/vector_index.hh"
+#include "index/index_option_utils.hh"
 #include "index/secondary_index.hh"
 #include "index/secondary_index_manager.hh"
 #include "index/target_parser.hh"
 #include "types/concrete_types.hh"
 #include "utils/UUID_gen.hh"
 #include "types/types.hh"
-#include "utils/managed_string.hh"
 #include <ranges>
 #include <seastar/core/sstring.hh>
 #include <boost/algorithm/string.hpp>
 
 namespace secondary_index {
-
-static void validate_positive_option(int max, const sstring& value_name, const sstring& value) {
-    int num_value;
-    size_t len;
-    try {
-        num_value = std::stoi(value, &len);
-    } catch (...) {
-        throw exceptions::invalid_request_exception(format("Invalid value in option '{}' for vector index: '{}' is not an integer", value_name, value));
-    }
-    if (len != value.size()) {
-        throw exceptions::invalid_request_exception(format("Invalid value in option '{}' for vector index: '{}' is not an integer", value_name, value));
-    }
-
-    if (num_value <= 0 || num_value > max) {
-        throw exceptions::invalid_request_exception(format("Invalid value in option '{}' for vector index: '{}' is out of valid range [1 - {}]", value_name, value, max));
-    }
-}
-
-static void validate_factor_option(float min, float max, const sstring& value_name, const sstring& value) {
-    float num_value;
-    size_t len;
-    try {
-        num_value = std::stof(value, &len);
-    } catch (...) {
-        throw exceptions::invalid_request_exception(format("Invalid value in option '{}' for vector index: '{}' is not a float", value_name, value));
-    }
-    if (len != value.size()) {
-        throw exceptions::invalid_request_exception(format("Invalid value in option '{}' for vector index: '{}' is not a float", value_name, value));
-    }
-
-    if (!(num_value >= min && num_value <= max)) {
-        throw exceptions::invalid_request_exception(format("Invalid value in option '{}' for vector index: '{}' is out of valid range [{} - {}]", value_name, value, min, max));
-    }
-}
-
-static void validate_enumerated_option(const std::vector<sstring>& supported_values, const sstring& value_name, const sstring& value) {    
-    bool is_valid = std::any_of(supported_values.begin(), supported_values.end(),
-        [&](const std::string& func) { return boost::iequals(value, func); });
-    
-    if (!is_valid) {
-        throw exceptions::invalid_request_exception(
-            seastar::format("Invalid value in option '{}' for vector index: '{}'. Supported are case-insensitive: {}", 
-                   value_name,
-                   value,
-                   fmt::join(supported_values, ", ")));
-    }
-}
 
 static const std::vector<sstring> similarity_function_values = {
     "cosine", "euclidean", "dot_product"
@@ -82,33 +35,29 @@ static const std::vector<sstring> quantization_values = {
     "f32", "f16", "bf16", "i8", "b1"
 };
 
-static const std::vector<sstring> boolean_values = {
-    "false", "true"
-};
-
-const static std::unordered_map<sstring, std::function<void(const sstring&, const sstring&)>> vector_index_options = {
+const static std::unordered_map<sstring, std::function<void(std::string_view, const sstring&, const sstring&)>> vector_index_options = {
         // `similarity_function` defines method of calculating similarity between vectors
         // Used internally by vector store during both indexing and querying
         // CQL implements corresponding functions in cql3/functions/similarity_functions.hh
-        {"similarity_function", std::bind_front(validate_enumerated_option, similarity_function_values)},
+        {"similarity_function", std::bind_front(util::validate_enumerated_option, similarity_function_values)},
         // 'maximum_node_connections', 'construction_beam_width', 'search_beam_width' define HNSW index parameters
         // Used internally by vector store.
-        {"maximum_node_connections", std::bind_front(validate_positive_option, 512)},
-        {"construction_beam_width", std::bind_front(validate_positive_option, 4096)},
-        {"search_beam_width", std::bind_front(validate_positive_option, 4096)},
+        {"maximum_node_connections", std::bind_front(util::validate_positive_option, 512)},
+        {"construction_beam_width", std::bind_front(util::validate_positive_option, 4096)},
+        {"search_beam_width", std::bind_front(util::validate_positive_option, 4096)},
         // 'quantization' enables compression of vectors in vector store (not in base table!)
         // Used internally by vector store. Scylla only checks it to enable rescoring.
-        {"quantization", std::bind_front(validate_enumerated_option, quantization_values)},
+        {"quantization", std::bind_front(util::validate_enumerated_option, quantization_values)},
         // 'oversampling' defines factor by which number of candidates retrieved from vector store is multiplied.
         // It can improve accuracy of ANN queries, especially for quantized vectors when combined with rescoring.
         // Used by Scylla during query processing to increase query limit sent to vector store.
-        {"oversampling", std::bind_front(validate_factor_option, 1.0f, 100.0f)},
+        {"oversampling", std::bind_front(util::validate_factor_option, 1.0f, 100.0f)},
         // 'rescoring' enables recalculating of similarity scores of candidates retrieved from vector store when quantization is used.
-        {"rescoring", std::bind_front(validate_enumerated_option, boolean_values)},
+        {"rescoring", std::bind_front(util::validate_enumerated_option, util::boolean_values)},
         // 'source_model' is a Cassandra SAI option specifying the embedding model name.
         // Used by Cassandra libraries (e.g., CassIO) to tag indexes with the model that produced the vectors.
         // Accepted for compatibility but not used by ScyllaDB.
-        {"source_model", [](const sstring&, const sstring&) { /* accepted for Cassandra compatibility */ }},
+        {"source_model", [](std::string_view, const sstring&, const sstring&) { /* accepted for Cassandra compatibility */ }},
     };
 
 static constexpr auto TC_TARGET_KEY = "tc";
@@ -255,43 +204,8 @@ bool vector_index::view_should_exist() const {
 }
 
 std::optional<cql3::description> vector_index::describe(const index_metadata& im, const schema& base_schema) const {
-    static const std::unordered_set<sstring> system_options = {
-        cql3::statements::index_target::target_option_name,
-        db::index::secondary_index::custom_class_option_name,
-        db::index::secondary_index::index_version_option_name,
-    };
-
-    fragmented_ostringstream os;
-    os << "CREATE CUSTOM INDEX " << cql3::util::maybe_quote(im.name()) << " ON " << cql3::util::maybe_quote(base_schema.ks_name()) << "."
-       << cql3::util::maybe_quote(base_schema.cf_name()) << "(" << targets_to_cql(im.options().at(cql3::statements::index_target::target_option_name)) << ")"
-       << " USING 'vector_index'";
-
-    // Collect user-provided options (excluding system keys like target, class_name, index_version).
-    std::map<sstring, sstring> user_options;
-    for (const auto& [key, value] : im.options()) {
-        if (!system_options.contains(key)) {
-            user_options.emplace(key, value);
-        }
-    }
-    if (!user_options.empty()) {
-        os << " WITH OPTIONS = {";
-        bool first = true;
-        for (const auto& [key, value] : user_options) {
-            if (!first) {
-                os << ", ";
-            }
-            os << "'" << key << "': '" << value << "'";
-            first = false;
-        }
-        os << "}";
-    }
-
-    return cql3::description{
-        .keyspace = base_schema.ks_name(),
-        .type = "index",
-        .name = im.name(),
-        .create_statement = std::move(os).to_managed_string(),
-    };
+    return describe_with_target(im, base_schema,
+            targets_to_cql(im.options().at(cql3::statements::index_target::target_option_name)));
 }
 
 void vector_index::check_target(const schema& schema, const std::vector<::shared_ptr<cql3::statements::index_target>>& targets) const {
@@ -429,7 +343,7 @@ void vector_index::check_index_options(const cql3::statements::index_specific_pr
         if (it == vector_index_options.end()) {
             throw exceptions::invalid_request_exception(format("Unsupported option {} for vector index", option.first));
         }
-        it->second(option.first, option.second);
+        it->second(index_type_name(), option.first, option.second);
     }
 }
 

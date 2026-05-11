@@ -20,6 +20,8 @@ namespace secondary_index {
 
 class vector_index: public custom_index {
 public:
+    std::string_view index_type_name() const override { return "vector"; }
+
     // The minimal TTL for the CDC used by Vector Search.
     // Required to ensure that the data is not deleted until the vector index is fully built.
     static constexpr int VS_TTL_SECONDS = 86400; // 24 hours

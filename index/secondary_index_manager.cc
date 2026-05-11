@@ -9,17 +9,21 @@
  */
 
 #include <functional>
+#include <map>
 #include <optional>
 #include <ranges>
 #include <seastar/core/shared_ptr.hh>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "index/secondary_index_manager.hh"
 #include "index/secondary_index.hh"
+#include "index/fulltext_index.hh"
 #include "index/vector_index.hh"
 
 #include "cql3/expr/expression.hh"
+#include "cql3/util.hh"
 #include "index/target_parser.hh"
 #include "schema/schema.hh"
 #include "utils/histogram_metrics_helper.hh"
@@ -211,6 +215,7 @@ std::optional<std::function<std::unique_ptr<custom_index>()>> secondary_index_ma
     std::transform(lower_class_name.begin(), lower_class_name.end(), lower_class_name.begin(), ::tolower);
 
     const static std::unordered_map<std::string_view, std::function<std::unique_ptr<custom_index>()>> classes = {
+        {"fulltext_index", fulltext_index_factory},
         {"vector_index", vector_index_factory},
     };
 
@@ -231,6 +236,49 @@ std::optional<std::unique_ptr<custom_index>> secondary_index_manager::get_custom
         return std::nullopt;
     }
     return (*custom_class_factory)();
+}
+
+std::optional<cql3::description> custom_index::describe_with_target(
+        const index_metadata& im,
+        const schema& base_schema,
+        const sstring& target_cql) const {
+    static const std::unordered_set<sstring> system_options = {
+        cql3::statements::index_target::target_option_name,
+        db::index::secondary_index::custom_class_option_name,
+        db::index::secondary_index::index_version_option_name,
+    };
+
+    fragmented_ostringstream os;
+    os << "CREATE CUSTOM INDEX " << cql3::util::maybe_quote(im.name()) << " ON "
+       << cql3::util::maybe_quote(base_schema.ks_name()) << "."
+       << cql3::util::maybe_quote(base_schema.cf_name()) << "(" << target_cql << ")"
+       << " USING '" << index_type_name() << "_index'";
+
+    std::map<sstring, sstring> user_options;
+    for (const auto& [key, value] : im.options()) {
+        if (!system_options.contains(key)) {
+            user_options.emplace(key, value);
+        }
+    }
+    if (!user_options.empty()) {
+        os << " WITH OPTIONS = {";
+        bool first = true;
+        for (const auto& [key, value] : user_options) {
+            if (!first) {
+                os << ", ";
+            }
+            os << "'" << key << "': '" << value << "'";
+            first = false;
+        }
+        os << "}";
+    }
+
+    return cql3::description{
+        .keyspace = base_schema.ks_name(),
+        .type = "index",
+        .name = im.name(),
+        .create_statement = std::move(os).to_managed_string(),
+    };
 }
 
 stats::stats(const sstring& ks_name, const sstring& index_name) {
