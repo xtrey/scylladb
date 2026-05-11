@@ -1070,7 +1070,7 @@ try_prepare_count_rows(const expr::function_call& fc, data_dictionary::database 
                                 .args = {},
                             };
                         } else {
-                            throw exceptions::invalid_request_exception(format("count() expects a column or the literal 1 as an argument", fc.args[0]));
+                            throw exceptions::invalid_request_exception(format("count() expects a column or the literal 1 as an argument, got {}", fc.args[0]));
                         }
                     }
                 }

@@ -681,7 +681,7 @@ static bool calculate_primitive_condition(const parsed::primitive_condition& con
     case parsed::primitive_condition::type::VALUE:
         if (calculated_values.size() != 1) {
             // Shouldn't happen unless we have a bug in the parser
-            throw std::logic_error(format("Unexpected values in primitive_condition", cond._values.size()));
+            throw std::logic_error(format("Unexpected values {} in primitive_condition", cond._values.size()));
         }
         // Unwrap the boolean wrapped as the value (if it is a boolean)
         if (calculated_values[0].IsObject() && calculated_values[0].MemberCount() == 1) {

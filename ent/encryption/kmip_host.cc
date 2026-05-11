@@ -598,7 +598,7 @@ future<int> kmip_host::impl::do_cmd(KMIP_CMD* cmd, con_ptr cp, Func& f, bool ret
 
 template<typename Func>
 future<kmip_host::impl::kmip_cmd> kmip_host::impl::do_cmd(kmip_cmd cmd_in, Func && f) {
-    kmip_log.trace("{}: begin do_cmd", *this, cmd_in);
+    kmip_log.trace("{}: begin do_cmd {}", *this, cmd_in);
     KMIP_CMD* cmd = cmd_in;
 
     // #998 Need to do retry loop, because we can have either timed out connection,

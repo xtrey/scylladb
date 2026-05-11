@@ -1019,7 +1019,7 @@ with_timeout(abort_source& as, db::timeout_clock::duration d, F&& fun) {
         } catch (...) {
             // There should be no other exceptions, but just in case, catch and discard.
             // we want to propagate exceptions from `f`, not from sleep.
-            group0_log.error("unexpected exception from sleep_and_abort", std::current_exception());
+            group0_log.error("unexpected exception from sleep_and_abort: {}", std::current_exception());
         }
 
         // Translate aborts caused by timeout to `timed_out_error`.

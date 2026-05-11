@@ -112,7 +112,7 @@ future<> view_update_generator::start() {
     _started = seastar::async([this]() mutable {
         auto drop_sstable_references = defer([&] () noexcept {
             // Clear sstable references so sstables_manager::stop() doesn't hang.
-            vug_logger.info("leaving {} unstaged sstables unprocessed",
+            vug_logger.info("leaving {} unstaged sstables and {} sstables with tables unprocessed",
                     _sstables_to_move.size(), _sstables_with_tables.size());
             _sstables_to_move.clear();
             _sstables_with_tables.clear();

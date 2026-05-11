@@ -5612,7 +5612,7 @@ future<> compaction_group::cleanup() {
     auto updater = row_cache::external_updater(std::make_unique<compaction_group_cleaner>(*this));
 
     auto p_range = to_partition_range(token_range());
-    tlogger.debug("Invalidating range {} for compaction group {} of table {} during cleanup.",
+    tlogger.debug("Invalidating range {} for compaction group {} of table {}.{} during cleanup.",
                   p_range, group_id(), _t.schema()->ks_name(), _t.schema()->cf_name());
     // Since permit is still held, all actions below will be executed atomically:
     co_await _t._cache.invalidate(std::move(updater), p_range);

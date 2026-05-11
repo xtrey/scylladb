@@ -502,7 +502,7 @@ public:
                 }
                 if (_row_start != _partition_end) {
                     on_internal_error(sstlog, format(
-                        "partition_reversing_data_source: invariant broken: _row_start == _row_end({}), but"
+                        "partition_reversing_data_source: invariant broken: _row_start({}) == _row_end({}), but"
                         " != _partition_end({})", _row_start, _row_end, _partition_end));
                 }
                 look_in_last_block = true;

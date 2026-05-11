@@ -150,14 +150,14 @@ row_locker::unlock(const dht::decorated_key* pk, bool partition_exclusive,
         auto pli = _two_level_locks.find(*pk);
         if (pli == _two_level_locks.end()) {
             // This shouldn't happen... We can't unlock this lock if we can't find it...
-            mylog.error("column_family::local_base_lock_holder::~local_base_lock_holder() can't find lock for partition", *pk);
+            mylog.error("column_family::local_base_lock_holder::~local_base_lock_holder() can't find lock for partition {}", *pk);
             return;
         }
         SCYLLA_ASSERT(&pli->first == pk);
         if (cpk) {
             auto rli = pli->second._row_locks.find(*cpk);
             if (rli == pli->second._row_locks.end()) {
-                mylog.error("column_family::local_base_lock_holder::~local_base_lock_holder() can't find lock for row", *cpk);
+                mylog.error("column_family::local_base_lock_holder::~local_base_lock_holder() can't find lock for row {}", *cpk);
                 return;
             }
             SCYLLA_ASSERT(&rli->first == cpk);

@@ -151,12 +151,12 @@ void cql_server::event_notifier::on_update_view(const sstring& ks_name, const ss
 
 void cql_server::event_notifier::on_update_function(const sstring& ks_name, const sstring& function_name)
 {
-    elogger.warn("%s event ignored", __func__);
+    elogger.warn("{} event ignored", __func__);
 }
 
 void cql_server::event_notifier::on_update_aggregate(const sstring& ks_name, const sstring& aggregate_name)
 {
-    elogger.warn("%s event ignored", __func__);
+    elogger.warn("{} event ignored", __func__);
 }
 
 void cql_server::event_notifier::on_drop_keyspace(const sstring& ks_name)
@@ -210,12 +210,12 @@ void cql_server::event_notifier::on_drop_view(const sstring& ks_name, const sstr
 
 void cql_server::event_notifier::on_drop_function(const sstring& ks_name, const sstring& function_name)
 {
-    elogger.warn("%s event ignored", __func__);
+    elogger.warn("{} event ignored", __func__);
 }
 
 void cql_server::event_notifier::on_drop_aggregate(const sstring& ks_name, const sstring& aggregate_name)
 {
-    elogger.warn("%s event ignored", __func__);
+    elogger.warn("{} event ignored", __func__);
 }
 
 future<> cql_server::event_notifier::on_before_service_level_add(qos::service_level_options, qos::service_level_info sl_info) {

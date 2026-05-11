@@ -795,7 +795,7 @@ private:
             if (etag.empty()) {
                 throw std::runtime_error("Cannot parse ETag");
             }
-            s3l.trace("Part data -> etag = {} (upload id {})", part_number, etag, _upload_id);
+            s3l.trace("Part {} data -> etag = {} (upload id {})", part_number, etag, _upload_id);
             _part_etags[part_number] = std::move(etag);
         },http::reply::status_type::ok, _as)
         .handle_exception([this, part_number](auto ex) {

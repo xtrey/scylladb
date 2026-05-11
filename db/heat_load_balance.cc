@@ -327,7 +327,7 @@ redistribute(const std::vector<float>& p, unsigned me, unsigned k) {
                 }
             }
 
-            hr_logger.trace("     pp after1=", pp);
+            hr_logger.trace("     pp after1={}", pp);
             if (d.first == me) {
                 // We only care what "me" sends, and only the elements in
                 // the sorted list earlier than me could have forced it to

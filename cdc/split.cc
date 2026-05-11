@@ -267,7 +267,7 @@ struct extract_row_visitor {
             visit_collection(v);
         },
         [&] (const abstract_type& o) {
-            throw std::runtime_error(format("extract_changes: unknown collection type:", o.name()));
+            throw std::runtime_error(format("extract_changes: unknown collection type: {}", o.name()));
         }
         ));
     }
