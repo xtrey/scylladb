@@ -7397,6 +7397,7 @@ void object_storage_sstable_clone_leaving_unsealed_dest_sstable(test_env& env) {
         env.manager()
             .sstables_registry()
             .sstables_registry_list(table.schema()->id(),
+                                    env.manager().get_local_host_id(),
                                     [&checked, sst_desc = sst2->get_descriptor(component_type::TOC)](
                                         sstring status, sstable_state state, entry_descriptor desc) {
                                         if (desc.generation == sst_desc.generation) {
@@ -7418,6 +7419,7 @@ void object_storage_sstable_clone_leaving_unsealed_dest_sstable(test_env& env) {
         env.manager()
             .sstables_registry()
             .sstables_registry_list(table.schema()->id(),
+                                    env.manager().get_local_host_id(),
                                     [&checked, sst_desc = sst3->get_descriptor(component_type::TOC)](
                                         sstring status, sstable_state, entry_descriptor desc) {
                                         if (desc.generation == sst_desc.generation) {

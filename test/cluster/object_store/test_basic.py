@@ -75,8 +75,8 @@ async def test_basic(manager: ManagerClient, object_storage, tmp_path, mode, rep
         tid = cql.execute(f"SELECT id FROM system_schema.tables WHERE keyspace_name = '{ks}' AND table_name = 'test'").one()
         res = cql.execute("SELECT * FROM system.sstables;")
         for row in res:
-            assert row.owner == tid.id, \
-                f'Unexpected entry owner in registry: {row.owner}'
+            assert row.table_id == tid.id, \
+                f'Unexpected entry table_id in registry: {row.table_id}'
             assert row.status == 'sealed', f'Unexpected entry status in registry: {row.status}'
 
         if replication_factor > 1:
@@ -105,7 +105,7 @@ async def test_basic(manager: ManagerClient, object_storage, tmp_path, mode, rep
         cql.execute(f"DROP TABLE {ks}.test;")
         # Check that the ownership table is de-populated
         res = cql.execute("SELECT * FROM system.sstables;")
-        rows = "\n".join(f"{row.owner} {row.status}" for row in res)
+        rows = "\n".join(f"{row.table_id} {row.status}" for row in res)
         assert not rows, 'Unexpected entries in registry'
 
 @pytest.mark.asyncio
@@ -132,11 +132,11 @@ async def test_garbage_collect(manager: ManagerClient, object_storage):
         # Mark the sstables as "removing" to simulate the problem
         res = cql.execute("SELECT * FROM system.sstables;")
         for row in res:
-            sstable_entries.append((row.owner, row.generation))
-        print(f'Found entries: {[ str(ent[1]) for ent in sstable_entries ]}')
-        for owner, gen in sstable_entries:
+            sstable_entries.append((row.table_id, row.node_owner, row.generation))
+        print(f'Found entries: {[ str(ent[2]) for ent in sstable_entries ]}')
+        for table_id, node_owner, gen in sstable_entries:
             cql.execute("UPDATE system.sstables SET status = 'removing'"
-                         f" WHERE owner = {owner} AND generation = {gen};")
+                         f" WHERE table_id = {table_id} AND node_owner = {node_owner} AND generation = {gen};")
 
         print('Restart scylla')
         await manager.server_restart(server.server_id)
@@ -151,7 +151,7 @@ async def test_garbage_collect(manager: ManagerClient, object_storage):
         print(f'Found objects: {[ objects ]}')
         for o in objects:
             for ent in sstable_entries:
-                assert not o.key.startswith(str(ent[1])), f'Sstable object not cleaned, found {o.key}'
+                assert not o.key.startswith(str(ent[2])), f'Sstable object not cleaned, found {o.key}'
 
 
 @pytest.mark.asyncio
@@ -181,7 +181,7 @@ async def test_populate_from_quarantine(manager: ManagerClient, object_storage):
         assert len(list(res)) > 0, 'No entries in registry'
         for row in res:
             cql.execute("UPDATE system.sstables SET state = 'quarantine'"
-                         f" WHERE owner = {row.owner} AND generation = {row.generation};")
+                         f" WHERE table_id = {row.table_id} AND node_owner = {row.node_owner} AND generation = {row.generation};")
 
         print('Restart scylla')
         await manager.server_restart(server.server_id)
@@ -249,7 +249,7 @@ async def test_memtable_flush_retries(manager: ManagerClient, tmpdir, object_sto
 
         print(f'Check the sstables table')
         res = cql.execute("SELECT * FROM system.sstables;")
-        ssts = "\n".join(f"{row.owner} {row.generation} {row.status}" for row in res)
+        ssts = "\n".join(f"{row.table_id} {row.generation} {row.status}" for row in res)
         print(f'sstables:\n{ssts}')
 
         print('Restart scylla')
