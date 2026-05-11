@@ -30,6 +30,7 @@
 #include "utils/build_id.hh"
 #include "utils/only_on_shard0.hh"
 #include "supervisor.hh"
+#include "timeout_config.hh"
 #include "replica/database.hh"
 #include <seastar/core/reactor.hh>
 #include <seastar/core/app-template.hh>
@@ -1368,6 +1369,11 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             spcfg.hints_write_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
             spcfg.write_ack_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
             static db::view::node_update_backlog node_backlog(smp::count, 10ms, cfg->view_flow_control_delay_limit_in_ms);
+
+            static sharded<updateable_timeout_config> timeout_cfg;
+            timeout_cfg.start(std::ref(*cfg)).get();
+            auto stop_timeout_cfg = defer_verbose_shutdown("updateable timeout config", [] { timeout_cfg.stop().get(); });
+
             scheduling_group_key_config storage_proxy_stats_cfg =
                     make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
             storage_proxy_stats_cfg.constructor = [plain_constructor = storage_proxy_stats_cfg.constructor] (void* ptr) {
@@ -1381,7 +1387,8 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             };
             proxy.start(std::ref(db), spcfg, std::ref(node_backlog),
                     scheduling_group_key_create(storage_proxy_stats_cfg).get(),
-                    std::ref(feature_service), std::ref(token_metadata), std::ref(erm_factory)).get();
+                    std::ref(feature_service), std::ref(token_metadata), std::ref(erm_factory),
+                    std::ref(timeout_cfg)).get();
 
             // #293 - do not stop anything
             // engine().at_exit([&proxy] { return proxy.stop(); });
@@ -2186,7 +2193,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
                         auth::make_maintenance_socket_role_manager_factory(qp, group0_client, mm, auth_cache),
                         maintenance_socket_enabled::yes, std::ref(auth_cache)).get();
 
-                cql_maintenance_server_ctl.emplace(maintenance_auth_service, mm_notifier, gossiper, qp, service_memory_limiter, sl_controller, lifecycle_notifier, messaging, *cfg, maintenance_cql_sg_stats_key, maintenance_socket_enabled::yes, dbcfg.statement_scheduling_group);
+                cql_maintenance_server_ctl.emplace(maintenance_auth_service, mm_notifier, gossiper, qp, service_memory_limiter, sl_controller, lifecycle_notifier, messaging, timeout_cfg, *cfg, maintenance_cql_sg_stats_key, maintenance_socket_enabled::yes, dbcfg.statement_scheduling_group);
 
                 start_auth_service(maintenance_auth_service, stop_maintenance_auth_service, "maintenance auth service");
             }
@@ -2618,11 +2625,11 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             // after drain stops them in stop_transport()
             // Register controllers after drain_on_shutdown() below, so that even on start
             // failure drain is called and stops controllers
-            cql_transport::controller cql_server_ctl(auth_service, mm_notifier, gossiper, qp, service_memory_limiter, sl_controller, lifecycle_notifier, messaging, *cfg, cql_sg_stats_key, maintenance_socket_enabled::no, dbcfg.statement_scheduling_group);
+            cql_transport::controller cql_server_ctl(auth_service, mm_notifier, gossiper, qp, service_memory_limiter, sl_controller, lifecycle_notifier, messaging, timeout_cfg, *cfg, cql_sg_stats_key, maintenance_socket_enabled::no, dbcfg.statement_scheduling_group);
 
             api::set_server_service_levels(ctx, cql_server_ctl, qp).get();
 
-            alternator::controller alternator_ctl(gossiper, proxy, ss, mm, sys_dist_ks, sys_ks, cdc_generation_service, service_memory_limiter, auth_service, sl_controller, vector_store_client, *cfg, dbcfg.statement_scheduling_group);
+            alternator::controller alternator_ctl(gossiper, proxy, ss, mm, sys_dist_ks, sys_ks, cdc_generation_service, service_memory_limiter, auth_service, sl_controller, vector_store_client, timeout_cfg, *cfg, dbcfg.statement_scheduling_group);
 
             // Register at_exit last, so that storage_service::drain_on_shutdown will be called first
             auto do_drain = defer_verbose_shutdown("local storage", [&ss] {

@@ -23,6 +23,7 @@
 #include "cql3/statements/batch_statement.hh"
 #include "cql3/statements/modification_statement.hh"
 #include "cql3/cql_config.hh"
+#include "timeout_config.hh"
 #include <fmt/ranges.h>
 #include <seastar/core/sharded.hh>
 #include <seastar/core/abort_source.hh>
@@ -177,6 +178,7 @@ private:
     std::optional<utils::disk_space_monitor> _disk_space_monitor_shard0;
     sharded<lang::manager> _lang_manager;
     sharded<cql3::cql_config> _cql_config;
+    sharded<updateable_timeout_config> _timeout_config;
     sharded<service::endpoint_lifecycle_notifier> _elc_notif;
     sharded<cdc::generation_service> _cdc_generation_service;
     sharded<repair_service> _repair;
@@ -735,9 +737,13 @@ private:
             };
             spcfg.available_memory = memory::stats().total_memory();
             db::view::node_update_backlog b(smp::count, 10ms);
+
+            _timeout_config.start(std::ref(*cfg)).get();
+            auto stop_timeout_config = defer_verbose_shutdown("updateable timeout config", [this] { _timeout_config.stop().get(); });
+
             scheduling_group_key_config sg_conf =
                     make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
-            _proxy.start(std::ref(_db), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get(), std::ref(_feature_service), std::ref(_token_metadata), std::ref(_erm_factory)).get();
+            _proxy.start(std::ref(_db), spcfg, std::ref(b), scheduling_group_key_create(sg_conf).get(), std::ref(_feature_service), std::ref(_token_metadata), std::ref(_erm_factory), std::ref(_timeout_config)).get();
             auto stop_proxy = defer_verbose_shutdown("storage proxy", [this] { _proxy.stop().get(); });
 
             _cql_config.start(seastar::sharded_parameter([&] { return cql3::cql_config(*cfg); })).get();

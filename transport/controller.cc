@@ -31,7 +31,7 @@ static logging::logger logger("cql_server_controller");
 controller::controller(sharded<auth::service>& auth, sharded<service::migration_notifier>& mn,
         sharded<gms::gossiper>& gossiper, sharded<cql3::query_processor>& qp, sharded<service::memory_limiter>& ml,
         sharded<qos::service_level_controller>& sl_controller, sharded<service::endpoint_lifecycle_notifier>& elc_notif,
-        sharded<netw::messaging_service>& ms,
+        sharded<netw::messaging_service>& ms, sharded<updateable_timeout_config>& timeout_config,
         const db::config& cfg, scheduling_group_key cql_opcode_stats_key, maintenance_socket_enabled used_by_maintenance_socket,
         seastar::scheduling_group sg)
     : protocol_server(sg)
@@ -45,6 +45,7 @@ controller::controller(sharded<auth::service>& auth, sharded<service::migration_
     , _mem_limiter(ml)
     , _sl_controller(sl_controller)
     , _messaging(ms)
+    , _timeout_config(timeout_config)
     , _config(cfg)
     , _cql_opcode_stats_key(cql_opcode_stats_key)
     , _used_by_maintenance_socket(used_by_maintenance_socket)
@@ -255,7 +256,7 @@ future<> controller::do_start_server() {
                 shard_aware_transport_port_ssl = cfg.native_shard_aware_transport_port_ssl();
             }
             return cql_server_config {
-              .timeout_config = updateable_timeout_config(cfg),
+              .timeout_config = _timeout_config.local(),
               .max_request_size = _mem_limiter.local().total_memory(),
               .partitioner_name = cfg.partitioner(),
               .sharding_ignore_msb = cfg.murmur3_partitioner_ignore_msb_bits(),

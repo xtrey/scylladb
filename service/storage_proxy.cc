@@ -590,7 +590,7 @@ private:
 
         storage_proxy::clock_type::time_point timeout;
         if (!t) {
-            auto timeout_in_ms = _sp._db.local().get_config().write_request_timeout_in_ms();
+            auto timeout_in_ms = _sp._timeout_config.write_timeout_in_ms();
             timeout = clock_type::now() + std::chrono::milliseconds(timeout_in_ms);
         } else {
             timeout = *t;
@@ -3321,7 +3321,8 @@ storage_proxy::~storage_proxy() {
 }
 
 storage_proxy::storage_proxy(sharded<replica::database>& db, storage_proxy::config cfg, db::view::node_update_backlog& max_view_update_backlog,
-        scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm, locator::effective_replication_map_factory& erm_factory)
+        scheduling_group_key stats_key, gms::feature_service& feat, const locator::shared_token_metadata& stm, locator::effective_replication_map_factory& erm_factory,
+        updateable_timeout_config& timeout_config)
     : _db(db)
     , _shared_token_metadata(stm)
     , _erm_factory(erm_factory)
@@ -3341,6 +3342,7 @@ storage_proxy::storage_proxy(sharded<replica::database>& db, storage_proxy::conf
     , _background_write_throttle_threahsold(cfg.available_memory / 10)
     , _mutate_stage{"storage_proxy_mutate", &storage_proxy::do_mutate}
     , _max_view_update_backlog(max_view_update_backlog)
+    , _timeout_config(timeout_config)
     , _cancellable_write_handlers_list(std::make_unique<cancellable_write_handlers_list>())
 {
     namespace sm = seastar::metrics;
@@ -3970,7 +3972,7 @@ future<result<>> storage_proxy::mutate_begin(unique_response_handler_vector ids,
         // frozen_mutation copy, or manage handler live time differently.
         hint_to_dead_endpoints(response_id, cl);
 
-        auto timeout = timeout_opt.value_or(clock_type::now() + std::chrono::milliseconds(_db.local().get_config().write_request_timeout_in_ms()));
+        auto timeout = timeout_opt.value_or(clock_type::now() + std::chrono::milliseconds(_timeout_config.write_timeout_in_ms()));
         // call before send_to_live_endpoints() for the same reason as above
         auto f = response_wait(response_id, timeout);
         send_to_live_endpoints(protected_response.release(), timeout); // response is now running and it will either complete or timeout
@@ -5942,7 +5944,7 @@ public:
                     // occur within write_timeout of a write, as these are the cases where repair is most
                     // beneficial.
                     if (is_datacenter_local(exec->_cl) && exec->_cmd->read_timestamp >= 0 && digest_resolver->last_modified() >= 0) {
-                        auto write_timeout = exec->_proxy->_db.local().get_config().write_request_timeout_in_ms() * 1000;
+                        auto write_timeout = exec->_proxy->_timeout_config.write_timeout_in_ms() * 1000;
                         auto delta = int64_t(digest_resolver->last_modified()) - int64_t(exec->_cmd->read_timestamp);
                         if (std::abs(delta) <= write_timeout) {
                             exec->_proxy->get_stats().global_read_repairs_canceled_due_to_concurrent_write++;
@@ -6066,7 +6068,7 @@ public:
         });
         auto& sr = _schema->speculative_retry();
         auto t = (sr.get_type() == speculative_retry::type::PERCENTILE) ?
-            std::min(_cf->get_coordinator_read_latency_percentile(sr.get_value()), std::chrono::milliseconds(_proxy->get_db().local().get_config().read_request_timeout_in_ms()/2)) :
+            std::min(_cf->get_coordinator_read_latency_percentile(sr.get_value()), std::chrono::milliseconds(_proxy->_timeout_config.read_timeout_in_ms()/2)) :
             std::chrono::milliseconds(unsigned(sr.get_value()));
         _speculate_timer.arm(t);
         resolver->set_on_disconnect([this] {
@@ -6784,7 +6786,7 @@ storage_proxy::do_query_with_paxos(schema_ptr s,
     db::timeout_clock::time_point timeout = query_options.timeout(*this);
     // When to give up due to contention
     db::timeout_clock::time_point cas_timeout = db::timeout_clock::now() +
-            std::chrono::milliseconds(_db.local().get_config().cas_contention_timeout_in_ms());
+            std::chrono::milliseconds(_timeout_config.cas_timeout_in_ms());
 
     struct read_cas_request : public cas_request {
         foreign_ptr<lw_shared_ptr<query::result>> res;
