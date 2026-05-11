@@ -351,6 +351,9 @@ public:
                     if (agg.state_to_result_function) {
                         ret.push_back(agg.state_to_result_function);
                     }
+                    if (agg.state_reduction_function) {
+                        ret.push_back(agg.state_reduction_function);
+                    }
                 }
             }
             return false;
