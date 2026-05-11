@@ -950,7 +950,7 @@ private:
 
             _sys_dist_ks.start(std::ref(_qp), std::ref(_mm), std::ref(_proxy)).get();
 
-            _view_update_generator.start(std::ref(_db), std::ref(_proxy), std::ref(abort_sources)).get();
+            _view_update_generator.start(std::ref(_db), std::ref(_proxy), std::ref(b), std::ref(abort_sources)).get();
             auto stop_view_update_generator = defer_verbose_shutdown("view update generator", [this] {
                 _view_update_generator.stop().get();
             });

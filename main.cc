@@ -1367,7 +1367,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             spcfg.write_mv_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
             spcfg.hints_write_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
             spcfg.write_ack_smp_service_group = create_smp_service_group(storage_proxy_smp_service_group_config).get();
-            static db::view::node_update_backlog node_backlog(smp::count, 10ms);
+            static db::view::node_update_backlog node_backlog(smp::count, 10ms, cfg->view_flow_control_delay_limit_in_ms);
             scheduling_group_key_config storage_proxy_stats_cfg =
                     make_scheduling_group_key_config<service::storage_proxy_stats::stats>();
             storage_proxy_stats_cfg.constructor = [plain_constructor = storage_proxy_stats_cfg.constructor] (void* ptr) {
@@ -1854,7 +1854,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
             });
 
             checkpoint(stop_signal, "starting view update generator");
-            view_update_generator.start(std::ref(db), std::ref(proxy), std::ref(stop_signal.as_sharded_abort_source())).get();
+            view_update_generator.start(std::ref(db), std::ref(proxy), std::ref(node_backlog), std::ref(stop_signal.as_sharded_abort_source())).get();
             auto stop_view_update_generator = defer_verbose_shutdown("view update generator", [] {
                 view_update_generator.stop().get();
             });

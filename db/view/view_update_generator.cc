@@ -7,6 +7,7 @@
  */
 
 #include "db/view/view_update_backlog.hh"
+#include "db/view/node_view_update_backlog.hh"
 #include <seastar/core/timed_out_error.hh>
 #include "gms/inet_address.hh"
 #include <seastar/util/defer.hh>
@@ -95,9 +96,10 @@ public:
     }
 };
 
-view_update_generator::view_update_generator(replica::database& db, sharded<service::storage_proxy>& proxy, abort_source& as)
+view_update_generator::view_update_generator(replica::database& db, sharded<service::storage_proxy>& proxy, node_update_backlog& node_backlog, abort_source& as)
         : _db(db)
         , _proxy(proxy)
+        , _node_update_backlog(node_backlog)
         , _progress_tracker(std::make_unique<progress_tracker>())
         , _early_abort_subscription(as.subscribe([this] () noexcept { do_abort(); }))
 {
@@ -498,7 +500,7 @@ future<> view_update_generator::generate_and_propagate_view_updates(const replic
         // the one which limits the number of incoming client requests by delaying the response to the client.
         if (batch_num > 0) {
             update_backlog local_backlog = _db.get_view_update_backlog();
-            std::chrono::microseconds throttle_delay =  calculate_view_update_throttling_delay(local_backlog, timeout, _db.get_config().view_flow_control_delay_limit_in_ms());
+            std::chrono::microseconds throttle_delay =  _node_update_backlog.calculate_throttling_delay(local_backlog, timeout);
 
             co_await seastar::sleep(throttle_delay);
 

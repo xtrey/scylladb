@@ -45,6 +45,7 @@
 #include "db/view/view_builder.hh"
 #include "db/view/view_updating_consumer.hh"
 #include "db/view/view_update_generator.hh"
+#include "db/view/node_view_update_backlog.hh"
 #include "db/view/regular_column_transformation.hh"
 #include "db/system_keyspace_view_types.hh"
 #include "db/system_keyspace.hh"
@@ -3492,18 +3493,27 @@ future<> delete_ghost_rows_visitor::do_accept_new_row(partition_key pk, clusteri
     }
 }
 
-std::chrono::microseconds calculate_view_update_throttling_delay(db::view::update_backlog backlog,
-                                                                 db::timeout_clock::time_point timeout,
-                                                                 uint32_t view_flow_control_delay_limit_in_ms) {
+// View updates are asynchronous, and because of this limiting their concurrency requires
+// a special approach. The current algorithm places all of the pending view updates in the backlog
+// and artificially slows down new responses to coordinator requests based on how full the backlog is.
+// This function calculates how much a request should be slowed down based on the backlog's fullness.
+// The equation is basically: delay(in seconds) = view_fullness_ratio^3
+// The more full the backlog gets the more aggressively the requests are slowed down.
+// The delay is limited to the amount of time left until timeout.
+// After the timeout the request fails, so there's no point in waiting longer than that.
+// The second argument defines this timeout point - we can't delay the request more than this time point.
+// See: https://www.scylladb.com/2018/12/04/worry-free-ingestion-flow-control/
+std::chrono::microseconds node_update_backlog::calculate_throttling_delay(update_backlog backlog,
+                                                                         db::timeout_clock::time_point timeout) const {
     auto adjust = [] (float x) { return x * x * x; };
-    auto budget = std::max(service::storage_proxy::clock_type::duration(0),
-        timeout - service::storage_proxy::clock_type::now());
-    std::chrono::microseconds ret(uint32_t(adjust(backlog.relative_size()) * view_flow_control_delay_limit_in_ms * 1000));
+    auto budget = std::max(db::timeout_clock::duration(0),
+        timeout - db::timeout_clock::now());
+    std::chrono::microseconds ret(uint32_t(adjust(backlog.relative_size()) * _view_flow_control_delay_limit_in_ms() * 1000));
     // "budget" has millisecond resolution and can potentially be long
     // in the future so converting it to microseconds may overflow.
     // So to compare buget and ret we need to convert both to the lower
     // resolution.
-    if (std::chrono::duration_cast<service::storage_proxy::clock_type::duration>(ret) < budget) {
+    if (std::chrono::duration_cast<db::timeout_clock::duration>(ret) < budget) {
         return ret;
     } else {
         // budget is small (< ret) so can be converted to microseconds
