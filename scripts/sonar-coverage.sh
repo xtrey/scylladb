@@ -49,6 +49,17 @@ run() {  # keep the box responsive
     nice -n 19 ionice -c3 "$@"
 }
 
+ensure_lcov_cobertura() {  # bootstrap lcov_cobertura into a local venv if missing
+    if [[ -x "$VENV/bin/lcov_cobertura" ]]; then
+        return 0
+    fi
+    log "lcov_cobertura not found; provisioning venv at $VENV"
+    python3 -m venv "$VENV"
+    "$VENV/bin/pip" install --quiet --disable-pip-version-check --upgrade pip >/dev/null
+    "$VENV/bin/pip" install --quiet --disable-pip-version-check lcov_cobertura
+    log "lcov_cobertura provisioned"
+}
+
 merge_suite() {  # *.profraw -> *.profdata
     local suite="$1" dir="$COV_ROOT/$suite"
     local all_profraw=("$dir"/*.profraw)
@@ -204,6 +215,7 @@ run python3 "$MERGER" -o "$FINAL" "${GLOBAL_INPUTS[@]}"
 
 # ---- lcov -> Cobertura XML ------------------------------------------------
 COBERTURA="$OUT_DIR/coverage.cobertura.xml"
+ensure_lcov_cobertura
 log "converting $FINAL -> $COBERTURA"
 run "$VENV/bin/lcov_cobertura" "$FINAL" -b "$REPO_ROOT" -o "$COBERTURA"
 

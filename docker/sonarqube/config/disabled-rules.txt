@@ -1,0 +1,23 @@
+# Rules to switch OFF for C++ analysis in this POC.
+#
+# One SonarQube rule key per line. Blank lines and everything after a '#' are
+# ignored. Apply the file with:
+#
+#     ./sonarqube.sh provision
+#
+# That creates (or updates) the "scylla-cxx" quality profile as a copy of the
+# built-in C++ profile, makes it the default C++ profile, and deactivates every
+# rule listed below. Re-running `provision` re-applies the current file.
+#
+# Rule keys have the form <repo>:<rule>. Native sonar-cxx rules are "cxx:...".
+# Discover keys in the web UI (Rules -> filter Language = C++), or via the API:
+#
+#     curl -u admin:<password> \
+#       'http://localhost:9000/api/rules/search?languages=cxx&ps=500' | less
+#
+# Examples (uncomment / add the ones you want to turn off):
+# cxx:FunctionComplexity
+# cxx:TooManyParameters
+# cxx:TooLongLine
+# cxx:UndocumentedApi
+# cxx:UseCorrectInclude
