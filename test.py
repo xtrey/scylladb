@@ -445,13 +445,27 @@ async def process_coverage(options):
                                                                logger = logger)
     logger.debug(f"Binary ids map is: {files_to_ids_map}")
     logger.info("Done getting binary ids for coverage conversion")
-    # get the suits that have actually been ran
-    suits_to_exclude = ["pylib_test", "dist_test", "nodetool"]
     sources_to_exclude = [line for line in open("coverage_excludes.txt", 'r').read().split('\n') if line and not line.startswith('#')]
-    ran_suites = list({test.suite for test in TestSuite.all_tests() if test.suite.need_coverage()})
 
-    def suite_coverage_path(suite) -> pathlib.Path:
-        return pathlib.Path(suite.options.tmpdir) / suite.mode / 'coverage' / suite.name
+    # A single suite run whose raw profiles need post-processing. The retired
+    # TestSuite registry used to hand these out; the pytest runner instead writes
+    # per-suite raw profiles to `<tmpdir>/<mode>/coverage/<suite>/*.profraw` (see
+    # test/pylib/runner.py:create_cluster_factory), so discover them from disk.
+    @dataclasses.dataclass(frozen=True)
+    class SuiteRun:
+        name: str
+        mode: str
+
+    def suite_coverage_path(suite: SuiteRun) -> pathlib.Path:
+        return pathlib.Path(options.tmpdir) / suite.mode / 'coverage' / suite.name
+
+    ran_suites = []
+    for mode in modes_for_coverage:
+        coverage_root = pathlib.Path(options.tmpdir) / mode / 'coverage'
+        if not coverage_root.is_dir():
+            continue
+        for suite_dir in sorted(p for p in coverage_root.iterdir() if p.is_dir()):
+            ran_suites.append(SuiteRun(name=suite_dir.name, mode=mode))
 
     def pathsize(path : pathlib.Path):
         if path.is_file():
