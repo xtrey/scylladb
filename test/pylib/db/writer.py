@@ -58,6 +58,14 @@ create_table = [
         system_sec REAL,
         usage_sec REAL,
         memory_peak INTEGER,
+        io_read_bytes INTEGER,
+        io_write_bytes INTEGER,
+        io_read_ops INTEGER,
+        io_write_ops INTEGER,
+        seastar_read_bytes INTEGER,
+        seastar_read_ops INTEGER,
+        seastar_write_bytes INTEGER,
+        seastar_write_ops INTEGER,
         time_taken REAL,
         time_start DATETIME,
         time_end DATETIME,
@@ -92,6 +100,8 @@ create_table = [
         host_id VARCHAR(5) NOT NULL,
         memory REAL,
         timestamp DATETIME,
+        io_read_bytes INTEGER,
+        io_write_bytes INTEGER,
         FOREIGN KEY(test_id) REFERENCES {TESTS_TABLE}(id),
         FOREIGN KEY(host_id) REFERENCES {HOST_INFO_TABLE}(host_id)
     );

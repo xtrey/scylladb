@@ -129,6 +129,11 @@ PHASE_REPORT_KEY = pytest.StashKey[dict[str, pytest.CollectReport]]()
 # can gather manager-owned logs: {"manager": ScyllaClusterManager, "logs": {name: path}}.
 MANAGER_LOGS_KEY = pytest.StashKey[dict[str, object]]()
 
+# Set by the `manager` fixture from after_test()'s result: per-test seastar
+# io_queue counter deltas, keyed by metric name (ScyllaClusterManager.IO_QUEUE_METRICS).
+# Picked up by pytest_runtest_protocol to store alongside the cgroup metrics.
+SEASTAR_IO_KEY = pytest.StashKey[dict[str, int]]()
+
 FAILED_TEST_DIR = "failed_test"
 
 
@@ -266,6 +271,13 @@ def pytest_runtest_protocol(item, nextitem):
                 else:
                     status = "unknown"
                 test_metrics.status = status
+
+                seastar_io = item.stash.get(SEASTAR_IO_KEY, None)
+                if seastar_io:
+                    test_metrics.seastar_read_bytes = seastar_io.get('scylla_io_queue_total_read_bytes')
+                    test_metrics.seastar_read_ops = seastar_io.get('scylla_io_queue_total_read_ops')
+                    test_metrics.seastar_write_bytes = seastar_io.get('scylla_io_queue_total_write_bytes')
+                    test_metrics.seastar_write_ops = seastar_io.get('scylla_io_queue_total_write_ops')
 
                 resource_gather.write_metrics_to_db(
                     metrics=test_metrics,
@@ -704,7 +716,11 @@ def pytest_runtest_makereport(item, call):
                         longreprtext=report.longreprtext,
                         when=report.when,
                     )
-                except Exception:
+                except (Exception, pytest.fail.Exception):
+                    # pytest.fail.Exception derives from BaseException, so a bare
+                    # `except Exception` misses it: log_browsing calls pytest.fail()
+                    # when a server log is missing, which would otherwise escape and
+                    # kill the whole xdist worker (aborting the session).
                     logger.warning("Failed to collect logs for failed test %s", item.name, exc_info=True)
 
 

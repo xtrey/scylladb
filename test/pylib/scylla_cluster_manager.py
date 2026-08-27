@@ -276,6 +276,48 @@ class ScyllaClusterManager:
         self.ccluster: CassandraCluster | None = None
         self.cql: CassandraSession | None = None
         self.exclusive_clusters: list[CassandraCluster] = []
+        # Per-test io_queue counter baseline, snapshotted by before_test() and
+        # diffed by after_test() (see _scrape_io_queue).
+        self._io_queue_start: dict[ServerNum, dict[str, float]] = {}
+
+    # Seastar io_queue counters scraped around each test: application-level
+    # (logical) IO issued by Scylla, counted whether or not the kernel serves
+    # it from the page cache — the counterpart of the block-level cgroup
+    # io.stat metrics gathered by test/pylib/resource_gather.py.
+    IO_QUEUE_METRICS = (
+        'scylla_io_queue_total_read_bytes',
+        'scylla_io_queue_total_read_ops',
+        'scylla_io_queue_total_write_bytes',
+        'scylla_io_queue_total_write_ops',
+    )
+
+    async def _scrape_io_queue(self) -> dict[ServerNum, dict[str, float]]:
+        """Best-effort scrape of io_queue counters from all running servers,
+        summed across shards, devices and IO classes."""
+        result: dict[ServerNum, dict[str, float]] = {}
+        for srv in self.cluster.running_servers():
+            try:
+                metrics = await self.metrics.query(srv.ip_addr)
+                result[srv.server_id] = {name: metrics.get(name) or 0.0 for name in self.IO_QUEUE_METRICS}
+            except Exception as e:
+                self.logger.debug("Could not scrape io_queue metrics from %s: %s", srv.ip_addr, e)
+        return result
+
+    def _io_queue_delta(self, io_end: dict[ServerNum, dict[str, float]]) -> dict[str, int]:
+        """Sum per-server io_queue counter deltas since before_test().
+
+        Best effort: a server stopped during the test takes its counters with
+        it (undercount), and one restarted during the test starts over from
+        zero — a negative delta means exactly that, so its post-restart total
+        is counted instead.
+        """
+        totals = dict.fromkeys(self.IO_QUEUE_METRICS, 0)
+        for server_id, end_vals in io_end.items():
+            start_vals = self._io_queue_start.get(server_id, {})
+            for name, end_val in end_vals.items():
+                delta = end_val - start_vals.get(name, 0.0)
+                totals[name] += int(end_val if delta < 0 else delta)
+        return totals
 
     def repr_tasks_history(self) -> str:
         out = "Cluster_history"
@@ -331,6 +373,7 @@ class ScyllaClusterManager:
         self.logger.info("Leasing Scylla cluster %s for test %s", self.cluster, self.current_test_case_full_name)
         self.cluster.before_test(self.current_test_case_full_name)
         self.cluster.take_log_savepoint()
+        self._io_queue_start = await self._scrape_io_queue()
         # Lower the fence last: recycling above replaces self.cluster, and a
         # task the previous test leaked must not reach the one being disposed.
         self._test_finished = False
@@ -435,6 +478,9 @@ class ScyllaClusterManager:
         if self.tasks_history:
             self.break_manager(f"tasks leakage found  {self.tasks_history}", self.current_test_case_full_name)
 
+        seastar_io = self._io_queue_delta(await self._scrape_io_queue())
+        self._io_queue_start = {}
+
         self.logger.info("Test %s %s, cluster: %s",
                          self.current_test_case_full_name, "SUCCEEDED" if success else "FAILED", self.cluster)
         try:
@@ -450,6 +496,7 @@ class ScyllaClusterManager:
             "cluster_str": cluster_str,
             "server_broken": self.server_broken_event.is_set(),
             "message": self.server_broken_reason,
+            "seastar_io": seastar_io,
         }
 
     def check_not_broken(self) -> None:

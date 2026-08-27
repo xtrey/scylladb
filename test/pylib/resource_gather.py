@@ -150,6 +150,7 @@ class ResourceGatherOn(ResourceGatherRecord):
         self.cgroup_path = CGROUP_TESTS / self.worker_id
         self._memory_peak_fd: IO | None = None
         self._cpu_stat_start: dict[str, float] | None = None
+        self._io_stat_start: dict[str, int] | None = None
 
     def stop_monitoring(self) -> None:
         self.stop_event.set()
@@ -161,21 +162,25 @@ class ResourceGatherOn(ResourceGatherRecord):
         self.future = self.pool.submit(self._monitor_cgroup)
 
     def _monitor_cgroup(self) -> None:
-        """Continuously monitors cgroup memory utilization every second."""
+        """Continuously monitors cgroup memory and io utilization every second."""
         memory_current = self.cgroup_path / 'memory.current'
+        io_stat = self.cgroup_path / 'io.stat'
         sqlite_writer = SQLiteWriter(self.db_path)
         try:
             while not self.stop_event.is_set():
                 try:
+                    io_totals = self._read_io_stat(io_stat) if io_stat.exists() else {}
                     timeline_record = CgroupMetric(
                         test_id=self.test_id,
                         host_id=HOST_ID,
                         memory=int(memory_current.read_text().strip()),
-                        timestamp=datetime.now()
+                        timestamp=datetime.now(),
+                        io_read_bytes=io_totals.get('rbytes'),
+                        io_write_bytes=io_totals.get('wbytes'),
                     )
                     sqlite_writer.write_row(timeline_record, CGROUP_MEMORY_METRICS_TABLE)
                 except Exception as e:
-                    self.logger.debug(f"Could not read cgroup memory for {self.cgroup_path}: {e}")
+                    self.logger.debug(f"Could not read cgroup metrics for {self.cgroup_path}: {e}")
                 self.stop_event.wait(1)
         finally:
             sqlite_writer.close()
@@ -197,6 +202,13 @@ class ResourceGatherOn(ResourceGatherRecord):
             with open(cpu_stat_path, 'r') as f:
                 self._cpu_stat_start = self._read_cpu_stat(f)
 
+        # Snapshot io.stat at the start of the test. Like cpu.stat, the counters
+        # are cumulative for the cgroup's lifetime, so we take start/end deltas.
+        # io.stat exists only when the io controller is enabled on the parent.
+        io_stat_path = self.cgroup_path / 'io.stat'
+        if io_stat_path.exists():
+            self._io_stat_start = self._read_io_stat(io_stat_path)
+
     def get_test_metrics(self) -> Metric:
         test_metrics = super().get_test_metrics()
         if self._memory_peak_fd is not None:
@@ -215,6 +227,13 @@ class ResourceGatherOn(ResourceGatherRecord):
                 end_val = cpu_stat_end.get(stat, 0.0)
                 setattr(test_metrics, attr, end_val - start_val)
 
+        io_stat_path = self.cgroup_path / 'io.stat'
+        if io_stat_path.exists() and self._io_stat_start is not None:
+            io_stat_end = self._read_io_stat(io_stat_path)
+            for stat, attr in self._IO_STAT_FIELDS.items():
+                setattr(test_metrics, attr,
+                        io_stat_end.get(stat, 0) - self._io_stat_start.get(stat, 0))
+
         return test_metrics
 
     def teardown_test_tracking(self) -> None:
@@ -222,6 +241,7 @@ class ResourceGatherOn(ResourceGatherRecord):
             self._memory_peak_fd.close()
             self._memory_peak_fd = None
         self._cpu_stat_start = None
+        self._io_stat_start = None
         super().teardown_test_tracking()
 
     # Maps cpu.stat keys to Metric attribute names. Values in cpu.stat are in
@@ -231,6 +251,29 @@ class ResourceGatherOn(ResourceGatherRecord):
         'system_usec': 'system_sec',
         'usage_usec': 'usage_sec',
     }
+
+    # Maps io.stat keys to Metric attribute names. Counters are block-level,
+    # i.e. only I/O actually submitted to a physical block device. Buffered
+    # writes count when writeback happens (attributed via memory+io controllers);
+    # reads served from the page cache and dirty pages never written back
+    # (e.g. files deleted first) don't appear here at all.
+    _IO_STAT_FIELDS = {
+        'rbytes': 'io_read_bytes',
+        'wbytes': 'io_write_bytes',
+        'rios': 'io_read_ops',
+        'wios': 'io_write_ops',
+    }
+
+    @staticmethod
+    def _read_io_stat(path: Path) -> dict[str, int]:
+        """Read io.stat and return the relevant counters summed across all block devices."""
+        totals: dict[str, int] = {}
+        for line in path.read_text().splitlines():
+            for field in line.split()[1:]:
+                key, _, value = field.partition('=')
+                if key in ResourceGatherOn._IO_STAT_FIELDS:
+                    totals[key] = totals.get(key, 0) + int(value)
+        return totals
 
     @staticmethod
     def _read_cpu_stat(file: TextIO) -> dict[str, float]:
@@ -277,16 +320,20 @@ def _is_cgroup_rw() -> bool:
     return False
 
 def propagate_subtree_controls(group: Path):
-    # Only enable the memory controller. cpu.stat is available without
-    # enabling the cpu controller (it's base cgroup v2 accounting).
-    # Enabling all controllers (cpu, io, pids, etc.) adds unnecessary
-    # per-operation kernel overhead to child processes - in particular,
-    # the io controller adds accounting to every I/O operation.
+    # Enable only the memory and io controllers. cpu.stat is available without
+    # enabling the cpu controller (it's base cgroup v2 accounting). The io
+    # controller is needed for io.stat (block-level I/O accounting) and for
+    # attributing page-cache writeback to the cgroup that dirtied the pages
+    # (writeback attribution requires memory+io enabled together). Other
+    # controllers (cpu, pids, etc.) stay off to avoid unnecessary per-operation
+    # kernel overhead in child processes.
     with open(group / "cgroup.controllers", "r") as f:
-        if "memory" not in f.readline().split():
-            return
+        available = f.readline().split()
+    if "memory" not in available:
+        return
+    controls = "+memory" + (" +io" if "io" in available else "")
     with open(group / "cgroup.subtree_control", "w") as f:
-        f.write("+memory")
+        f.write(controls)
 
 
 def setup_cgroup(is_required: bool) -> None:
@@ -333,6 +380,15 @@ def setup_cgroup(is_required: bool) -> None:
                     f.write(str(process))
 
             propagate_subtree_controls(CGROUP_INITIAL.parent)
+        else:
+            # The hierarchy may have been configured by an older version of this
+            # code that enabled fewer controllers (e.g. memory without io) —
+            # upgrade it. Best-effort: fails with EBUSY if processes joined the
+            # parent cgroup since, in which case metrics degrade gracefully.
+            try:
+                propagate_subtree_controls(CGROUP_INITIAL.parent)
+            except OSError as e:
+                logger.warning(f"Could not upgrade subtree controls on {CGROUP_INITIAL.parent}: {e}")
 
         # Always ensure CGROUP_TESTS has subtree controls enabled so that worker
         # sub-cgroups and per-test cgroups can use memory tracking.

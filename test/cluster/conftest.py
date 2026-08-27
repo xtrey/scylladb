@@ -15,7 +15,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING
 from test import TOP_SRC_DIR, MODES_TIMEOUT_FACTOR, path_to
-from test.pylib.runner import PHASE_REPORT_KEY, MANAGER_LOGS_KEY, make_failed_test_dir
+from test.pylib.runner import PHASE_REPORT_KEY, MANAGER_LOGS_KEY, SEASTAR_IO_KEY, make_failed_test_dir
 from test.cluster.object_store.conftest import make_object_storage
 from test.pylib.random_tables import RandomTables
 from test.pylib.skip_types import skip_env
@@ -199,6 +199,7 @@ async def manager(request: pytest.FixtureRequest,
         logger.debug("after_test for %s (success: %s)", test_case_name, not failed)
         cluster_status = await _scylla_cluster_manager.after_test(success=not failed)
         logger.info("Cluster after test %s (success: %s): %s", test_case_name, not failed, cluster_status)
+        request.node.stash[SEASTAR_IO_KEY] = cluster_status.get("seastar_io")
 
     if cluster_status is not None and cluster_status["server_broken"] and not failed:
         failed = True

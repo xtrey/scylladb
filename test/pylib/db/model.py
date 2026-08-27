@@ -22,13 +22,23 @@ class CgroupMetric:
     test_id: int
     host_id: str
     timestamp: datetime
+    io_read_bytes: int = None
+    io_write_bytes: int = None
 
 
 @define
 class Metric:
     test_id: int
     host_id: str
+    io_read_bytes: int = None
+    io_write_bytes: int = None
+    io_read_ops: int = None
+    io_write_ops: int = None
     memory_peak: int = None
+    seastar_read_bytes: int = None
+    seastar_read_ops: int = None
+    seastar_write_bytes: int = None
+    seastar_write_ops: int = None
     success: bool = None
     status: str = None
     system_sec: float = None
