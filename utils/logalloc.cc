@@ -1425,12 +1425,6 @@ segment_pool::segment_pool(tracker::impl& tracker)
 }
 
 void segment_pool::prime(size_t available_memory, size_t min_free_memory) {
-#ifdef SEASTAR_DEFAULT_ALLOCATOR
-    // Segments are allocated individually from the standard allocator, so there is no
-    // contiguous LSA area whose top part we could occupy, and freeing a segment doesn't
-    // affect where the next one lands. Priming would just make the pool hold
-    // max_segments() worth of memory for the lifetime of the process.
-#else
     auto old_emergency_reserve = std::exchange(_emergency_reserve_max, std::numeric_limits<size_t>::max());
     try {
         // Allocate all of memory so that we occupy the top part. Afterwards, we'll start
@@ -1448,7 +1442,6 @@ void segment_pool::prime(size_t available_memory, size_t min_free_memory) {
     _store.non_lsa_reserve = min_free_memory + gap;
     // Since the reclaimer is not yet in place, free some low memory for general use
     reclaim_segments(_store.non_lsa_reserve / segment::size, is_preemptible::no);
-#endif
 }
 
 void segment_pool::use_standard_allocator_segment_pool_backend(size_t available_memory) {
