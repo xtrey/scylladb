@@ -210,7 +210,7 @@ def nodetool(request, jmx, nodetool_path, rest_api_mock_server):
                 cmd += list(args)
             suppressions_path = TOP_SRC_DIR / "ubsan-suppressions.supp"
             env = {'UBSAN_OPTIONS': f'halt_on_error=1:abort_on_error=1:suppressions={suppressions_path}',
-                   'ASAN_OPTIONS': f'disable_coredump=0:abort_on_error=1:detect_stack_use_after_return=1'}
+                   'ASAN_OPTIONS': f'disable_coredump=0:abort_on_error=1:detect_stack_use_after_return=1:quarantine_size_mb=16'}
             res = subprocess.run(cmd, capture_output=True, text=True, env=env)
             sys.stdout.write(res.stdout)
             sys.stderr.write(res.stderr)

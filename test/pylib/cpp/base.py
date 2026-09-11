@@ -42,6 +42,10 @@ ASAN_OPTIONS = [
     "disable_coredump=0",
     "abort_on_error=1",
     "detect_stack_use_after_return=1",
+    # ASan's default quarantine is 256 MB per process (plus per-thread ones);
+    # 16 MB keeps use-after-free detection for recent frees at a fraction of the
+    # memory, which matters when many debug nodes run concurrently.
+    "quarantine_size_mb=16",
     os.getenv("ASAN_OPTIONS"),
 ]
 BASE_TEST_ENV = {

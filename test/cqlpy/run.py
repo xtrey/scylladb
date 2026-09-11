@@ -268,7 +268,7 @@ def run_scylla_cmd(pid, dir):
     # configure them to fail on real errors, and ignore spurious errors.
     env = {
         'UBSAN_OPTIONS': f'halt_on_error=1:abort_on_error=1:suppressions={source_path}/ubsan-suppressions.supp',
-        'ASAN_OPTIONS': 'disable_coredump=0:abort_on_error=1:detect_stack_use_after_returns=1'
+        'ASAN_OPTIONS': 'disable_coredump=0:abort_on_error=1:detect_stack_use_after_returns=1:quarantine_size_mb=16'
     }
     return ([scylla_link,
         '--options-file',  source_path + '/conf/scylla.yaml',
