@@ -56,7 +56,6 @@ class ThreadsCalculator:
                  system_memory_reserve_fraction = 16,
                  max_test_memory: float = 5e9,
                  test_memory_fraction: float = 8.0,
-                 debug_test_memory_multiplier: float = 1.5,
                  debug_cpus_per_test_job=1.5,
                  non_debug_cpus_per_test_job: float =1.0,
                  non_debug_max_test_memory: float = 4e9
@@ -68,12 +67,16 @@ class ThreadsCalculator:
         ))
         available_mem = max(0, sys_mem - system_memory_reserve)
         is_debug = set(DEBUG_MODES) & set(modes)
+        # Debug jobs get a larger memory budget than dev/release ones, but no longer
+        # the extra 1.5x on top: with the LSA segment pool no longer primed, the ASan
+        # quarantine capped and Seastar reporting the configured memory, a debug job
+        # peaked at 2.1 GiB (x86_64) / 1.7 GiB (aarch64) of system memory in build
+        # 4391, against 4.7 / 5.0 GiB before those changes. The multiplier only made
+        # debug memory-bound at fewer jobs than its CPU budget allows.
         test_mem = min(
             sys_mem / test_memory_fraction,
             max_test_memory if is_debug else non_debug_max_test_memory,
         )
-        if is_debug:
-            test_mem *= debug_test_memory_multiplier
         self.cpus_per_test_job = (
             debug_cpus_per_test_job if is_debug else non_debug_cpus_per_test_job
         )
