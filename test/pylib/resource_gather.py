@@ -149,6 +149,11 @@ class ResourceGatherOn(ResourceGatherRecord):
         self.stop_event = Event()
         self.cgroup_path = CGROUP_TESTS / self.worker_id
         self._memory_peak_fd: IO | None = None
+        # Whether this kernel let us reset the FD's peak. When it doesn't, memory.peak
+        # is the cgroup's lifetime high-water mark and says nothing about this test,
+        # so we fall back to the maximum of the memory.current samples below.
+        self._memory_peak_reset = False
+        self._sampled_peak = 0
         self._cpu_stat_start: dict[str, float] | None = None
 
     def stop_monitoring(self) -> None:
@@ -167,10 +172,12 @@ class ResourceGatherOn(ResourceGatherRecord):
         try:
             while not self.stop_event.is_set():
                 try:
+                    memory = int(memory_current.read_text().strip())
+                    self._sampled_peak = max(self._sampled_peak, memory)
                     timeline_record = CgroupMetric(
                         test_id=self.test_id,
                         host_id=HOST_ID,
-                        memory=int(memory_current.read_text().strip()),
+                        memory=memory,
                         timestamp=datetime.now()
                     )
                     sqlite_writer.write_row(timeline_record, CGROUP_MEMORY_METRICS_TABLE)
@@ -181,12 +188,25 @@ class ResourceGatherOn(ResourceGatherRecord):
             sqlite_writer.close()
 
     def setup_test_tracking(self) -> None:
-        # Open a fresh FD on memory.peak so the kernel resets its per-FD peak tracker
-        # to the current memory. Reading this FD later returns the peak memory since it
-        # was opened, i.e., the peak during this test only.
+        # Writing to a memory.peak FD resets that FD's peak tracker to the current
+        # memory, so reading it later returns the peak during this test only. Only
+        # kernels from 6.9 on support this; on older ones the file keeps the cgroup's
+        # lifetime peak, which would make every test inherit the high-water mark of
+        # everything that ran before it in this worker.
+        self._sampled_peak = 0
+        self._memory_peak_reset = False
         memory_peak_path = self.cgroup_path / 'memory.peak'
         if memory_peak_path.exists():
-            self._memory_peak_fd = open(memory_peak_path, 'r')
+            try:
+                self._memory_peak_fd = open(memory_peak_path, 'r+')
+                self._memory_peak_fd.write('0')
+                self._memory_peak_fd.flush()
+                self._memory_peak_reset = True
+            except OSError as e:
+                self.logger.debug(f"memory.peak cannot be reset ({e}), using memory.current samples instead")
+                if self._memory_peak_fd is not None:
+                    self._memory_peak_fd.close()
+                    self._memory_peak_fd = None
 
         # Snapshot cpu.stat at the start of the test. Unlike memory.peak, cpu.stat
         # has no per-FD reset mechanism — values are cumulative for the cgroup's
@@ -199,12 +219,22 @@ class ResourceGatherOn(ResourceGatherRecord):
 
     def get_test_metrics(self) -> Metric:
         test_metrics = super().get_test_metrics()
-        if self._memory_peak_fd is not None:
+        if self._memory_peak_reset and self._memory_peak_fd is not None:
             try:
                 self._memory_peak_fd.seek(0)
                 test_metrics.memory_peak = int(self._memory_peak_fd.read().strip())
             except Exception as e:
                 self.logger.warning(f"Could not read memory.peak for {self.cgroup_path}: {e}")
+        else:
+            # Sampled once a second, so a short-lived spike can be missed; take a last
+            # reading here too, for tests shorter than the sampling interval.
+            memory_current = self.cgroup_path / 'memory.current'
+            try:
+                self._sampled_peak = max(self._sampled_peak, int(memory_current.read_text().strip()))
+            except OSError as e:
+                self.logger.debug(f"Could not read memory.current for {self.cgroup_path}: {e}")
+            if self._sampled_peak:
+                test_metrics.memory_peak = self._sampled_peak
 
         cpu_stat_path = self.cgroup_path / 'cpu.stat'
         if cpu_stat_path.exists() and self._cpu_stat_start is not None:
@@ -221,6 +251,7 @@ class ResourceGatherOn(ResourceGatherRecord):
         if self._memory_peak_fd is not None:
             self._memory_peak_fd.close()
             self._memory_peak_fd = None
+        self._memory_peak_reset = False
         self._cpu_stat_start = None
         super().teardown_test_tracking()
 
