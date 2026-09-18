@@ -56,7 +56,7 @@ class ThreadsCalculator:
                  system_memory_reserve_fraction = 16,
                  max_test_memory: float = 5e9,
                  test_memory_fraction: float = 8.0,
-                 debug_cpus_per_test_job=1.5,
+                 debug_cpus_per_test_job=2.0,
                  non_debug_cpus_per_test_job: float =1.0,
                  non_debug_max_test_memory: float = 4e9
                  ):
