@@ -71,6 +71,13 @@ def asan_options(inherit: bool = False) -> str:
         "disable_coredump=0",
         "abort_on_error=1",
         "detect_stack_use_after_return=1",
+        # ASAN's default quarantine of freed memory is 256 MB per process, plus a
+        # per-thread one for each of Seastar's threads, which is a lot of memory held
+        # by dozens of concurrent debug nodes for the sake of detecting a use after
+        # free of something freed long ago. 16 MB gives up almost none of that
+        # detection: on test/boost/logalloc_test it cost 2619 MB of peak RSS against
+        # 2614 MB with the quarantine off entirely, and 2935 MB with the default.
+        "quarantine_size_mb=16",
     ]
     if inherit:
         opts.append(os.getenv("ASAN_OPTIONS"))
