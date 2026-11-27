@@ -5,9 +5,11 @@
 #
 """Tests for merging lcov traces produced by different binaries."""
 
+import asyncio
 import pathlib
 import xml.etree.ElementTree as ET
 
+from test.pylib.coverage_utils import lcov_combine_traces
 from test.pylib.lcov_utils import LcovFile
 
 
@@ -59,3 +61,22 @@ def test_cobertura_report(tmp_path: pathlib.Path) -> None:
         {"number": "3", "hits": "0", "branch": "false"},
         {"number": "5", "hits": "2", "branch": "true", "condition-coverage": "50% (1/2)"},
     ]
+
+
+def test_combine_traces_in_worker_processes(tmp_path: pathlib.Path) -> None:
+    """lcov_combine_traces merges in several rounds of worker processes; the
+    result must hold the hits of every input, whether written or returned."""
+    paths = []
+    for i in range(5):
+        paths.append(tmp_path / f"{i}.info")
+        paths[-1].write_text(trace(67))
+
+    async def combine(**kwargs):
+        return await lcov_combine_traces(lcovs = paths, files_per_chunk = 2,
+                                         semaphore = asyncio.Semaphore(2), **kwargs)
+
+    asyncio.run(combine(output_lcov = tmp_path / "merged.info"))
+    for merged in (LcovFile(tmp_path / "merged.info"), asyncio.run(combine())):
+        record = next(iter(merged.records.values()))
+        assert record.line_hits == {67: 5, 71: 5}
+    assert not list(tmp_path.glob(".lcov_merge_*"))

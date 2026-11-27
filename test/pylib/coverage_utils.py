@@ -41,6 +41,9 @@ import lcov_utils
 
 del sys.path[0]
 import concurrent.futures
+import math
+import shutil
+import tempfile
 from urllib.parse import quote, unquote
 
 # NOTE: A lot of the functions in this file uses the form: func(*, param1, param2....)
@@ -709,57 +712,59 @@ async def lcov_combine_traces(
 
     if files_per_chunk is None or files_per_chunk > len(lcovs):
         files_per_chunk = len(lcovs)
+    files_per_chunk = max(files_per_chunk, 2)
 
-    def merge_lcovs(lcov_spec: List[Union[lcov_utils.LcovFile, Path]]):
-        lcov_objs: List[lcov_utils.LcovFile] = []
-        if (len(lcov_spec) == 1) and isinstance(lcov_spec[0], lcov_utils.LcovFile):
-            return lcov_spec[0]
-        for lcov in lcov_spec:
-            if isinstance(lcov, Path):
-                lcov_objs.append(lcov_utils.LcovFile(lcov))
-            else:
-                lcov_objs.append(lcov)
-        lcov_result = lcov_utils.LcovFile()
-
-        for lcov in lcov_objs:
-            if test_tag:
-                lcov.tag_with_test(test_tag)
-            lcov_result.union(lcov)
-        return lcov_result
-
-    files_to_merge = lcovs
     # Consume all of the available concurrency in the semaphore
     concurrency = 0
     while not semaphore.locked():
         await semaphore.acquire()
         concurrency += 1
     try:
-        with concurrent.futures.ThreadPoolExecutor(concurrency) as executor:
-            while len(files_to_merge) > 1:
-                files_to_merge = [
-                    files_to_merge[i : i + files_per_chunk]
-                    for i in range(0, len(files_to_merge), files_per_chunk)
-                ]
-                merge_funcs = [partial(merge_lcovs, chunk) for chunk in files_to_merge]
-                # We use "normal" gather here since we have the concurrency limited by the executor
+        tmp_parent = Path(output_lcov).parent if output_lcov else lcovs[0].parent
+        # Parsing lcov is pure Python, so threads serialize on the GIL: merge in processes that
+        # exchange file paths rather than parsed objects.
+        with tempfile.TemporaryDirectory(dir = tmp_parent, prefix = ".lcov_merge_") as tmp_dir, \
+             concurrent.futures.ProcessPoolExecutor(max(concurrency, 1)) as executor:
+            files_to_merge = lcovs
+            merge_round = 0
+            while True:
+                # Split so every worker gets a chunk; files_per_chunk only caps the chunk size.
+                chunk_size = max(2, min(files_per_chunk, math.ceil(len(files_to_merge) / max(concurrency, 1))))
+                chunks = [files_to_merge[i : i + chunk_size]
+                          for i in range(0, len(files_to_merge), chunk_size)]
+                outputs = [Path(tmp_dir) / f"{merge_round}_{i}.info" for i in range(len(chunks))]
+                # Tag only once, on the source files.
+                tag = test_tag if merge_round == 0 else None
                 files_to_merge = await asyncio.gather(
-                    *(loop.run_in_executor(executor, func) for func in merge_funcs)
+                    *(loop.run_in_executor(executor, _merge_lcov_files, chunk, out, tag)
+                      for chunk, out in zip(chunks, outputs))
                 )
-            result: List[lcov_utils.LcovFile] = await loop.run_in_executor(
-                executor, partial(merge_lcovs, files_to_merge)
-            )
+                merge_round += 1
+                if len(files_to_merge) == 1:
+                    break
             if output_lcov:
-                result.write(output_lcov)
+                shutil.move(files_to_merge[0], output_lcov)
                 if clear_on_success:
                     for lcov in lcovs:
-                        if isinstance(lcov, Path):
-                            lcov.unlink()
+                        lcov.unlink()
             else:
-                return result
+                return lcov_utils.LcovFile(files_to_merge[0])
     finally:
         # Release all consumed concurrency back into the semaphore
         for _ in range(concurrency):
             semaphore.release()
+
+
+def _merge_lcov_files(lcovs: List[Path], output: Path, test_tag: Optional[str]) -> Path:
+    """Process-pool worker for lcov_combine_traces: merge `lcovs` into `output`."""
+    result = lcov_utils.LcovFile()
+    for path in lcovs:
+        lcov = lcov_utils.LcovFile(path)
+        if test_tag:
+            lcov.tag_with_test(test_tag)
+        result.union(lcov)
+    result.write(output, generate_empty = True, incompatible_empty = True)
+    return output
 
 @traced_func
 async def html_fixup(*, html_dir: Path):

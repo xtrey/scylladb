@@ -516,6 +516,14 @@ async def main() -> int:
 
 async def process_coverage(options):
     total_processing_time = time.time()
+    # test.py configures no logging, so without this the per-step timings below were dropped.
+    coverage_logger = logging.getLogger("coverage")
+    coverage_logger.setLevel(logging.INFO)
+    coverage_logger.propagate = False
+    for handler in (logging.StreamHandler(sys.stdout),
+                    logging.FileHandler(pathlib.Path(options.tmpdir) / "coverage.log")):
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        coverage_logger.addHandler(handler)
     logger = LogPrefixAdapter(logging.getLogger("coverage"), {'prefix' : 'coverage'})
     modes_for_coverage = options.coverage_modes
     # use about 75% of the machine's processing power.
